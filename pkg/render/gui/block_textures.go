@@ -334,8 +334,10 @@ func (a *App) blockFaceTintAt(x, y, z, blockID, blockMeta, face int) (float32, f
 		// - net.minecraft.src.BlockVine#colorMultiplier(...)
 		return a.biomeFoliageTintAt(x, z)
 	case 8, 9: // water
-		// 1.6.4 water uses biome multiplier in BlockFluid#colorMultiplier.
-		return rgbIntToFloat(0x3F76E4)
+		// Translation reference:
+		// - net.minecraft.src.BlockFluid#colorMultiplier(...)
+		// 1.6.4 water color is the 3x3 average of biome waterColorMultiplier.
+		return a.biomeWaterTintAt(x, z)
 	case 111: // lily pad
 		return 32.0 / 255.0, 128.0 / 255.0, 48.0 / 255.0
 	}
@@ -376,6 +378,42 @@ func (a *App) biomeFoliageTintAt(x, z int) (float32, float32, float32) {
 	}
 	// ColorizerFoliage.getFoliageColorBasic()
 	return rgbIntToFloat(4764952)
+}
+
+func (a *App) biomeWaterTintAt(x, z int) (float32, float32, float32) {
+	if a.session == nil {
+		return 1, 1, 1
+	}
+
+	sumR := 0
+	sumG := 0
+	sumB := 0
+	for dz := -1; dz <= 1; dz++ {
+		for dx := -1; dx <= 1; dx++ {
+			biomeID, ok := a.session.BiomeAt(x+dx, z+dz)
+			if !ok {
+				// Unknown biome payload defaults to plains in vanilla generation.
+				biomeID = 1
+			}
+			c := biomeWaterColorMultiplier(biomeID)
+			sumR += (c >> 16) & 255
+			sumG += (c >> 8) & 255
+			sumB += c & 255
+		}
+	}
+	return float32(sumR) / (255.0 * 9.0), float32(sumG) / (255.0 * 9.0), float32(sumB) / (255.0 * 9.0)
+}
+
+func biomeWaterColorMultiplier(biomeID int) int {
+	// Translation reference:
+	// - net.minecraft.src.BiomeGenBase#waterColorMultiplier
+	// - net.minecraft.src.BiomeGenSwamp constructor sets 0xE0FFAE
+	switch biomeID {
+	case 6: // swampland
+		return 0xE0FFAE
+	default:
+		return 0xFFFFFF
+	}
 }
 
 func (a *App) biomeColorAt(x, z int, foliage bool) (uint32, bool) {

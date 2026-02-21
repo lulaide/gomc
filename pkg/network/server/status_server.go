@@ -42,6 +42,9 @@ type StatusServer struct {
 	publicKeyDER []byte
 
 	world *flatWorld
+	// Translation reference:
+	// - net.minecraft.src.BlockFluid#tickRate(World) => water updates every 5 ticks.
+	waterTickAccum int64
 
 	activeMu      sync.RWMutex
 	activePlayers map[*loginSession]string
@@ -158,7 +161,11 @@ func (s *StatusServer) AdvanceWorldTime(ticks int64) {
 	}
 	s.worldAge.Add(ticks)
 	s.worldTime.Add(ticks)
-	s.tickWaterFlow()
+	s.waterTickAccum += ticks
+	for s.waterTickAccum >= waterTickRate {
+		s.tickWaterFlow()
+		s.waterTickAccum -= waterTickRate
+	}
 }
 
 func (s *StatusServer) CurrentWorldTime() (int64, int64) {

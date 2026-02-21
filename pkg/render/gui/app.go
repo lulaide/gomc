@@ -80,6 +80,13 @@ type blockTarget struct {
 	Z    int
 	Face int32
 	Hit  bool
+	Dist float64
+	MinX float64
+	MinY float64
+	MinZ float64
+	MaxX float64
+	MaxY float64
+	MaxZ float64
 }
 
 type entityTarget struct {
@@ -701,6 +708,7 @@ func (a *App) loop() error {
 		} else {
 			a.panoramaFrac = 0
 		}
+		a.advanceAnimatedTextures(now)
 
 		target := blockTarget{}
 		if a.session != nil {
@@ -750,6 +758,12 @@ func (a *App) loop() error {
 	}
 
 	return nil
+}
+
+func (a *App) advanceAnimatedTextures(now time.Time) {
+	for _, tex := range a.blockTextures {
+		tex.advanceAnimatedFrame(now)
+	}
 }
 
 func (a *App) resetRenderTrackFromSnapshot(snap netclient.StateSnapshot) {
@@ -1779,7 +1793,14 @@ func (a *App) render(snap netclient.StateSnapshot, target blockTarget) {
 	a.drawWorld(snap)
 	a.drawEntities()
 	if target.Hit {
-		drawBlockOutline(float32(target.X), float32(target.Y), float32(target.Z))
+		drawBlockOutlineAABB(
+			float32(target.MinX),
+			float32(target.MinY),
+			float32(target.MinZ),
+			float32(target.MaxX),
+			float32(target.MaxY),
+			float32(target.MaxZ),
+		)
 	}
 	// Vanilla EntityRenderer clears depth before first-person hand render.
 	gl.Clear(gl.DEPTH_BUFFER_BIT)
@@ -4335,17 +4356,20 @@ func (a *App) isSolidBlockAt(x, y, z int) bool {
 }
 
 func (a *App) pickBlockTarget(snap netclient.StateSnapshot, reach float64) blockTarget {
+	if a.session == nil {
+		return blockTarget{}
+	}
+
 	dirX, dirY, dirZ := lookDirectionFromYawPitch(a.yaw, a.pitch)
 
 	originX := snap.PlayerX
 	originY := snap.PlayerY + playerEyeHeight
 	originZ := snap.PlayerZ
 
-	prevX := int(math.Floor(originX))
-	prevY := int(math.Floor(originY))
-	prevZ := int(math.Floor(originZ))
+	visited := make(map[[3]int]struct{}, int(reach/raycastStep)+2)
+	best := blockTarget{Dist: reach + 1.0}
 
-	for dist := 0.1; dist <= reach; dist += raycastStep {
+	for dist := 0.0; dist <= reach+raycastStep; dist += raycastStep {
 		worldX := originX + dirX*dist
 		worldY := originY + dirY*dist
 		worldZ := originZ + dirZ*dist
@@ -4353,24 +4377,51 @@ func (a *App) pickBlockTarget(snap netclient.StateSnapshot, reach float64) block
 		blockX := int(math.Floor(worldX))
 		blockY := int(math.Floor(worldY))
 		blockZ := int(math.Floor(worldZ))
-		if blockX == prevX && blockY == prevY && blockZ == prevZ {
+		posKey := [3]int{blockX, blockY, blockZ}
+		if _, seen := visited[posKey]; seen {
+			continue
+		}
+		visited[posKey] = struct{}{}
+
+		id, meta, ok := a.session.BlockAt(blockX, blockY, blockZ)
+		if !ok || id == 0 {
 			continue
 		}
 
-		id, _, ok := a.session.BlockAt(blockX, blockY, blockZ)
-		if ok && id != 0 {
-			return blockTarget{
+		boxes := a.blockSelectionAABBs(blockX, blockY, blockZ, id, meta)
+		for _, bb := range boxes {
+			hitDist, hit := rayIntersectAABB(
+				originX, originY, originZ,
+				dirX, dirY, dirZ,
+				bb.minX, bb.minY, bb.minZ,
+				bb.maxX, bb.maxY, bb.maxZ,
+				reach,
+			)
+			if !hit {
+				continue
+			}
+			if best.Hit && hitDist >= best.Dist {
+				continue
+			}
+			best = blockTarget{
 				X:    blockX,
 				Y:    blockY,
 				Z:    blockZ,
-				Face: blockFaceFromStep(prevX, prevY, prevZ, blockX, blockY, blockZ),
+				Face: blockFaceFromRayHit(originX, originY, originZ, dirX, dirY, dirZ, hitDist, bb),
 				Hit:  true,
+				Dist: hitDist,
+				MinX: bb.minX,
+				MinY: bb.minY,
+				MinZ: bb.minZ,
+				MaxX: bb.maxX,
+				MaxY: bb.maxY,
+				MaxZ: bb.maxZ,
 			}
 		}
+	}
 
-		prevX = blockX
-		prevY = blockY
-		prevZ = blockZ
+	if best.Hit {
+		return best
 	}
 
 	return blockTarget{}
@@ -4380,6 +4431,10 @@ func (a *App) blockTargetDistance(snap netclient.StateSnapshot, target blockTarg
 	if !target.Hit {
 		return math.Inf(1)
 	}
+	if target.Dist > 0 {
+		return target.Dist
+	}
+
 	ox := snap.PlayerX
 	oy := snap.PlayerY + playerEyeHeight
 	oz := snap.PlayerZ
@@ -4390,6 +4445,221 @@ func (a *App) blockTargetDistance(snap netclient.StateSnapshot, target blockTarg
 	dy := cy - oy
 	dz := cz - oz
 	return math.Sqrt(dx*dx + dy*dy + dz*dz)
+}
+
+func (a *App) blockSelectionAABBs(blockX, blockY, blockZ, blockID, blockMeta int) []axisAlignedBB {
+	if isLiquidRenderBlock(blockID) {
+		// Translation reference:
+		// - net.minecraft.src.BlockFluid#getCollisionBoundingBoxFromPool => null
+		// - net.minecraft.src.BlockFluid#canCollideCheck(meta, hitIfLiquid)
+		// In normal gameplay ray picks should pass through liquid unless explicit liquid check mode.
+		return nil
+	}
+
+	if blockID == 106 && blockMeta == 0 {
+		// Match vine render fallback for legacy chunks where metadata is absent.
+		blockMeta = a.inferSingleVineAttachmentMeta(blockX, blockY, blockZ)
+	}
+
+	relative := blockSelectionRelativeAABBs(blockID, blockMeta)
+	if len(relative) == 0 {
+		return nil
+	}
+
+	ox := float64(blockX)
+	oy := float64(blockY)
+	oz := float64(blockZ)
+	out := make([]axisAlignedBB, 0, len(relative))
+	for _, bb := range relative {
+		out = append(out, axisAlignedBB{
+			minX: ox + bb.minX,
+			minY: oy + bb.minY,
+			minZ: oz + bb.minZ,
+			maxX: ox + bb.maxX,
+			maxY: oy + bb.maxY,
+			maxZ: oz + bb.maxZ,
+		})
+	}
+	return out
+}
+
+func blockSelectionRelativeAABBs(blockID, blockMeta int) []axisAlignedBB {
+	switch blockID {
+	case 8, 9, 10, 11:
+		return nil
+	case 6, 31, 32:
+		// Translation reference:
+		// - net.minecraft.src.BlockSapling
+		// - net.minecraft.src.BlockTallGrass
+		// - net.minecraft.src.BlockDeadBush
+		return []axisAlignedBB{{
+			minX: 0.1, minY: 0.0, minZ: 0.1,
+			maxX: 0.9, maxY: 0.8, maxZ: 0.9,
+		}}
+	case 37, 38, 39, 40:
+		// Translation reference:
+		// - net.minecraft.src.BlockFlower constructor bounds.
+		return []axisAlignedBB{{
+			minX: 0.3, minY: 0.0, minZ: 0.3,
+			maxX: 0.7, maxY: 0.6, maxZ: 0.7,
+		}}
+	case 59:
+		// Translation reference:
+		// - net.minecraft.src.BlockCrops#setBlockBoundsBasedOnState(...)
+		age := blockMeta & 7
+		height := float64(age*2+2) / 16.0
+		return []axisAlignedBB{{
+			minX: 0.0, minY: 0.0, minZ: 0.0,
+			maxX: 1.0, maxY: height, maxZ: 1.0,
+		}}
+	case 83:
+		// Translation reference:
+		// - net.minecraft.src.BlockReed constructor bounds.
+		return []axisAlignedBB{{
+			minX: 0.125, minY: 0.0, minZ: 0.125,
+			maxX: 0.875, maxY: 1.0, maxZ: 0.875,
+		}}
+	case 106:
+		return []axisAlignedBB{vineSelectionRelativeAABB(blockMeta)}
+	case 111:
+		// Translation reference:
+		// - net.minecraft.src.BlockLilyPad constructor bounds.
+		return []axisAlignedBB{{
+			minX: 0.0, minY: 0.0, minZ: 0.0,
+			maxX: 1.0, maxY: 0.015625, maxZ: 1.0,
+		}}
+	default:
+		return []axisAlignedBB{{
+			minX: 0.0, minY: 0.0, minZ: 0.0,
+			maxX: 1.0, maxY: 1.0, maxZ: 1.0,
+		}}
+	}
+}
+
+func vineSelectionRelativeAABB(meta int) axisAlignedBB {
+	// Translation reference:
+	// - net.minecraft.src.BlockVine#setBlockBoundsBasedOnState(...)
+	minX := 1.0
+	minY := 1.0
+	minZ := 1.0
+	maxX := 0.0
+	maxY := 0.0
+	maxZ := 0.0
+	attached := meta > 0
+
+	if meta&2 != 0 {
+		if maxX < 0.0625 {
+			maxX = 0.0625
+		}
+		minX = 0.0
+		minY = 0.0
+		maxY = 1.0
+		minZ = 0.0
+		maxZ = 1.0
+		attached = true
+	}
+	if meta&8 != 0 {
+		if minX > 0.9375 {
+			minX = 0.9375
+		}
+		maxX = 1.0
+		minY = 0.0
+		maxY = 1.0
+		minZ = 0.0
+		maxZ = 1.0
+		attached = true
+	}
+	if meta&4 != 0 {
+		if maxZ < 0.0625 {
+			maxZ = 0.0625
+		}
+		minZ = 0.0
+		minX = 0.0
+		maxX = 1.0
+		minY = 0.0
+		maxY = 1.0
+		attached = true
+	}
+	if meta&1 != 0 {
+		if minZ > 0.9375 {
+			minZ = 0.9375
+		}
+		maxZ = 1.0
+		minX = 0.0
+		maxX = 1.0
+		minY = 0.0
+		maxY = 1.0
+		attached = true
+	}
+	if !attached {
+		minY = math.Min(minY, 0.9375)
+		maxY = 1.0
+		minX = 0.0
+		maxX = 1.0
+		minZ = 0.0
+		maxZ = 1.0
+	}
+	if minX >= maxX || minY >= maxY || minZ >= maxZ {
+		return axisAlignedBB{
+			minX: 0.0, minY: 0.0, minZ: 0.0,
+			maxX: 1.0, maxY: 1.0, maxZ: 1.0,
+		}
+	}
+	return axisAlignedBB{
+		minX: minX, minY: minY, minZ: minZ,
+		maxX: maxX, maxY: maxY, maxZ: maxZ,
+	}
+}
+
+func blockFaceFromRayHit(ox, oy, oz, dx, dy, dz, dist float64, bb axisAlignedBB) int32 {
+	hx := ox + dx*dist
+	hy := oy + dy*dist
+	hz := oz + dz*dist
+
+	bestDelta := math.Abs(hx - bb.minX)
+	bestFace := int32(faceWest)
+	candidates := []struct {
+		delta float64
+		face  int32
+	}{
+		{delta: math.Abs(hx - bb.maxX), face: faceEast},
+		{delta: math.Abs(hy - bb.minY), face: faceDown},
+		{delta: math.Abs(hy - bb.maxY), face: faceUp},
+		{delta: math.Abs(hz - bb.minZ), face: faceNorth},
+		{delta: math.Abs(hz - bb.maxZ), face: faceSouth},
+	}
+	for _, c := range candidates {
+		if c.delta < bestDelta {
+			bestDelta = c.delta
+			bestFace = c.face
+		}
+	}
+
+	const eps = 1.0e-4
+	if bestDelta <= eps {
+		return bestFace
+	}
+
+	// Fallback for precision-edge hits.
+	absX := math.Abs(dx)
+	absY := math.Abs(dy)
+	absZ := math.Abs(dz)
+	if absX >= absY && absX >= absZ {
+		if dx > 0 {
+			return faceWest
+		}
+		return faceEast
+	}
+	if absY >= absX && absY >= absZ {
+		if dy > 0 {
+			return faceDown
+		}
+		return faceUp
+	}
+	if dz > 0 {
+		return faceNorth
+	}
+	return faceSouth
 }
 
 func (a *App) pickEntityTarget(snap netclient.StateSnapshot, reach float64) entityTarget {
@@ -4746,13 +5016,17 @@ func drawCubeFaces(x, y, z, r, g, b float32, faces visibleFaces) {
 }
 
 func drawBlockOutline(x, y, z float32) {
+	drawBlockOutlineAABB(x, y, z, x+1, y+1, z+1)
+}
+
+func drawBlockOutlineAABB(minX, minY, minZ, maxX, maxY, maxZ float32) {
 	eps := float32(0.002)
-	x1 := x - eps
-	y1 := y - eps
-	z1 := z - eps
-	x2 := x + 1 + eps
-	y2 := y + 1 + eps
-	z2 := z + 1 + eps
+	x1 := minX - eps
+	y1 := minY - eps
+	z1 := minZ - eps
+	x2 := maxX + eps
+	y2 := maxY + eps
+	z2 := maxZ + eps
 
 	gl.Disable(gl.TEXTURE_2D)
 	gl.LineWidth(2)

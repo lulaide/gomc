@@ -8,6 +8,7 @@ import (
 	"image/draw"
 	_ "image/png"
 	"os"
+	"time"
 
 	"github.com/go-gl/gl/v2.1/gl"
 )
@@ -16,6 +17,9 @@ type texture2D struct {
 	ID     uint32
 	Width  int
 	Height int
+
+	animatedFrames [][]byte
+	animatedFrame  int
 }
 
 func (t *texture2D) setWrapRepeat(repeat bool) {
@@ -76,6 +80,22 @@ func loadTexture2DWithFlip(path string, nearest bool, flipVertical bool) (*textu
 		flipRGBAInPlace(rgba)
 	}
 
+	uploadWidth := rgba.Bounds().Dx()
+	uploadHeight := rgba.Bounds().Dy()
+	uploadPix := rgba.Pix
+	animatedFrames, frameSize := extractAnimatedStripFrames(rgba)
+	animatedFrame := -1
+	if len(animatedFrames) > 1 && frameSize > 0 {
+		// Translation reference:
+		// - net.minecraft.src.TextureWaterFX / TextureWaterFlowFX / TextureLavaFX
+		// Legacy animated textures are vertical strips. Keep a square GL texture and
+		// advance frames at runtime, matching vanilla's tick-driven animation.
+		uploadWidth = frameSize
+		uploadHeight = frameSize
+		animatedFrame = len(animatedFrames) - 1
+		uploadPix = animatedFrames[animatedFrame]
+	}
+
 	var id uint32
 	gl.GenTextures(1, &id)
 	gl.BindTexture(gl.TEXTURE_2D, id)
@@ -92,19 +112,77 @@ func loadTexture2DWithFlip(path string, nearest bool, flipVertical bool) (*textu
 		gl.TEXTURE_2D,
 		0,
 		int32(gl.RGBA8),
-		int32(rgba.Bounds().Dx()),
-		int32(rgba.Bounds().Dy()),
+		int32(uploadWidth),
+		int32(uploadHeight),
 		0,
 		gl.RGBA,
 		gl.UNSIGNED_BYTE,
-		gl.Ptr(rgba.Pix),
+		gl.Ptr(uploadPix),
 	)
 
 	return &texture2D{
-		ID:     id,
-		Width:  rgba.Bounds().Dx(),
-		Height: rgba.Bounds().Dy(),
+		ID:             id,
+		Width:          uploadWidth,
+		Height:         uploadHeight,
+		animatedFrames: animatedFrames,
+		animatedFrame:  animatedFrame,
 	}, rgba, nil
+}
+
+func extractAnimatedStripFrames(rgba *image.RGBA) ([][]byte, int) {
+	if rgba == nil {
+		return nil, 0
+	}
+	width := rgba.Bounds().Dx()
+	height := rgba.Bounds().Dy()
+	if width <= 0 || height <= width || height%width != 0 {
+		return nil, 0
+	}
+
+	frameCount := height / width
+	if frameCount <= 1 {
+		return nil, 0
+	}
+
+	rowSize := width * 4
+	frames := make([][]byte, frameCount)
+	for frame := 0; frame < frameCount; frame++ {
+		pix := make([]byte, width*width*4)
+		baseY := frame * width
+		for y := 0; y < width; y++ {
+			srcOff := (baseY+y)*rgba.Stride + 0
+			dstOff := y * rowSize
+			copy(pix[dstOff:dstOff+rowSize], rgba.Pix[srcOff:srcOff+rowSize])
+		}
+		frames[frame] = pix
+	}
+	return frames, width
+}
+
+func (t *texture2D) advanceAnimatedFrame(now time.Time) {
+	if t == nil || t.ID == 0 || len(t.animatedFrames) <= 1 || t.Width <= 0 || t.Height <= 0 {
+		return
+	}
+
+	frame := int((now.UnixMilli() / 50) % int64(len(t.animatedFrames)))
+	frame = len(t.animatedFrames) - 1 - frame
+	if frame == t.animatedFrame {
+		return
+	}
+
+	t.bind()
+	gl.TexSubImage2D(
+		gl.TEXTURE_2D,
+		0,
+		0,
+		0,
+		int32(t.Width),
+		int32(t.Height),
+		gl.RGBA,
+		gl.UNSIGNED_BYTE,
+		gl.Ptr(t.animatedFrames[frame]),
+	)
+	t.animatedFrame = frame
 }
 
 func (t *texture2D) bind() {

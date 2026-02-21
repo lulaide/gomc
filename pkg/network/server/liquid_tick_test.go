@@ -31,7 +31,7 @@ func TestTickWaterFlowCreatesFallingColumn(t *testing.T) {
 		t.Fatal("failed to place still water source")
 	}
 
-	srv.AdvanceWorldTime(1)
+	srv.AdvanceWorldTime(waterTickRate)
 
 	id, meta := srv.world.getBlock(8, 11, 8)
 	if id != blockIDFlowingWater || meta != 8 {
@@ -55,12 +55,33 @@ func TestTickWaterFlowSpreadsHorizontallyWhenBlockedBelow(t *testing.T) {
 		t.Fatal("failed to place solid block below source")
 	}
 
-	srv.AdvanceWorldTime(1)
+	srv.AdvanceWorldTime(waterTickRate)
 
 	for _, d := range [][2]int{{1, 0}, {-1, 0}, {0, 1}, {0, -1}} {
 		id, meta := srv.world.getBlock(8+d[0], 12, 8+d[1])
 		if id != blockIDFlowingWater || meta != 1 {
 			t.Fatalf("horizontal spread mismatch at (%d,%d): got=(%d,%d) want=(%d,1)", d[0], d[1], id, meta, blockIDFlowingWater)
 		}
+	}
+}
+
+func TestTickWaterFlowUsesVanillaTickRate(t *testing.T) {
+	srv := NewStatusServer(StatusConfig{})
+	attachWaterTickWatcher(srv)
+
+	if !srv.world.setBlock(8, 12, 8, blockIDStillWater, 0) {
+		t.Fatal("failed to place still water source")
+	}
+
+	srv.AdvanceWorldTime(waterTickRate - 1)
+	id, meta := srv.world.getBlock(8, 11, 8)
+	if id != 0 || meta != 0 {
+		t.Fatalf("water should not update before tickRate: got=(%d,%d) want=(0,0)", id, meta)
+	}
+
+	srv.AdvanceWorldTime(1)
+	id, meta = srv.world.getBlock(8, 11, 8)
+	if id != blockIDFlowingWater || meta != 8 {
+		t.Fatalf("water update at tickRate mismatch: got=(%d,%d) want=(%d,8)", id, meta, blockIDFlowingWater)
 	}
 }

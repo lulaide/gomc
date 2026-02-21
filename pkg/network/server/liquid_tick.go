@@ -8,6 +8,7 @@ import (
 const (
 	blockIDFlowingWater = 8
 	blockIDStillWater   = 9
+	waterTickRate       = 5
 )
 
 var waterFlowDirections = [][2]int{
