@@ -1,0 +1,4655 @@
+//go:build cgo
+
+package gui
+
+import (
+	"errors"
+	"fmt"
+	"math"
+	"math/rand"
+	"os"
+	"path/filepath"
+	"runtime"
+	"sort"
+	"strconv"
+	"strings"
+	"sync"
+	"time"
+
+	"github.com/go-gl/gl/v2.1/gl"
+	"github.com/go-gl/glfw/v3.3/glfw"
+	"github.com/lulaide/gomc/pkg/audio"
+	netclient "github.com/lulaide/gomc/pkg/network/client"
+	"github.com/lulaide/gomc/pkg/world/block"
+	"github.com/lulaide/gomc/pkg/world/chunk"
+)
+
+const (
+	playerEyeHeight = 1.6200000047683716
+	playerHeight    = 1.8
+	playerHalfWidth = 0.3
+	interactReach   = 5.0
+	raycastStep     = 0.05
+	jumpVelocity    = 0.42
+	gravityPerTick  = 0.08
+	dragPerTick     = 0.98
+	moveTickSeconds = 0.05
+	maxMoveCatchUp  = 4
+	maxChunkBuilds  = 4
+	defaultFPSMode  = 1
+)
+
+const (
+	buttonIDPauseDisconnect   = 1
+	buttonIDPauseReturnToGame = 4
+	buttonIDPauseAchievements = 5
+	buttonIDPauseStats        = 6
+	buttonIDPauseOptions      = 0
+	buttonIDPauseShareToLAN   = 7
+	buttonIDMenuSingleplayer  = 1
+	buttonIDMenuMultiplayer   = 2
+	buttonIDMenuOnline        = 14
+	buttonIDMenuOptions       = 0
+	buttonIDMenuQuit          = 4
+	buttonIDMenuLanguage      = 5
+)
+
+type pauseScreen int
+
+const (
+	pauseScreenMain pauseScreen = iota
+	pauseScreenOptions
+)
+
+type Config struct {
+	Width            int
+	Height           int
+	RenderDistance   int
+	MouseSensitivity float64
+	MoveSpeed        float64
+	FPSLimitMode     int
+	StartInMainMenu  bool
+	CurrentWorld     string
+	PlayWorld        func(worldDir string) (*netclient.Session, error)
+}
+
+type blockTarget struct {
+	X    int
+	Y    int
+	Z    int
+	Face int32
+	Hit  bool
+}
+
+type entityTarget struct {
+	EntityID int32
+	Dist     float64
+	Hit      bool
+}
+
+type visibleFaces struct {
+	Down  bool
+	Up    bool
+	North bool
+	South bool
+	West  bool
+	East  bool
+}
+
+func (f visibleFaces) any() bool {
+	return f.Down || f.Up || f.North || f.South || f.West || f.East
+}
+
+type App struct {
+	session *netclient.Session
+	window  *glfw.Window
+
+	width  int
+	height int
+	guiW   int
+	guiH   int
+	guiS   int
+
+	renderDistance int
+	moveSpeed      float64
+	mouseSens      float64
+	activeWorld    string
+	playWorldFn    func(worldDir string) (*netclient.Session, error)
+
+	yaw   float64
+	pitch float64
+	velY  float64
+
+	firstMouse bool
+	lastMouseX float64
+	lastMouseY float64
+	mouseX     int
+	mouseY     int
+
+	prevLeftMouse  bool
+	prevRightMouse bool
+	prevF1         bool
+	prevF3         bool
+	prevEsc        bool
+	prevEnter      bool
+	prevSpace      bool
+	prevBackspace  bool
+	prevE          bool
+	prevT          bool
+	prevSlash      bool
+	prevUp         bool
+	prevDown       bool
+	prevSneakKey   bool
+	prevSprintKey  bool
+	prevDigit      [9]bool
+
+	hudHidden     bool
+	showDebug     bool
+	paused        bool
+	pauseScreen   pauseScreen
+	mainMenu      bool
+	menuScreen    menuScreen
+	inventoryOpen bool
+	chatInputOpen bool
+	chatInput     string
+	chatDraft     string
+	chatHistory   []string
+	chatHistPos   int
+
+	pauseButtons       []*guiButton
+	pauseOptionButtons []*guiButton
+	mainButtons        []*guiButton
+	singleButtons      []*guiButton
+	multiButtons       []*guiButton
+	optionButtons      []*guiButton
+	createButtons      []*guiButton
+	renameButtons      []*guiButton
+	singleWorlds       []string
+	singleWorldMeta    map[string]singleWorldMeta
+	selectedWorld      int
+	menuStatus         string
+	optionDifficulty   int
+	createWorldName    string
+	createWorldSeed    string
+	createWorldMode    int
+	createMapFeature   bool
+	createAllowCheats  bool
+	createCheatsTog    bool
+	createBonusChest   bool
+	createWorldTypeID  int
+	createGeneratorOp  string
+	createMoreOptions  bool
+	createFolderName   string
+	recreateSource     string
+	renameWorldDir     string
+	renameWorldName    string
+	activeTextField    menuTextField
+	typedRuneQueue     []rune
+
+	eventsCh   <-chan netclient.Event
+	chatMu     sync.Mutex
+	chatLines  []chatLine
+	chatClosed bool
+
+	assetsRoot    string
+	texWidgets    *texture2D
+	texIcons      *texture2D
+	texOptionsBG  *texture2D
+	texInventory  *texture2D
+	texTitle      *texture2D
+	texPanorama   [6]*texture2D
+	texMenuView   *texture2D
+	texSun        *texture2D
+	texMoonPhases *texture2D
+	texClouds     *texture2D
+	font          *fontRenderer
+	splashText    string
+	panoramaTick  int
+	panoramaFrac  float64
+	lastSpaceTap  time.Time
+	lastOnGround  time.Time
+	localOnGround bool
+	prevTab       bool
+	prevBacksp    bool
+
+	blockTextureDefs   map[int]blockTextureDef
+	blockTextures      map[string]*texture2D
+	grassColorMap      []uint32
+	foliageColorMap    []uint32
+	entityTextures     map[string]*texture2D
+	chunkRenderCache   map[chunk.CoordIntPair]*chunkRenderEntry
+	renderFrame        uint64
+	currentFPS         int
+	fpsWindowStart     time.Time
+	fpsFrames          int
+	limitFramerateMode int
+	moveTickAccum      float64
+	skyStarListID      uint32
+	skyListID          uint32
+	skyList2ID         uint32
+
+	// Client-side interpolation track for camera smoothness between 20 TPS movement steps.
+	renderTrackInit    bool
+	renderPrevX        float64
+	renderPrevY        float64
+	renderPrevZ        float64
+	renderCurrX        float64
+	renderCurrY        float64
+	renderCurrZ        float64
+	renderLerpTime     float64
+	renderArmYaw       float64
+	renderArmPitch     float64
+	prevRenderArmYaw   float64
+	prevRenderArmPitch float64
+	handSwingStart     time.Time
+}
+
+type chatLine struct {
+	Message string
+	AddedAt time.Time
+	Color   int
+}
+
+type chunkRenderEntry struct {
+	listID        uint32
+	revision      uint64
+	lastUsedFrame uint64
+}
+
+type textureBatch struct {
+	tex   *texture2D
+	verts []texturedVertex
+}
+
+type texturedVertex struct {
+	x float32
+	y float32
+	z float32
+	u float32
+	v float32
+	r float32
+	g float32
+	b float32
+}
+
+func Run(session *netclient.Session, cfg Config) error {
+	if session == nil {
+		return fmt.Errorf("session is nil")
+	}
+	if cfg.Width <= 0 {
+		cfg.Width = 1280
+	}
+	if cfg.Height <= 0 {
+		cfg.Height = 720
+	}
+	if cfg.RenderDistance <= 0 {
+		cfg.RenderDistance = 10
+	}
+	if cfg.RenderDistance < 2 {
+		cfg.RenderDistance = 2
+	}
+	if cfg.RenderDistance > 32 {
+		cfg.RenderDistance = 32
+	}
+	if cfg.MouseSensitivity <= 0 {
+		cfg.MouseSensitivity = 0.14
+	}
+	if cfg.MoveSpeed <= 0 {
+		cfg.MoveSpeed = 4.3
+	}
+	if cfg.FPSLimitMode < 0 || cfg.FPSLimitMode > 2 {
+		cfg.FPSLimitMode = defaultFPSMode
+	}
+
+	runtime.LockOSThread()
+	defer runtime.UnlockOSThread()
+
+	if err := glfw.Init(); err != nil {
+		return fmt.Errorf("glfw init failed: %w", err)
+	}
+	defer glfw.Terminate()
+
+	glfw.WindowHint(glfw.ContextVersionMajor, 2)
+	glfw.WindowHint(glfw.ContextVersionMinor, 1)
+	glfw.WindowHint(glfw.Resizable, glfw.True)
+
+	window, err := glfw.CreateWindow(cfg.Width, cfg.Height, "GoMC GUI", nil, nil)
+	if err != nil {
+		return fmt.Errorf("create window failed: %w", err)
+	}
+	defer window.Destroy()
+
+	window.MakeContextCurrent()
+	// Keep startup uncoupled from monitor refresh; options screen will own VSync toggle.
+	glfw.SwapInterval(0)
+	if err := gl.Init(); err != nil {
+		return fmt.Errorf("gl init failed: %w", err)
+	}
+
+	app := &App{
+		session:            session,
+		window:             window,
+		width:              cfg.Width,
+		height:             cfg.Height,
+		renderDistance:     cfg.RenderDistance,
+		moveSpeed:          cfg.MoveSpeed,
+		mouseSens:          cfg.MouseSensitivity,
+		activeWorld:        cfg.CurrentWorld,
+		playWorldFn:        cfg.PlayWorld,
+		firstMouse:         true,
+		lastMouseX:         float64(cfg.Width) / 2,
+		lastMouseY:         float64(cfg.Height) / 2,
+		assetsRoot:         discoverAssetsRoot(),
+		eventsCh:           session.Events(),
+		mainMenu:           cfg.StartInMainMenu,
+		pauseScreen:        pauseScreenMain,
+		menuScreen:         menuScreenMain,
+		selectedWorld:      -1,
+		singleWorldMeta:    make(map[string]singleWorldMeta),
+		optionDifficulty:   1,
+		createMapFeature:   true,
+		createWorldTypeID:  0,
+		chunkRenderCache:   make(map[chunk.CoordIntPair]*chunkRenderEntry),
+		limitFramerateMode: cfg.FPSLimitMode,
+	}
+	audio.InitWithAssets(app.assetsRoot)
+	defer func() {
+		if app.session != nil {
+			_ = app.session.Close()
+			_ = app.session.Wait()
+		}
+	}()
+	fbW, fbH := window.GetFramebufferSize()
+	if fbW > 0 {
+		app.width = fbW
+	}
+	if fbH > 0 {
+		app.height = fbH
+	}
+	if exePath, err := os.Executable(); err == nil {
+		fmt.Printf("gui startup: exe=%s assets=%s mainMenu=%t\n", exePath, app.assetsRoot, app.mainMenu)
+	} else {
+		fmt.Printf("gui startup: assets=%s mainMenu=%t\n", app.assetsRoot, app.mainMenu)
+	}
+
+	if err := app.loadAssets(); err != nil {
+		fmt.Printf("gui asset warning: %v\n", err)
+	}
+	panoramaLoaded := true
+	for i := range app.texPanorama {
+		if app.texPanorama[i] == nil {
+			panoramaLoaded = false
+			break
+		}
+	}
+	fmt.Printf("gui assets: font=%t widgets=%t icons=%t options_bg=%t inventory=%t title=%t panorama=%t skybox_rt=%t sun=%t moon=%t clouds=%t\n",
+		app.font != nil, app.texWidgets != nil, app.texIcons != nil, app.texOptionsBG != nil, app.texInventory != nil, app.texTitle != nil, panoramaLoaded, app.texMenuView != nil, app.texSun != nil, app.texMoonPhases != nil, app.texClouds != nil)
+	defer app.releaseAssets()
+	app.updateGUIMetrics()
+	winW, winH := window.GetSize()
+	scaleX, scaleY := window.GetContentScale()
+	fmt.Printf("gui metrics: window=%dx%d framebuffer=%dx%d guiScale=%d gui=%dx%d contentScale=%.2fx%.2f\n",
+		winW, winH, app.width, app.height, app.uiScale(), app.uiWidth(), app.uiHeight(), scaleX, scaleY)
+	app.initAllMenuButtons()
+
+	app.applyCursorMode()
+	window.SetFramebufferSizeCallback(func(w *glfw.Window, width, height int) {
+		app.width = maxInt(width, 1)
+		app.height = maxInt(height, 1)
+		app.updateGUIMetrics()
+		gl.Viewport(0, 0, int32(app.width), int32(app.height))
+	})
+	window.SetCharCallback(func(_ *glfw.Window, char rune) {
+		app.enqueueTypedRune(char)
+	})
+	gl.Viewport(0, 0, int32(app.width), int32(app.height))
+
+	app.initGLState()
+	return app.loop()
+}
+
+func (a *App) loadAssets() error {
+	var errs []string
+
+	loadGUI := func(rel string, nearest bool) *texture2D {
+		tex, _, err := loadTexture2DWithFlip(filepath.Join(a.assetsRoot, rel), nearest, false)
+		if err != nil {
+			errs = append(errs, err.Error())
+			return nil
+		}
+		return tex
+	}
+
+	a.texWidgets = loadGUI(filepath.Join("textures", "gui", "widgets.png"), true)
+	a.texIcons = loadGUI(filepath.Join("textures", "gui", "icons.png"), true)
+	a.texOptionsBG = loadGUI(filepath.Join("textures", "gui", "options_background.png"), true)
+	a.texInventory = loadGUI(filepath.Join("textures", "gui", "container", "inventory.png"), true)
+	a.texTitle = loadGUI(filepath.Join("textures", "gui", "title", "minecraft.png"), true)
+	for i := 0; i < len(a.texPanorama); i++ {
+		a.texPanorama[i] = loadGUI(filepath.Join("textures", "gui", "title", "background", fmt.Sprintf("panorama_%d.png", i)), true)
+	}
+	a.texSun = loadGUI(filepath.Join("textures", "environment", "sun.png"), false)
+	a.texMoonPhases = loadGUI(filepath.Join("textures", "environment", "moon_phases.png"), false)
+	a.texClouds = loadGUI(filepath.Join("textures", "environment", "clouds.png"), true)
+	if a.texClouds != nil {
+		a.texClouds.setWrapRepeat(true)
+	}
+	menuView, err := newEmptyTexture2D(256, 256, false)
+	if err != nil {
+		errs = append(errs, err.Error())
+	} else {
+		a.texMenuView = menuView
+	}
+
+	font, err := loadFontRenderer(
+		filepath.Join(a.assetsRoot, "textures", "font", "ascii.png"),
+		discoverFontCharsPath(a.assetsRoot),
+	)
+	if err != nil {
+		errs = append(errs, err.Error())
+	} else {
+		a.font = font
+	}
+
+	a.splashText = a.loadSplashText(filepath.Join(a.assetsRoot, "texts", "splashes.txt"))
+	if a.splashText == "" {
+		a.splashText = "missingno"
+	}
+	if err := a.loadBlockTextures(); err != nil {
+		errs = append(errs, err.Error())
+	}
+	if err := a.loadEntityTextures(); err != nil {
+		errs = append(errs, err.Error())
+	}
+
+	if len(errs) > 0 {
+		return errors.New(strings.Join(errs, "; "))
+	}
+	return nil
+}
+
+func (a *App) loadSplashText(path string) string {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return ""
+	}
+	lines := strings.Split(strings.ReplaceAll(string(data), "\r\n", "\n"), "\n")
+	splashes := make([]string, 0, len(lines))
+	for _, line := range lines {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		splashes = append(splashes, line)
+	}
+	if len(splashes) == 0 {
+		return ""
+	}
+	rng := rand.New(rand.NewSource(time.Now().UnixNano()))
+	return splashes[rng.Intn(len(splashes))]
+}
+
+func (a *App) releaseAssets() {
+	a.releaseChunkRenderCache()
+	a.releaseSkyRenderLists()
+	if a.font != nil {
+		a.font.delete()
+	}
+	if a.texWidgets != nil {
+		a.texWidgets.delete()
+	}
+	if a.texIcons != nil {
+		a.texIcons.delete()
+	}
+	if a.texOptionsBG != nil {
+		a.texOptionsBG.delete()
+	}
+	if a.texInventory != nil {
+		a.texInventory.delete()
+	}
+	if a.texTitle != nil {
+		a.texTitle.delete()
+	}
+	for i := range a.texPanorama {
+		if a.texPanorama[i] != nil {
+			a.texPanorama[i].delete()
+		}
+	}
+	if a.texMenuView != nil {
+		a.texMenuView.delete()
+	}
+	if a.texSun != nil {
+		a.texSun.delete()
+	}
+	if a.texMoonPhases != nil {
+		a.texMoonPhases.delete()
+	}
+	if a.texClouds != nil {
+		a.texClouds.delete()
+	}
+	for name, tex := range a.blockTextures {
+		if tex != nil {
+			tex.delete()
+		}
+		delete(a.blockTextures, name)
+	}
+	for name, tex := range a.entityTextures {
+		if tex != nil {
+			tex.delete()
+		}
+		delete(a.entityTextures, name)
+	}
+}
+
+func (a *App) releaseChunkRenderCache() {
+	for key, entry := range a.chunkRenderCache {
+		if entry != nil && entry.listID != 0 {
+			gl.DeleteLists(entry.listID, 1)
+		}
+		delete(a.chunkRenderCache, key)
+	}
+}
+
+func (a *App) releaseSkyRenderLists() {
+	if a.skyStarListID != 0 {
+		gl.DeleteLists(a.skyStarListID, 3)
+	}
+	a.skyStarListID = 0
+	a.skyListID = 0
+	a.skyList2ID = 0
+}
+
+func (a *App) initGLState() {
+	gl.ClearColor(0.53, 0.81, 0.92, 1.0)
+	gl.Enable(gl.DEPTH_TEST)
+	gl.DepthFunc(gl.LEQUAL)
+	gl.Enable(gl.CULL_FACE)
+	gl.CullFace(gl.BACK)
+	// Vanilla-like cutout rendering for alpha textures (flowers/grass/reeds).
+	gl.Enable(gl.ALPHA_TEST)
+	gl.AlphaFunc(gl.GREATER, 0.1)
+	gl.Disable(gl.BLEND)
+	a.initSkyRenderLists()
+}
+
+func autoGUIScale(displayW, displayH int) int {
+	scale := 1
+	for displayW/(scale+1) >= 320 && displayH/(scale+1) >= 240 {
+		scale++
+	}
+	return maxInt(scale, 1)
+}
+
+func (a *App) uiWidth() int {
+	if a.guiW > 0 {
+		return a.guiW
+	}
+	return maxInt(a.width, 1)
+}
+
+func (a *App) uiHeight() int {
+	if a.guiH > 0 {
+		return a.guiH
+	}
+	return maxInt(a.height, 1)
+}
+
+func (a *App) uiScale() int {
+	if a.guiS > 0 {
+		return a.guiS
+	}
+	return 1
+}
+
+func (a *App) updateGUIMetrics() {
+	newS := autoGUIScale(maxInt(a.width, 1), maxInt(a.height, 1))
+	// Translation reference:
+	// - net.minecraft.src.ScaledResolution
+	// Vanilla uses ceil(display / scaleFactor).
+	newW := maxInt(int(math.Ceil(float64(a.width)/float64(newS))), 1)
+	newH := maxInt(int(math.Ceil(float64(a.height)/float64(newS))), 1)
+	changed := newS != a.guiS || newW != a.guiW || newH != a.guiH
+	a.guiS = newS
+	a.guiW = newW
+	a.guiH = newH
+
+	if !changed {
+		return
+	}
+	if a.paused {
+		a.initPauseButtons()
+		a.initPauseOptionsButtons()
+	}
+	if a.mainMenu {
+		a.initAllMenuButtons()
+	}
+}
+
+func (a *App) loop() error {
+	var snap netclient.StateSnapshot
+	if a.session != nil {
+		snap = a.session.Snapshot()
+		a.yaw = float64(snap.PlayerYaw)
+		a.pitch = float64(snap.PlayerPitch)
+		a.renderArmYaw = a.yaw
+		a.renderArmPitch = a.pitch
+		a.prevRenderArmYaw = a.yaw
+		a.prevRenderArmPitch = a.pitch
+		a.localOnGround = snap.OnGround
+		a.resetRenderTrackFromSnapshot(snap)
+	}
+
+	lastTime := time.Now()
+	lastTitleUpdate := time.Now()
+	titleInterval := 250 * time.Millisecond
+
+	for !a.window.ShouldClose() {
+		if a.session != nil {
+			select {
+			case <-a.session.Done():
+				err := a.session.Wait()
+				a.session = nil
+				a.eventsCh = nil
+				a.chatClosed = true
+				a.paused = false
+				a.pauseScreen = pauseScreenMain
+				a.inventoryOpen = false
+				a.chatInputOpen = false
+				a.chatInput = ""
+				a.chatDraft = ""
+				a.chatHistPos = len(a.chatHistory)
+				a.mainMenu = true
+				a.menuScreen = menuScreenMain
+				if err != nil {
+					a.menuStatus = fmt.Sprintf("Disconnected: %v", err)
+				}
+				a.initAllMenuButtons()
+				a.applyCursorMode()
+			default:
+			}
+		}
+
+		now := time.Now()
+		delta := now.Sub(lastTime).Seconds()
+		if delta <= 0 {
+			delta = 1.0 / 60.0
+		}
+		if delta > 0.1 {
+			delta = 0.1
+		}
+		lastTime = now
+
+		glfw.PollEvents()
+		if !a.handleInput(delta) {
+			return nil
+		}
+		if a.session != nil && now.Sub(a.lastOnGround) >= time.Second {
+			_ = a.session.SendOnGround(a.localOnGround)
+			a.lastOnGround = now
+		}
+		a.drainSessionEvents()
+		if a.mainMenu && a.menuScreen == menuScreenMain {
+			a.panoramaFrac += delta * 20.0
+			whole := int(a.panoramaFrac)
+			if whole > 0 {
+				a.panoramaTick += whole
+				a.panoramaFrac -= float64(whole)
+			}
+		} else {
+			a.panoramaFrac = 0
+		}
+
+		target := blockTarget{}
+		if a.session != nil {
+			snap = a.session.Snapshot()
+			if a.syncRenderTrackFromSnapshot(snap) {
+				a.renderLerpTime = 0
+			} else {
+				a.renderLerpTime += delta
+				if a.renderLerpTime > moveTickSeconds {
+					a.renderLerpTime = moveTickSeconds
+				}
+			}
+			if !a.mainMenu {
+				target = a.pickBlockTarget(snap, interactReach)
+			}
+		}
+		a.prevRenderArmPitch = a.renderArmPitch
+		a.prevRenderArmYaw = a.renderArmYaw
+		a.renderArmPitch += (a.pitch - a.renderArmPitch) * 0.5
+		a.renderArmYaw += (a.yaw - a.renderArmYaw) * 0.5
+		a.render(snap, target)
+		a.window.SwapBuffers()
+		if a.fpsWindowStart.IsZero() {
+			a.fpsWindowStart = now
+		}
+		a.fpsFrames++
+		elapsedFPS := now.Sub(a.fpsWindowStart)
+		if elapsedFPS >= time.Second {
+			a.currentFPS = int(math.Round(float64(a.fpsFrames) / elapsedFPS.Seconds()))
+			a.fpsFrames = 0
+			a.fpsWindowStart = now
+		}
+
+		if now.Sub(lastTitleUpdate) >= titleInterval {
+			if a.mainMenu {
+				a.window.SetTitle("GoMC - Main Menu")
+			} else if a.paused {
+				a.window.SetTitle("GoMC GUI | PAUSED")
+			} else {
+				a.window.SetTitle(fmt.Sprintf("GoMC GUI | %d fps | hp=%.1f food=%d pos=(%.1f,%.1f,%.1f) chunks=%d ents=%d",
+					a.currentFPS, snap.Health, snap.Food, snap.PlayerX, snap.PlayerY, snap.PlayerZ, snap.LoadedChunks, snap.TrackedEntities))
+			}
+			lastTitleUpdate = now
+		}
+
+		a.syncFrameRate(now)
+	}
+
+	return nil
+}
+
+func (a *App) resetRenderTrackFromSnapshot(snap netclient.StateSnapshot) {
+	a.renderTrackInit = true
+	a.renderPrevX = snap.PlayerX
+	a.renderPrevY = snap.PlayerY
+	a.renderPrevZ = snap.PlayerZ
+	a.renderCurrX = snap.PlayerX
+	a.renderCurrY = snap.PlayerY
+	a.renderCurrZ = snap.PlayerZ
+	a.renderLerpTime = moveTickSeconds
+}
+
+func (a *App) syncRenderTrackFromSnapshot(snap netclient.StateSnapshot) bool {
+	if !a.renderTrackInit {
+		a.resetRenderTrackFromSnapshot(snap)
+		return true
+	}
+	dx := math.Abs(snap.PlayerX-a.renderCurrX) + math.Abs(snap.PlayerY-a.renderCurrY) + math.Abs(snap.PlayerZ-a.renderCurrZ)
+	if dx <= 1.0e-9 {
+		return false
+	}
+	// Teleports/corrections should snap immediately to avoid camera smearing.
+	if dx > 4.0 {
+		a.resetRenderTrackFromSnapshot(snap)
+		return true
+	}
+	a.renderPrevX = a.renderCurrX
+	a.renderPrevY = a.renderCurrY
+	a.renderPrevZ = a.renderCurrZ
+	a.renderCurrX = snap.PlayerX
+	a.renderCurrY = snap.PlayerY
+	a.renderCurrZ = snap.PlayerZ
+	return true
+}
+
+func (a *App) interpolatedRenderPlayer(alpha float64, snap netclient.StateSnapshot) (float64, float64, float64) {
+	if !a.renderTrackInit {
+		return snap.PlayerX, snap.PlayerY, snap.PlayerZ
+	}
+	if alpha < 0 {
+		alpha = 0
+	}
+	if alpha > 1 {
+		alpha = 1
+	}
+	inv := 1.0 - alpha
+	x := a.renderPrevX*inv + a.renderCurrX*alpha
+	y := a.renderPrevY*inv + a.renderCurrY*alpha
+	z := a.renderPrevZ*inv + a.renderCurrZ*alpha
+	return x, y, z
+}
+
+func (a *App) handleInput(deltaSeconds float64) bool {
+	// Keep framebuffer metrics authoritative even if framebuffer callback did not fire yet.
+	fbW, fbH := a.window.GetFramebufferSize()
+	if fbW <= 0 {
+		fbW = 1
+	}
+	if fbH <= 0 {
+		fbH = 1
+	}
+	if fbW != a.width || fbH != a.height {
+		a.width = fbW
+		a.height = fbH
+		gl.Viewport(0, 0, int32(a.width), int32(a.height))
+	}
+	a.updateGUIMetrics()
+	x, y := a.window.GetCursorPos()
+	winW, winH := a.window.GetSize()
+	if winW <= 0 {
+		winW = 1
+	}
+	if winH <= 0 {
+		winH = 1
+	}
+	uiW, uiH := a.uiWidth(), a.uiHeight()
+	// Translation reference:
+	// - net.minecraft.src.GuiScreen.handleMouseInput()
+	// Vanilla mapping: mouseX = eventX * scaledWidth / displayWidth
+	// (y inversion is not needed here because GLFW cursor Y is top-origin.)
+	a.mouseX = int(x * float64(uiW) / float64(winW))
+	a.mouseY = int(y * float64(uiH) / float64(winH))
+	if a.mouseX < 0 {
+		a.mouseX = 0
+	} else if a.mouseX >= uiW {
+		a.mouseX = uiW - 1
+	}
+	if a.mouseY < 0 {
+		a.mouseY = 0
+	} else if a.mouseY >= uiH {
+		a.mouseY = uiH - 1
+	}
+
+	enterPressed := a.window.GetKey(glfw.KeyEnter) == glfw.Press || a.window.GetKey(glfw.KeyKPEnter) == glfw.Press
+	escPressed := a.window.GetKey(glfw.KeyEscape) == glfw.Press
+	backspacePressed := a.window.GetKey(glfw.KeyBackspace) == glfw.Press
+	ePressed := a.window.GetKey(glfw.KeyE) == glfw.Press
+	tPressed := a.window.GetKey(glfw.KeyT) == glfw.Press
+	slashPressed := a.window.GetKey(glfw.KeySlash) == glfw.Press
+	upPressed := a.window.GetKey(glfw.KeyUp) == glfw.Press
+	downPressed := a.window.GetKey(glfw.KeyDown) == glfw.Press
+	leftMouse := a.window.GetMouseButton(glfw.MouseButtonLeft) == glfw.Press
+	rightMouse := a.window.GetMouseButton(glfw.MouseButtonRight) == glfw.Press
+	spacePressed := a.window.GetKey(glfw.KeySpace) == glfw.Press
+	sneakPressed := a.window.GetKey(glfw.KeyLeftShift) == glfw.Press || a.window.GetKey(glfw.KeyRightShift) == glfw.Press
+	sprintPressed := a.window.GetKey(glfw.KeyLeftControl) == glfw.Press || a.window.GetKey(glfw.KeyRightControl) == glfw.Press
+
+	defer func() {
+		a.prevLeftMouse = leftMouse
+		a.prevRightMouse = rightMouse
+		a.prevEnter = enterPressed
+		a.prevSpace = spacePressed
+		a.prevBackspace = backspacePressed
+		a.prevE = ePressed
+		a.prevT = tPressed
+		a.prevSlash = slashPressed
+		a.prevUp = upPressed
+		a.prevDown = downPressed
+	}()
+
+	if escPressed && !a.prevEsc && a.mainMenu {
+		a.prevEsc = escPressed
+		if a.handleMenuEscape() {
+			return true
+		}
+		return false
+	}
+	if escPressed && !a.prevEsc && !a.mainMenu {
+		if a.chatInputOpen {
+			a.closeChatInput(true)
+			a.prevEsc = escPressed
+			return true
+		}
+		if a.inventoryOpen {
+			a.closeInventoryScreen()
+			a.prevEsc = escPressed
+			return true
+		}
+		if a.paused {
+			if a.pauseScreen == pauseScreenOptions {
+				a.pauseScreen = pauseScreenMain
+			} else {
+				a.setPaused(false)
+			}
+		} else {
+			a.setPaused(true)
+		}
+		a.prevEsc = escPressed
+		return true
+	}
+	a.prevEsc = escPressed
+
+	f1Pressed := a.window.GetKey(glfw.KeyF1) == glfw.Press
+	if f1Pressed && !a.prevF1 {
+		a.hudHidden = !a.hudHidden
+	}
+	a.prevF1 = f1Pressed
+
+	f3Pressed := a.window.GetKey(glfw.KeyF3) == glfw.Press
+	if f3Pressed && !a.prevF3 {
+		a.showDebug = !a.showDebug
+	}
+	a.prevF3 = f3Pressed
+
+	if a.mainMenu {
+		a.moveTickAccum = 0
+		return a.handleMainMenuInput(leftMouse, enterPressed)
+	}
+	if a.session == nil {
+		a.moveTickAccum = 0
+		a.paused = false
+		a.pauseScreen = pauseScreenMain
+		a.mainMenu = true
+		a.menuScreen = menuScreenMain
+		a.menuStatus = "No active world session."
+		a.applyCursorMode()
+		return true
+	}
+
+	if a.paused {
+		a.moveTickAccum = 0
+		if leftMouse && !a.prevLeftMouse {
+			for _, b := range a.currentPauseButtons() {
+				if b == nil || !b.Enabled || !b.contains(a.mouseX, a.mouseY) {
+					continue
+				}
+				audio.PlaySoundKey("random.click", 1.0, 1.0)
+				if a.pauseScreen == pauseScreenOptions {
+					a.handlePauseOptionButton(b.ID)
+				} else {
+					if !a.handlePauseMenuButton(b.ID) {
+						return false
+					}
+				}
+				break
+			}
+		}
+		return true
+	}
+
+	if a.chatInputOpen {
+		a.moveTickAccum = 0
+		runes := a.consumeTypedRunes()
+		for _, ch := range runes {
+			a.appendChatRune(ch)
+		}
+		if backspacePressed && !a.prevBackspace {
+			a.chatInput = trimLastRune(a.chatInput)
+		}
+		if upPressed && !a.prevUp {
+			a.moveChatHistory(-1)
+		}
+		if downPressed && !a.prevDown {
+			a.moveChatHistory(1)
+		}
+		if enterPressed && !a.prevEnter {
+			msg := strings.TrimSpace(a.chatInput)
+			if msg != "" {
+				a.pushChatHistory(msg)
+				_ = a.session.SendChat(msg)
+			}
+			a.closeChatInput(true)
+		}
+		return true
+	}
+
+	if ePressed && !a.prevE {
+		if a.inventoryOpen {
+			a.closeInventoryScreen()
+		} else {
+			a.openInventoryScreen()
+		}
+		return true
+	}
+	if a.inventoryOpen {
+		a.moveTickAccum = 0
+		if leftMouse && !a.prevLeftMouse {
+			a.handleInventoryClick(false, sneakPressed)
+		}
+		if rightMouse && !a.prevRightMouse {
+			a.handleInventoryClick(true, sneakPressed)
+		}
+		return true
+	}
+
+	if (tPressed && !a.prevT) || (enterPressed && !a.prevEnter) {
+		a.openChatInput("")
+		return true
+	}
+	if slashPressed && !a.prevSlash {
+		a.openChatInput("/")
+		return true
+	}
+
+	snapMove := a.session.Snapshot()
+	allowFlight := snapMove.CanFly || snapMove.IsCreative
+	flyingNow := snapMove.IsFlying
+	if allowFlight && spacePressed && !a.prevSpace {
+		if !a.lastSpaceTap.IsZero() && time.Since(a.lastSpaceTap) <= 250*time.Millisecond {
+			flyingNow = !flyingNow
+			_ = a.session.SetFlying(flyingNow)
+			a.lastSpaceTap = time.Time{}
+		} else {
+			a.lastSpaceTap = time.Now()
+		}
+	}
+
+	if a.firstMouse {
+		a.lastMouseX = x
+		a.lastMouseY = y
+		a.firstMouse = false
+	}
+
+	dxMouse := x - a.lastMouseX
+	dyMouse := y - a.lastMouseY
+	a.lastMouseX = x
+	a.lastMouseY = y
+
+	if dxMouse != 0 || dyMouse != 0 {
+		a.yaw += dxMouse * a.mouseSens
+		// Match vanilla non-invert mouse look: moving mouse up looks up.
+		a.pitch += dyMouse * a.mouseSens
+		if a.pitch > 89.9 {
+			a.pitch = 89.9
+		}
+		if a.pitch < -89.9 {
+			a.pitch = -89.9
+		}
+		_ = a.session.Look(float32(a.yaw), float32(a.pitch))
+	}
+
+	if leftMouse && !a.prevLeftMouse {
+		a.startHandSwing()
+		_ = a.session.SwingArm()
+		snapNow := a.session.Snapshot()
+		blockHit := a.pickBlockTarget(snapNow, interactReach)
+		entityHit := a.pickEntityTarget(snapNow, interactReach)
+		blockDist := a.blockTargetDistance(snapNow, blockHit)
+
+		if entityHit.Hit && (!blockHit.Hit || entityHit.Dist <= blockDist) {
+			_ = a.session.UseEntity(entityHit.EntityID, true)
+		} else if blockHit.Hit {
+			id, _, ok := a.session.BlockAt(blockHit.X, blockHit.Y, blockHit.Z)
+			_ = a.session.DigBlock(int32(blockHit.X), int32(blockHit.Y), int32(blockHit.Z), blockHit.Face)
+			if ok && id > 0 && !block.IsLiquid(id) {
+				audio.PlayDigBlock(id)
+			}
+		}
+	}
+
+	if rightMouse && !a.prevRightMouse {
+		snapNow := a.session.Snapshot()
+		target := a.pickBlockTarget(snapNow, interactReach)
+		if target.Hit {
+			_ = a.session.PlaceHeldBlock(int32(target.X), int32(target.Y), int32(target.Z), target.Face)
+			audio.PlayPlaceHeldItem(int(snapNow.HeldItemID))
+		}
+	}
+
+	for i := 0; i < 9; i++ {
+		key := glfw.Key(int(glfw.Key1) + i)
+		pressed := a.window.GetKey(key) == glfw.Press
+		if pressed && !a.prevDigit[i] {
+			_ = a.session.SelectHotbar(int16(i))
+		}
+		a.prevDigit[i] = pressed
+	}
+
+	if sneakPressed != a.prevSneakKey {
+		_ = a.session.SetSneaking(sneakPressed)
+		a.prevSneakKey = sneakPressed
+	}
+	if sprintPressed != a.prevSprintKey {
+		_ = a.session.SetSprinting(sprintPressed)
+		a.prevSprintKey = sprintPressed
+	}
+
+	forward := 0.0
+	strafe := 0.0
+	if a.window.GetKey(glfw.KeyW) == glfw.Press {
+		forward += 1.0
+	}
+	if a.window.GetKey(glfw.KeyS) == glfw.Press {
+		forward -= 1.0
+	}
+	if a.window.GetKey(glfw.KeyA) == glfw.Press {
+		strafe += 1.0
+	}
+	if a.window.GetKey(glfw.KeyD) == glfw.Press {
+		strafe -= 1.0
+	}
+	a.moveTickAccum += deltaSeconds
+	maxAccum := moveTickSeconds * float64(maxMoveCatchUp)
+	if a.moveTickAccum > maxAccum {
+		a.moveTickAccum = maxAccum
+	}
+	for a.moveTickAccum >= moveTickSeconds {
+		a.applyMovementTick(
+			moveTickSeconds,
+			forward,
+			strafe,
+			spacePressed,
+			sneakPressed,
+			sprintPressed,
+			allowFlight,
+			flyingNow,
+		)
+		a.moveTickAccum -= moveTickSeconds
+	}
+	return true
+}
+
+func (a *App) applyMovementTick(
+	stepSeconds float64,
+	forward, strafe float64,
+	spacePressed, sneakPressed, sprintPressed bool,
+	allowFlight, flyingNow bool,
+) {
+	if a.session == nil {
+		return
+	}
+
+	snapMove := a.session.Snapshot()
+	speed := a.moveSpeed * stepSeconds
+	if sprintPressed {
+		speed *= 1.30
+	}
+	if sneakPressed {
+		speed *= 0.30
+	}
+
+	dxDesired, dzDesired := movementDeltaFromYaw(a.yaw, forward, strafe, speed)
+	dyDesired := 0.0
+
+	grounded := a.playerGroundedAt(snapMove.PlayerX, snapMove.PlayerY, snapMove.PlayerZ)
+	if allowFlight && flyingNow {
+		a.velY = 0
+		if spacePressed {
+			dyDesired += speed
+		}
+		if sneakPressed {
+			dyDesired -= speed
+		}
+	} else {
+		ticks := stepSeconds * 20.0
+		if grounded {
+			// Translation reference:
+			// - net.minecraft.src.MovementInputFromOptions.jump (hold-to-jump behavior)
+			// - net.minecraft.src.EntityLivingBase.moveEntityWithHeading()
+			if spacePressed {
+				a.velY = jumpVelocity
+			} else if a.velY < 0 {
+				a.velY = 0
+			}
+		} else {
+			a.velY = (a.velY - gravityPerTick*ticks) * math.Pow(dragPerTick, ticks)
+		}
+		dyDesired = a.velY * ticks
+	}
+
+	dxMove, dyMove, dzMove, groundedAfter := a.resolvePlayerMovement(
+		snapMove.PlayerX,
+		snapMove.PlayerY,
+		snapMove.PlayerZ,
+		dxDesired,
+		dyDesired,
+		dzDesired,
+	)
+	if dyDesired < 0 && dyMove > dyDesired+1e-6 {
+		a.velY = 0
+	}
+	a.localOnGround = groundedAfter
+	a.session.SetLocalOnGround(groundedAfter)
+	if dxMove != 0 || dyMove != 0 || dzMove != 0 {
+		_ = a.session.MoveRelative(dxMove, dyMove, dzMove)
+	}
+}
+
+func (a *App) setPaused(paused bool) {
+	a.paused = paused
+	a.moveTickAccum = 0
+	a.firstMouse = true
+	if paused {
+		a.pauseScreen = pauseScreenMain
+		a.initPauseButtons()
+		a.initPauseOptionsButtons()
+	} else {
+		a.pauseScreen = pauseScreenMain
+	}
+	a.applyCursorMode()
+}
+
+func (a *App) currentPauseButtons() []*guiButton {
+	if a.pauseScreen == pauseScreenOptions {
+		return a.pauseOptionButtons
+	}
+	return a.pauseButtons
+}
+
+func (a *App) handlePauseMenuButton(id int) bool {
+	switch id {
+	case buttonIDPauseReturnToGame:
+		a.setPaused(false)
+	case buttonIDPauseDisconnect:
+		a.disconnectToMainMenu("")
+	case buttonIDPauseOptions:
+		a.pauseScreen = pauseScreenOptions
+		a.updateOptionButtonsState()
+	case buttonIDPauseAchievements:
+		a.menuStatus = "Achievements screen is not implemented yet."
+	case buttonIDPauseStats:
+		a.menuStatus = "Statistics screen is not implemented yet."
+	case buttonIDPauseShareToLAN:
+		a.menuStatus = "Open to LAN is not implemented yet."
+	}
+	return true
+}
+
+func (a *App) handlePauseOptionButton(id int) {
+	switch id {
+	case buttonIDOptionDone:
+		a.pauseScreen = pauseScreenMain
+		a.menuStatus = ""
+	case buttonIDOptionDifficulty:
+		a.optionDifficulty = (a.optionDifficulty + 1) & 3
+	case buttonIDOptionRDMinus:
+		if a.renderDistance > 4 {
+			a.renderDistance -= 4
+		}
+	case buttonIDOptionRDPlus:
+		if a.renderDistance < 96 {
+			a.renderDistance += 4
+		}
+	case buttonIDOptionSensMinus:
+		a.mouseSens -= 0.02
+		if a.mouseSens < 0.02 {
+			a.mouseSens = 0.02
+		}
+	case buttonIDOptionSensPlus:
+		a.mouseSens += 0.02
+		if a.mouseSens > 0.50 {
+			a.mouseSens = 0.50
+		}
+	case buttonIDOptionMusic, buttonIDOptionVideo, buttonIDOptionControls, buttonIDOptionLanguage, buttonIDOptionSnooper:
+		a.menuStatus = "This options page is not implemented yet."
+	}
+	a.updateOptionButtonsState()
+}
+
+func (a *App) disconnectToMainMenu(status string) {
+	if a.session != nil {
+		a.replaceSession(nil)
+	}
+	a.mainMenu = true
+	a.paused = false
+	a.pauseScreen = pauseScreenMain
+	a.menuScreen = menuScreenMain
+	a.inventoryOpen = false
+	a.chatInputOpen = false
+	a.chatInput = ""
+	a.chatDraft = ""
+	if status != "" {
+		a.menuStatus = status
+	} else {
+		a.menuStatus = ""
+	}
+	a.firstMouse = true
+	a.initAllMenuButtons()
+	a.applyCursorMode()
+}
+
+func (a *App) openChatInput(initial string) {
+	if a.session == nil || a.mainMenu || a.paused {
+		return
+	}
+	a.chatInputOpen = true
+	a.chatInput = initial
+	a.chatDraft = initial
+	a.chatHistPos = len(a.chatHistory)
+	a.inventoryOpen = false
+	a.typedRuneQueue = a.typedRuneQueue[:0]
+	a.firstMouse = true
+	a.moveTickAccum = 0
+	a.applyCursorMode()
+}
+
+func (a *App) closeChatInput(clear bool) {
+	if !a.chatInputOpen {
+		return
+	}
+	a.chatInputOpen = false
+	if clear {
+		a.chatInput = ""
+	}
+	a.chatDraft = ""
+	a.chatHistPos = len(a.chatHistory)
+	a.typedRuneQueue = a.typedRuneQueue[:0]
+	a.firstMouse = true
+	a.applyCursorMode()
+}
+
+func (a *App) appendChatRune(ch rune) {
+	if ch < 32 || ch == 127 {
+		return
+	}
+	if ch == '\n' || ch == '\r' {
+		return
+	}
+	if len([]rune(a.chatInput)) >= 100 {
+		return
+	}
+	a.chatInput += string(ch)
+	if a.chatHistPos >= len(a.chatHistory) {
+		a.chatDraft = a.chatInput
+	}
+}
+
+func (a *App) pushChatHistory(message string) {
+	if message == "" {
+		return
+	}
+	a.chatHistory = append(a.chatHistory, message)
+	if len(a.chatHistory) > 100 {
+		a.chatHistory = a.chatHistory[len(a.chatHistory)-100:]
+	}
+	a.chatHistPos = len(a.chatHistory)
+	a.chatDraft = ""
+}
+
+func (a *App) moveChatHistory(delta int) {
+	if len(a.chatHistory) == 0 || delta == 0 {
+		return
+	}
+	if a.chatHistPos < 0 || a.chatHistPos > len(a.chatHistory) {
+		a.chatHistPos = len(a.chatHistory)
+	}
+	if delta < 0 {
+		if a.chatHistPos == len(a.chatHistory) {
+			a.chatDraft = a.chatInput
+		}
+		if a.chatHistPos > 0 {
+			a.chatHistPos--
+		}
+		a.chatInput = a.chatHistory[a.chatHistPos]
+		return
+	}
+	if a.chatHistPos < len(a.chatHistory)-1 {
+		a.chatHistPos++
+		a.chatInput = a.chatHistory[a.chatHistPos]
+		return
+	}
+	if a.chatHistPos == len(a.chatHistory)-1 {
+		a.chatHistPos = len(a.chatHistory)
+		a.chatInput = a.chatDraft
+	}
+}
+
+func (a *App) openInventoryScreen() {
+	if a.session == nil || a.mainMenu || a.paused {
+		return
+	}
+	a.inventoryOpen = true
+	a.chatInputOpen = false
+	a.chatInput = ""
+	a.typedRuneQueue = a.typedRuneQueue[:0]
+	a.firstMouse = true
+	a.moveTickAccum = 0
+	a.applyCursorMode()
+}
+
+func (a *App) closeInventoryScreen() {
+	if !a.inventoryOpen {
+		return
+	}
+	a.inventoryOpen = false
+	a.firstMouse = true
+	a.applyCursorMode()
+	if a.session != nil {
+		_ = a.session.CloseInventoryWindow()
+	}
+}
+
+func (a *App) handleInventoryClick(rightClick bool, shift bool) {
+	if a.session == nil {
+		return
+	}
+	slot := a.playerInventorySlotAt(a.mouseX, a.mouseY)
+	_ = a.session.ClickWindowSlot(slot, rightClick, shift)
+}
+
+func (a *App) playerInventorySlotAt(mouseX, mouseY int) int16 {
+	slot := int16(-999)
+	a.forEachPlayerInventorySlot(func(candidate int16, x, y int) {
+		if slot != -999 {
+			return
+		}
+		if mouseX >= x && mouseX < x+16 && mouseY >= y && mouseY < y+16 {
+			slot = candidate
+		}
+	})
+	return slot
+}
+
+func (a *App) playerInventoryScreenOrigin() (int, int) {
+	return a.uiWidth()/2 - 88, a.uiHeight()/2 - 83
+}
+
+func (a *App) forEachPlayerInventorySlot(fn func(slot int16, x, y int)) {
+	left, top := a.playerInventoryScreenOrigin()
+	for row := 0; row < 3; row++ {
+		for col := 0; col < 9; col++ {
+			fn(int16(9+row*9+col), left+8+col*18, top+84+row*18)
+		}
+	}
+	for col := 0; col < 9; col++ {
+		fn(int16(36+col), left+8+col*18, top+142)
+	}
+}
+
+func (a *App) drawInventorySlotText(stack netclient.InventorySlotSnapshot, x, y int) {
+	if a.font == nil || stack.ItemID <= 0 || stack.StackSize <= 0 {
+		return
+	}
+	if stack.StackSize > 1 {
+		count := strconv.Itoa(int(stack.StackSize))
+		a.font.drawStringWithShadow(count, x+17-a.font.getStringWidth(count), y+9, 0xFFFFFF)
+	}
+}
+
+func (a *App) inventoryHoverLabel(stack netclient.InventorySlotSnapshot) string {
+	if stack.ItemID <= 0 || stack.StackSize <= 0 {
+		return ""
+	}
+	if stack.StackSize > 1 {
+		return fmt.Sprintf("ID %d x%d", stack.ItemID, stack.StackSize)
+	}
+	return fmt.Sprintf("ID %d", stack.ItemID)
+}
+
+func (a *App) drawInventoryScreen() {
+	if a.session == nil {
+		return
+	}
+	uiW, uiH := a.uiWidth(), a.uiHeight()
+	left, top := a.playerInventoryScreenOrigin()
+
+	gl.Disable(gl.DEPTH_TEST)
+	gl.Disable(gl.CULL_FACE)
+	begin2D(uiW, uiH)
+	gl.Enable(gl.BLEND)
+	gl.BlendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA)
+
+	drawGradientRect(0, 0, uiW, uiH, 0x80101010, 0x80101010)
+	if a.texInventory != nil {
+		gl.Enable(gl.TEXTURE_2D)
+		gl.Color4f(1, 1, 1, 1)
+		drawTexturedRect(a.texInventory, float32(left), float32(top), 176, 166, 0, 0, 176, 166)
+	} else {
+		drawSolidRect(left, top, left+176, top+166, 0xC0101010)
+	}
+	a.drawInventoryPlayerPreview(left, top)
+
+	inv := a.session.InventorySnapshot()
+	hoveredSlot := int16(-1)
+	a.forEachPlayerInventorySlot(func(slot int16, x, y int) {
+		if a.mouseX >= x && a.mouseX < x+16 && a.mouseY >= y && a.mouseY < y+16 {
+			hoveredSlot = slot
+			drawSolidRect(x, y, x+16, y+16, 0x80FFFFFF)
+		}
+		if int(slot) >= 0 && int(slot) < len(inv) {
+			a.drawInventorySlotText(inv[int(slot)], x, y)
+		}
+	})
+
+	if hoveredSlot >= 0 && int(hoveredSlot) < len(inv) && a.font != nil {
+		label := a.inventoryHoverLabel(inv[int(hoveredSlot)])
+		if label != "" {
+			w := a.font.getStringWidth(label)
+			tx := a.mouseX + 10
+			ty := a.mouseY + 8
+			if tx+w+6 > uiW {
+				tx = uiW - w - 6
+			}
+			if ty+12 > uiH {
+				ty = uiH - 12
+			}
+			drawSolidRect(tx-3, ty-3, tx+w+3, ty+9, 0xF0100010)
+			a.font.drawStringWithShadow(label, tx, ty, 0xFFFFFF)
+		}
+	}
+
+	if a.font != nil {
+		mode := "Survival"
+		if a.session.Snapshot().IsCreative {
+			mode = "Creative"
+		}
+		a.font.drawStringWithShadow("Inventory", left+8, top+6, 0xFFFFFF)
+		a.font.drawStringWithShadow("Mode: "+mode+"  use /gamemode 0|1", left+8, top+72, 0xA0A0A0)
+	}
+
+	gl.Disable(gl.BLEND)
+	gl.Enable(gl.CULL_FACE)
+	gl.Enable(gl.DEPTH_TEST)
+}
+
+// Translation reference:
+// - net.minecraft.src.GuiInventory.drawScreen()
+// - net.minecraft.src.GuiInventory.func_110423_a(...) (drawEntityOnScreen)
+func (a *App) drawInventoryPlayerPreview(left, top int) {
+	uiW, uiH := a.uiWidth(), a.uiHeight()
+	previewX := float32(left + 51)
+	previewY := float32(top + 75)
+	scale := float32(30.0)
+
+	dx := previewX - float32(a.mouseX)
+	dy := (previewY - 50.0) - float32(a.mouseY)
+	bodyYaw := float32(math.Atan(float64(dx/40.0)) * 20.0)
+	headYaw := float32(math.Atan(float64(dx/40.0)) * 40.0)
+	headRelYaw := normalizeDegrees(headYaw - bodyYaw)
+	pitch := -float32(math.Atan(float64(dy/40.0)) * 20.0)
+
+	profile := modelProfileForEntityType(0)
+	tex := a.entityTextureForType(0)
+
+	gl.MatrixMode(gl.PROJECTION)
+	gl.PushMatrix()
+	gl.LoadIdentity()
+	gl.Ortho(0, float64(uiW), float64(uiH), 0, -200, 200)
+
+	gl.MatrixMode(gl.MODELVIEW)
+	gl.PushMatrix()
+	gl.LoadIdentity()
+
+	gl.Clear(gl.DEPTH_BUFFER_BIT)
+	gl.Enable(gl.DEPTH_TEST)
+	gl.Disable(gl.CULL_FACE)
+	gl.Enable(gl.ALPHA_TEST)
+	gl.AlphaFunc(gl.GREATER, 0.1)
+	gl.Enable(gl.TEXTURE_2D)
+
+	gl.Translatef(previewX, previewY, 100.0)
+	gl.Scalef(-scale, scale, scale)
+	gl.Rotatef(180.0, 0, 0, 1)
+	gl.Rotatef(135.0, 0, 1, 0)
+	gl.Rotatef(-135.0, 0, 1, 0)
+	gl.Rotatef(pitch, 1, 0, 0)
+	gl.Rotatef(180.0-bodyYaw, 0, 1, 0)
+	drawBipedModel(profile, tex, headRelYaw, pitch, 0, false)
+
+	gl.Color4f(1, 1, 1, 1)
+
+	gl.PopMatrix()
+	gl.MatrixMode(gl.PROJECTION)
+	gl.PopMatrix()
+	gl.MatrixMode(gl.MODELVIEW)
+
+	// Restore 2D GUI render state.
+	begin2D(uiW, uiH)
+	gl.Disable(gl.DEPTH_TEST)
+	gl.Disable(gl.CULL_FACE)
+	gl.Enable(gl.BLEND)
+	gl.BlendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA)
+}
+
+func (a *App) initPauseButtons() {
+	w := a.uiWidth()
+	h := a.uiHeight()
+	offset := -16
+	baseY := h / 4
+	quitLabel := "Disconnect"
+	if a.activeWorld != "" {
+		quitLabel = "Save and Quit to Title"
+	}
+	a.pauseButtons = []*guiButton{
+		newButton(buttonIDPauseDisconnect, w/2-100, baseY+120+offset, 200, 20, quitLabel),
+		newButton(buttonIDPauseReturnToGame, w/2-100, baseY+24+offset, 200, 20, "Return to Game"),
+		newButton(buttonIDPauseAchievements, w/2-100, baseY+48+offset, 98, 20, "Achievements"),
+		newButton(buttonIDPauseStats, w/2+2, baseY+48+offset, 98, 20, "Statistics"),
+		newButton(buttonIDPauseOptions, w/2-100, baseY+96+offset, 98, 20, "Options..."),
+		newButton(buttonIDPauseShareToLAN, w/2+2, baseY+96+offset, 98, 20, "Open to LAN"),
+	}
+	// Not implemented yet.
+	a.pauseButtons[2].Enabled = false
+	a.pauseButtons[3].Enabled = false
+	a.pauseButtons[5].Enabled = false
+}
+
+func (a *App) initPauseOptionsButtons() {
+	a.initOptionButtons()
+	a.updateOptionButtonsState()
+	a.pauseOptionButtons = append(a.pauseOptionButtons[:0], a.optionButtons...)
+}
+
+func (a *App) initMainButtons() {
+	w := a.uiWidth()
+	h := a.uiHeight()
+	baseY := h/4 + 48
+	a.mainButtons = []*guiButton{
+		newButton(buttonIDMenuSingleplayer, w/2-100, baseY, 200, 20, "Singleplayer"),
+		newButton(buttonIDMenuMultiplayer, w/2-100, baseY+24, 200, 20, "Multiplayer"),
+		newButton(buttonIDMenuOnline, w/2-100, baseY+48, 200, 20, "Minecraft Realms"),
+		newButton(buttonIDMenuOptions, w/2-100, baseY+72+12, 98, 20, "Options..."),
+		newButton(buttonIDMenuQuit, w/2+2, baseY+72+12, 98, 20, "Quit Game"),
+		newButton(buttonIDMenuLanguage, w/2-124, baseY+72+12, 20, 20, "L"),
+	}
+	// Realms and language pages are not implemented yet.
+	a.mainButtons[2].Enabled = false
+	a.mainButtons[5].Enabled = false
+}
+
+func (a *App) applyCursorMode() {
+	if a.window == nil {
+		return
+	}
+	if a.paused || a.mainMenu || a.inventoryOpen || a.chatInputOpen {
+		a.window.SetInputMode(glfw.CursorMode, glfw.CursorNormal)
+		return
+	}
+	a.window.SetInputMode(glfw.CursorMode, glfw.CursorDisabled)
+}
+
+func (a *App) replaceSession(next *netclient.Session) {
+	old := a.session
+	a.releaseChunkRenderCache()
+	a.session = next
+	if next != nil {
+		a.eventsCh = next.Events()
+		a.chatClosed = false
+		snap := next.Snapshot()
+		a.yaw = float64(snap.PlayerYaw)
+		a.pitch = float64(snap.PlayerPitch)
+	} else {
+		a.eventsCh = nil
+		a.chatClosed = true
+	}
+	a.firstMouse = true
+	a.moveTickAccum = 0
+	a.lastOnGround = time.Time{}
+	a.localOnGround = false
+	a.velY = 0
+	a.prevLeftMouse = false
+	a.prevRightMouse = false
+	a.prevEnter = false
+	a.prevSpace = false
+	a.prevBackspace = false
+	a.prevE = false
+	a.prevT = false
+	a.prevSlash = false
+	a.prevUp = false
+	a.prevDown = false
+	a.prevSneakKey = false
+	a.prevSprintKey = false
+	a.renderTrackInit = false
+	for i := range a.prevDigit {
+		a.prevDigit[i] = false
+	}
+	if next != nil {
+		a.resetRenderTrackFromSnapshot(next.Snapshot())
+	}
+	a.handSwingStart = time.Time{}
+	a.paused = false
+	a.pauseScreen = pauseScreenMain
+	a.inventoryOpen = false
+	a.chatInputOpen = false
+	a.chatInput = ""
+	a.chatDraft = ""
+	a.chatHistPos = len(a.chatHistory)
+	a.typedRuneQueue = a.typedRuneQueue[:0]
+	a.applyCursorMode()
+
+	if old != nil && old != next {
+		_ = old.Close()
+		_ = old.Wait()
+	}
+}
+
+func (a *App) render(snap netclient.StateSnapshot, target blockTarget) {
+	if a.mainMenu {
+		gl.ClearColor(0.10, 0.12, 0.16, 1.0)
+		a.drawMenuScreen()
+		return
+	}
+
+	alpha := a.renderLerpTime / moveTickSeconds
+	if alpha < 0 {
+		alpha = 0
+	} else if alpha > 1 {
+		alpha = 1
+	}
+	skyR, skyG, skyB := worldSkyColor(snap.WorldTime, float32(alpha), 0.8)
+	gl.ClearColor(skyR, skyG, skyB, 1.0)
+	gl.Clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT)
+	gl.Enable(gl.DEPTH_TEST)
+	gl.Enable(gl.CULL_FACE)
+	gl.Enable(gl.ALPHA_TEST)
+	gl.AlphaFunc(gl.GREATER, 0.1)
+
+	aspect := float64(a.width) / float64(maxInt(a.height, 1))
+	gl.MatrixMode(gl.PROJECTION)
+	gl.LoadIdentity()
+	setPerspective(70.0, aspect, 0.05, 256.0)
+
+	gl.MatrixMode(gl.MODELVIEW)
+	gl.LoadIdentity()
+	gl.Rotatef(float32(a.pitch), 1, 0, 0)
+	gl.Rotatef(float32(a.yaw+180.0), 0, 1, 0)
+	a.drawSky(snap, float32(alpha))
+	a.drawCloudLayer(snap, float32(alpha))
+	camX, camY, camZ := a.interpolatedRenderPlayer(alpha, snap)
+	gl.Translatef(float32(-camX), float32(-(camY + playerEyeHeight)), float32(-camZ))
+	a.drawWorld(snap)
+	a.drawEntities()
+	if target.Hit {
+		drawBlockOutline(float32(target.X), float32(target.Y), float32(target.Z))
+	}
+	// Vanilla EntityRenderer clears depth before first-person hand render.
+	gl.Clear(gl.DEPTH_BUFFER_BIT)
+	a.drawFirstPersonArm(snap)
+	a.drawHUD(snap)
+	if a.inventoryOpen {
+		a.drawInventoryScreen()
+	}
+	if a.paused {
+		a.drawPauseMenu()
+	}
+}
+
+// Translation reference:
+// - net.minecraft.src.RenderGlobal.renderSky(...)
+// - net.minecraft.src.WorldProvider.calculateCelestialAngle(...)
+func (a *App) drawSky(snap netclient.StateSnapshot, partial float32) {
+	celestial := celestialAngle(snap.WorldTime, partial)
+	sr, sg, sb, sa, hasSunrise := sunriseSunsetColors(celestial)
+	skyR, skyG, skyB := worldSkyColor(snap.WorldTime, partial, 0.8)
+	star := starBrightness(snap.WorldTime, partial)
+
+	gl.PushMatrix()
+	gl.Disable(gl.CULL_FACE)
+	gl.Disable(gl.ALPHA_TEST)
+	gl.Disable(gl.DEPTH_TEST)
+	gl.DepthMask(false)
+	gl.Disable(gl.TEXTURE_2D)
+	gl.Color3f(skyR, skyG, skyB)
+	if a.skyListID != 0 {
+		gl.CallList(a.skyListID)
+	} else {
+		a.drawSkyGradientDome(snap.WorldTime, partial)
+	}
+
+	if hasSunrise {
+		gl.Disable(gl.TEXTURE_2D)
+		gl.Enable(gl.BLEND)
+		gl.BlendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA)
+		gl.ShadeModel(gl.SMOOTH)
+		gl.PushMatrix()
+		gl.Rotatef(90.0, 1.0, 0.0, 0.0)
+		if math.Sin(float64(celestial)*math.Pi*2.0) < 0 {
+			gl.Rotatef(180.0, 0.0, 0.0, 1.0)
+		}
+		gl.Rotatef(90.0, 0.0, 0.0, 1.0)
+		gl.Begin(gl.TRIANGLE_FAN)
+		gl.Color4f(sr, sg, sb, sa)
+		gl.Vertex3f(0.0, 100.0, 0.0)
+		const slices = 16
+		gl.Color4f(sr, sg, sb, 0.0)
+		for i := 0; i <= slices; i++ {
+			ang := float64(i) * math.Pi * 2.0 / float64(slices)
+			sinA := float32(math.Sin(ang))
+			cosA := float32(math.Cos(ang))
+			gl.Vertex3f(sinA*120.0, cosA*120.0, -cosA*40.0*sa)
+		}
+		gl.End()
+		gl.PopMatrix()
+		gl.ShadeModel(gl.FLAT)
+	}
+
+	gl.Enable(gl.TEXTURE_2D)
+	gl.Enable(gl.BLEND)
+	gl.BlendFunc(gl.SRC_ALPHA, gl.ONE)
+	gl.PushMatrix()
+	gl.Rotatef(-90.0, 0.0, 1.0, 0.0)
+	gl.Rotatef(celestial*360.0, 1.0, 0.0, 0.0)
+	gl.Color4f(1.0, 1.0, 1.0, 1.0)
+
+	if a.texSun != nil {
+		const sunSize = float32(30.0)
+		a.texSun.bind()
+		gl.Begin(gl.QUADS)
+		gl.TexCoord2f(0.0, 0.0)
+		gl.Vertex3f(-sunSize, 100.0, -sunSize)
+		gl.TexCoord2f(1.0, 0.0)
+		gl.Vertex3f(sunSize, 100.0, -sunSize)
+		gl.TexCoord2f(1.0, 1.0)
+		gl.Vertex3f(sunSize, 100.0, sunSize)
+		gl.TexCoord2f(0.0, 1.0)
+		gl.Vertex3f(-sunSize, 100.0, sunSize)
+		gl.End()
+	}
+
+	if a.texMoonPhases != nil {
+		const moonSize = float32(20.0)
+		phase := moonPhase(snap.WorldTime)
+		phaseX := phase % 4
+		phaseY := (phase / 4) % 2
+		u0 := float32(phaseX) / 4.0
+		v0 := float32(phaseY) / 2.0
+		u1 := float32(phaseX+1) / 4.0
+		v1 := float32(phaseY+1) / 2.0
+
+		a.texMoonPhases.bind()
+		gl.Begin(gl.QUADS)
+		gl.TexCoord2f(u1, v1)
+		gl.Vertex3f(-moonSize, -100.0, moonSize)
+		gl.TexCoord2f(u0, v1)
+		gl.Vertex3f(moonSize, -100.0, moonSize)
+		gl.TexCoord2f(u0, v0)
+		gl.Vertex3f(moonSize, -100.0, -moonSize)
+		gl.TexCoord2f(u1, v0)
+		gl.Vertex3f(-moonSize, -100.0, -moonSize)
+		gl.End()
+	}
+
+	gl.Disable(gl.TEXTURE_2D)
+	if star > 0.0 && a.skyStarListID != 0 {
+		gl.Color4f(star, star, star, star)
+		gl.CallList(a.skyStarListID)
+	}
+	gl.Color4f(1.0, 1.0, 1.0, 1.0)
+
+	gl.PopMatrix()
+	gl.Disable(gl.BLEND)
+	gl.Disable(gl.TEXTURE_2D)
+	if a.skyList2ID != 0 {
+		_, camY, _ := a.interpolatedRenderPlayer(float64(partial), snap)
+		const horizon = 63.0
+		dy := camY - horizon
+		gl.Color3f(skyR*0.2+0.04, skyG*0.2+0.04, skyB*0.6+0.1)
+		gl.PushMatrix()
+		gl.Translatef(0.0, float32(-(dy - 16.0)), 0.0)
+		gl.CallList(a.skyList2ID)
+		gl.PopMatrix()
+	}
+	gl.Enable(gl.TEXTURE_2D)
+	gl.DepthMask(true)
+	gl.Enable(gl.DEPTH_TEST)
+	gl.Enable(gl.CULL_FACE)
+	gl.Enable(gl.ALPHA_TEST)
+	gl.Color4f(1.0, 1.0, 1.0, 1.0)
+	gl.PopMatrix()
+}
+
+// Translation reference:
+// - net.minecraft.src.RenderGlobal.RenderGlobal(...) sky/star display lists
+// - net.minecraft.src.RenderGlobal.renderStars()
+func (a *App) initSkyRenderLists() {
+	a.releaseSkyRenderLists()
+	base := gl.GenLists(3)
+	if base == 0 {
+		return
+	}
+	a.skyStarListID = base
+	a.skyListID = base + 1
+	a.skyList2ID = base + 2
+
+	gl.NewList(a.skyStarListID, gl.COMPILE)
+	renderSkyStars()
+	gl.EndList()
+
+	gl.NewList(a.skyListID, gl.COMPILE)
+	drawSkyGridPlane(16.0, false)
+	gl.EndList()
+
+	gl.NewList(a.skyList2ID, gl.COMPILE)
+	drawSkyGridPlane(-16.0, true)
+	gl.EndList()
+}
+
+func drawSkyGridPlane(y float32, reverse bool) {
+	const step = 64
+	maxRange := step * (256/step + 2)
+	gl.Begin(gl.QUADS)
+	for x := -maxRange; x <= maxRange; x += step {
+		for z := -maxRange; z <= maxRange; z += step {
+			x0 := float32(x)
+			x1 := float32(x + step)
+			z0 := float32(z)
+			z1 := float32(z + step)
+			if reverse {
+				gl.Vertex3f(x1, y, z0)
+				gl.Vertex3f(x0, y, z0)
+				gl.Vertex3f(x0, y, z1)
+				gl.Vertex3f(x1, y, z1)
+			} else {
+				gl.Vertex3f(x0, y, z0)
+				gl.Vertex3f(x1, y, z0)
+				gl.Vertex3f(x1, y, z1)
+				gl.Vertex3f(x0, y, z1)
+			}
+		}
+	}
+	gl.End()
+}
+
+func renderSkyStars() {
+	r := rand.New(rand.NewSource(10842))
+	gl.Begin(gl.QUADS)
+	for i := 0; i < 1500; i++ {
+		x := r.Float64()*2.0 - 1.0
+		y := r.Float64()*2.0 - 1.0
+		z := r.Float64()*2.0 - 1.0
+		size := 0.15 + r.Float64()*0.1
+		lenSq := x*x + y*y + z*z
+		if lenSq >= 1.0 || lenSq <= 0.01 {
+			continue
+		}
+
+		invLen := 1.0 / math.Sqrt(lenSq)
+		x *= invLen
+		y *= invLen
+		z *= invLen
+		cx := x * 100.0
+		cy := y * 100.0
+		cz := z * 100.0
+
+		yaw := math.Atan2(x, z)
+		sinYaw := math.Sin(yaw)
+		cosYaw := math.Cos(yaw)
+		pitch := math.Atan2(math.Sqrt(x*x+z*z), y)
+		sinPitch := math.Sin(pitch)
+		cosPitch := math.Cos(pitch)
+		rot := r.Float64() * math.Pi * 2.0
+		sinRot := math.Sin(rot)
+		cosRot := math.Cos(rot)
+
+		for v := 0; v < 4; v++ {
+			vx := float64((v&2)-1) * size
+			vz := float64(((v+1)&2)-1) * size
+			tx := vx*cosRot - vz*sinRot
+			tz := vz*cosRot + vx*sinRot
+			ty := tx*sinPitch + 0*cosPitch
+			t2x := 0*sinPitch - tx*cosPitch
+			rx := t2x*sinYaw - tz*cosYaw
+			rz := tz*sinYaw + t2x*cosYaw
+			gl.Vertex3d(cx+rx, cy+ty, cz+rz)
+		}
+	}
+	gl.End()
+}
+
+func (a *App) drawSkyGradientDome(worldTime int64, partial float32) {
+	skyR, skyG, skyB := worldSkyColor(worldTime, partial, 0.8)
+	fogR, fogG, fogB := worldFogColor(worldTime, partial)
+
+	gl.Disable(gl.TEXTURE_2D)
+	gl.ShadeModel(gl.SMOOTH)
+	gl.Begin(gl.TRIANGLE_FAN)
+	gl.Color4f(skyR, skyG, skyB, 1.0)
+	gl.Vertex3f(0.0, 120.0, 0.0)
+	const slices = 48
+	const radius = float32(300.0)
+	gl.Color4f(fogR, fogG, fogB, 1.0)
+	for i := 0; i <= slices; i++ {
+		ang := float64(i) * math.Pi * 2.0 / float64(slices)
+		x := float32(math.Cos(ang)) * radius
+		z := float32(math.Sin(ang)) * radius
+		gl.Vertex3f(x, 0.0, z)
+	}
+	gl.End()
+	gl.ShadeModel(gl.FLAT)
+	gl.Enable(gl.TEXTURE_2D)
+}
+
+// Translation reference:
+// - net.minecraft.src.RenderGlobal.renderCloudsFancy(...)
+func (a *App) drawCloudLayer(snap netclient.StateSnapshot, partial float32) {
+	if a.texClouds == nil {
+		return
+	}
+
+	camX, camY, camZ := a.interpolatedRenderPlayer(float64(partial), snap)
+	cloudR, cloudG, cloudB := cloudColor(snap.WorldTime, partial)
+	const (
+		scaleXZ      = float32(12.0)
+		layerHeight  = float32(4.0)
+		tileSize     = 8
+		radiusTiles  = 4
+		eps          = float32(9.765625e-4) // 1/1024
+		uvScale      = float32(0.00390625)  // 1/256
+		scrollFactor = 0.029999999329447746
+	)
+	cloudAnim := float64(snap.WorldAge) + float64(partial)
+	px := (camX + cloudAnim*scrollFactor) / float64(scaleXZ)
+	pz := (camZ / float64(scaleXZ)) + 0.33000001311302185
+	cloudY := float32(128.0-camY) + 0.33
+	sectionX := math.Floor(px / 2048.0)
+	sectionZ := math.Floor(pz / 2048.0)
+	px -= sectionX * 2048.0
+	pz -= sectionZ * 2048.0
+
+	uBase := float32(math.Floor(px)) * uvScale
+	vBase := float32(math.Floor(pz)) * uvScale
+	xFrac := float32(px - math.Floor(px))
+	zFrac := float32(pz - math.Floor(pz))
+
+	gl.PushMatrix()
+	gl.Scalef(scaleXZ, 1.0, scaleXZ)
+	gl.Enable(gl.TEXTURE_2D)
+	gl.Enable(gl.BLEND)
+	gl.BlendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA)
+	gl.Disable(gl.CULL_FACE)
+	a.texClouds.bind()
+
+	for pass := 0; pass < 2; pass++ {
+		if pass == 0 {
+			gl.ColorMask(false, false, false, false)
+		} else {
+			gl.ColorMask(true, true, true, true)
+		}
+
+		for gridX := -radiusTiles + 1; gridX <= radiusTiles; gridX++ {
+			for gridZ := -radiusTiles + 1; gridZ <= radiusTiles; gridZ++ {
+				pxTile := float32(gridX * tileSize)
+				pzTile := float32(gridZ * tileSize)
+				x0 := pxTile - xFrac
+				z0 := pzTile - zFrac
+				x1 := x0 + float32(tileSize)
+				z1 := z0 + float32(tileSize)
+				u0 := pxTile*uvScale + uBase
+				v0 := pzTile*uvScale + vBase
+				u1 := (pxTile+float32(tileSize))*uvScale + uBase
+				v1 := (pzTile+float32(tileSize))*uvScale + vBase
+
+				gl.Begin(gl.QUADS)
+
+				if cloudY > -layerHeight-1.0 {
+					gl.Color4f(cloudR*0.7, cloudG*0.7, cloudB*0.7, 0.8)
+					gl.Normal3f(0.0, -1.0, 0.0)
+					gl.TexCoord2f(u0, v1)
+					gl.Vertex3f(x0, cloudY, z1)
+					gl.TexCoord2f(u1, v1)
+					gl.Vertex3f(x1, cloudY, z1)
+					gl.TexCoord2f(u1, v0)
+					gl.Vertex3f(x1, cloudY, z0)
+					gl.TexCoord2f(u0, v0)
+					gl.Vertex3f(x0, cloudY, z0)
+				}
+
+				if cloudY <= layerHeight+1.0 {
+					gl.Color4f(cloudR, cloudG, cloudB, 0.8)
+					gl.Normal3f(0.0, 1.0, 0.0)
+					gl.TexCoord2f(u0, v1)
+					gl.Vertex3f(x0, cloudY+layerHeight-eps, z1)
+					gl.TexCoord2f(u1, v1)
+					gl.Vertex3f(x1, cloudY+layerHeight-eps, z1)
+					gl.TexCoord2f(u1, v0)
+					gl.Vertex3f(x1, cloudY+layerHeight-eps, z0)
+					gl.TexCoord2f(u0, v0)
+					gl.Vertex3f(x0, cloudY+layerHeight-eps, z0)
+				}
+
+				gl.Color4f(cloudR*0.9, cloudG*0.9, cloudB*0.9, 0.8)
+				if gridX > -1 {
+					gl.Normal3f(-1.0, 0.0, 0.0)
+					for i := 0; i < tileSize; i++ {
+						xs := x0 + float32(i)
+						u := (pxTile+float32(i)+0.5)*uvScale + uBase
+						gl.TexCoord2f(u, v1)
+						gl.Vertex3f(xs, cloudY, z1)
+						gl.TexCoord2f(u, v1)
+						gl.Vertex3f(xs, cloudY+layerHeight, z1)
+						gl.TexCoord2f(u, v0)
+						gl.Vertex3f(xs, cloudY+layerHeight, z0)
+						gl.TexCoord2f(u, v0)
+						gl.Vertex3f(xs, cloudY, z0)
+					}
+				}
+				if gridX <= 1 {
+					gl.Normal3f(1.0, 0.0, 0.0)
+					for i := 0; i < tileSize; i++ {
+						xs := x0 + float32(i) + 1.0 - eps
+						u := (pxTile+float32(i)+0.5)*uvScale + uBase
+						gl.TexCoord2f(u, v1)
+						gl.Vertex3f(xs, cloudY, z1)
+						gl.TexCoord2f(u, v1)
+						gl.Vertex3f(xs, cloudY+layerHeight, z1)
+						gl.TexCoord2f(u, v0)
+						gl.Vertex3f(xs, cloudY+layerHeight, z0)
+						gl.TexCoord2f(u, v0)
+						gl.Vertex3f(xs, cloudY, z0)
+					}
+				}
+
+				gl.Color4f(cloudR*0.8, cloudG*0.8, cloudB*0.8, 0.8)
+				if gridZ > -1 {
+					gl.Normal3f(0.0, 0.0, -1.0)
+					for i := 0; i < tileSize; i++ {
+						zs := z0 + float32(i)
+						v := (pzTile+float32(i)+0.5)*uvScale + vBase
+						gl.TexCoord2f(u0, v)
+						gl.Vertex3f(x0, cloudY+layerHeight, zs)
+						gl.TexCoord2f(u1, v)
+						gl.Vertex3f(x1, cloudY+layerHeight, zs)
+						gl.TexCoord2f(u1, v)
+						gl.Vertex3f(x1, cloudY, zs)
+						gl.TexCoord2f(u0, v)
+						gl.Vertex3f(x0, cloudY, zs)
+					}
+				}
+				if gridZ <= 1 {
+					gl.Normal3f(0.0, 0.0, 1.0)
+					for i := 0; i < tileSize; i++ {
+						zs := z0 + float32(i) + 1.0 - eps
+						v := (pzTile+float32(i)+0.5)*uvScale + vBase
+						gl.TexCoord2f(u0, v)
+						gl.Vertex3f(x0, cloudY+layerHeight, zs)
+						gl.TexCoord2f(u1, v)
+						gl.Vertex3f(x1, cloudY+layerHeight, zs)
+						gl.TexCoord2f(u1, v)
+						gl.Vertex3f(x1, cloudY, zs)
+						gl.TexCoord2f(u0, v)
+						gl.Vertex3f(x0, cloudY, zs)
+					}
+				}
+
+				gl.End()
+			}
+		}
+	}
+
+	gl.ColorMask(true, true, true, true)
+	gl.PopMatrix()
+	gl.Color4f(1.0, 1.0, 1.0, 1.0)
+	gl.Disable(gl.BLEND)
+	gl.Enable(gl.CULL_FACE)
+}
+
+func celestialAngle(worldTime int64, partial float32) float32 {
+	tickOfDay := int(worldTime % 24000)
+	angle := (float32(tickOfDay)+partial)/24000.0 - 0.25
+	if angle < 0.0 {
+		angle++
+	}
+	if angle > 1.0 {
+		angle--
+	}
+	base := angle
+	angle = 1.0 - float32((math.Cos(float64(angle)*math.Pi)+1.0)*0.5)
+	angle = base + (angle-base)/3.0
+	return angle
+}
+
+func worldSkyColor(worldTime int64, partial, biomeTemp float32) (float32, float32, float32) {
+	angle := celestialAngle(worldTime, partial)
+	dayLight := float32(math.Cos(float64(angle)*math.Pi*2.0))*2.0 + 0.5
+	dayLight = clampFloat32(dayLight, 0.0, 1.0)
+
+	r, g, b := skyColorByTemperature(biomeTemp)
+	return r * dayLight, g * dayLight, b * dayLight
+}
+
+func worldFogColor(worldTime int64, partial float32) (float32, float32, float32) {
+	angle := celestialAngle(worldTime, partial)
+	f := float32(math.Cos(float64(angle)*math.Pi*2.0))*2.0 + 0.5
+	f = clampFloat32(f, 0.0, 1.0)
+	// Translation reference:
+	// - net.minecraft.src.WorldProvider.getFogColor(...)
+	r := float32(0.7529412) * (f*0.94 + 0.06)
+	g := float32(0.84705883) * (f*0.94 + 0.06)
+	b := float32(1.0) * (f*0.91 + 0.09)
+	return r, g, b
+}
+
+func starBrightness(worldTime int64, partial float32) float32 {
+	angle := celestialAngle(worldTime, partial)
+	v := 1.0 - (float32(math.Cos(float64(angle)*math.Pi*2.0))*2.0 + 0.25)
+	v = clampFloat32(v, 0.0, 1.0)
+	return v * v * 0.5
+}
+
+func cloudColor(worldTime int64, partial float32) (float32, float32, float32) {
+	angle := celestialAngle(worldTime, partial)
+	f := float32(math.Cos(float64(angle)*math.Pi*2.0))*2.0 + 0.5
+	f = clampFloat32(f, 0.0, 1.0)
+	// Translation reference:
+	// - net.minecraft.src.World.getCloudColour(...)
+	r := float32(1.0) * (f*0.9 + 0.1)
+	g := float32(1.0) * (f*0.9 + 0.1)
+	b := float32(1.0) * (f*0.85 + 0.15)
+	return r, g, b
+}
+
+func skyColorByTemperature(temp float32) (float32, float32, float32) {
+	v := temp / 3.0
+	v = clampFloat32(v, -1.0, 1.0)
+	// Translation reference:
+	// - net.minecraft.src.BiomeGenBase.getSkyColorByTemp(...)
+	//   HSB(0.62222224F - v*0.05F, 0.5F + v*0.1F, 1.0F)
+	return hsbToRGB(0.62222224-v*0.05, 0.5+v*0.1, 1.0)
+}
+
+func sunriseSunsetColors(celestial float32) (float32, float32, float32, float32, bool) {
+	// Translation reference:
+	// - net.minecraft.src.WorldProvider.calcSunriseSunsetColors(...)
+	c := float32(math.Cos(float64(celestial) * math.Pi * 2.0))
+	const spread = float32(0.4)
+	if c < -spread || c > spread {
+		return 0, 0, 0, 0, false
+	}
+	t := c/spread*0.5 + 0.5
+	alpha := 1.0 - (1.0-float32(math.Sin(float64(t)*math.Pi)))*0.99
+	alpha *= alpha
+	r := t*0.3 + 0.7
+	g := t*t*0.7 + 0.2
+	b := t*t*0.0 + 0.2
+	return r, g, b, alpha, true
+}
+
+func moonPhase(worldTime int64) int {
+	phase := int((worldTime / 24000) % 8)
+	if phase < 0 {
+		phase += 8
+	}
+	return phase
+}
+
+func hsbToRGB(h, s, v float32) (float32, float32, float32) {
+	if s <= 0 {
+		return v, v, v
+	}
+	h = float32(math.Mod(float64(h), 1.0))
+	if h < 0 {
+		h += 1.0
+	}
+	sector := h * 6.0
+	i := int(math.Floor(float64(sector)))
+	f := sector - float32(i)
+	p := v * (1.0 - s)
+	q := v * (1.0 - s*f)
+	t := v * (1.0 - s*(1.0-f))
+	switch i % 6 {
+	case 0:
+		return v, t, p
+	case 1:
+		return q, v, p
+	case 2:
+		return p, v, t
+	case 3:
+		return p, q, v
+	case 4:
+		return t, p, v
+	default:
+		return v, p, q
+	}
+}
+
+func clampFloat32(v, lo, hi float32) float32 {
+	if v < lo {
+		return lo
+	}
+	if v > hi {
+		return hi
+	}
+	return v
+}
+
+func (a *App) drawWorld(snap netclient.StateSnapshot) {
+	a.renderFrame++
+	centerChunkX := int32(int(math.Floor(snap.PlayerX)) >> 4)
+	centerChunkZ := int32(int(math.Floor(snap.PlayerZ)) >> 4)
+	radius := a.renderDistance
+	if radius < 1 {
+		radius = 1
+	}
+	radiusSq := radius * radius
+	buildBudget := maxChunkBuilds
+
+	for cx := int(centerChunkX) - radius; cx <= int(centerChunkX)+radius; cx++ {
+		for cz := int(centerChunkZ) - radius; cz <= int(centerChunkZ)+radius; cz++ {
+			dx := cx - int(centerChunkX)
+			dz := cz - int(centerChunkZ)
+			if dx*dx+dz*dz > radiusSq {
+				continue
+			}
+			chunkX := int32(cx)
+			chunkZ := int32(cz)
+			key := chunk.NewCoordIntPair(chunkX, chunkZ)
+			revision := a.session.ChunkRevision(chunkX, chunkZ)
+			if revision == 0 {
+				// Chunk not available in client cache yet.
+				continue
+			}
+			entry, ok := a.chunkRenderCache[key]
+			if !ok {
+				entry = &chunkRenderEntry{}
+				a.chunkRenderCache[key] = entry
+			}
+
+			if (entry.listID == 0 || entry.revision != revision) && buildBudget > 0 {
+				a.rebuildChunkRenderEntry(entry, chunkX, chunkZ, revision)
+				buildBudget--
+			}
+
+			if entry.listID != 0 {
+				gl.CallList(entry.listID)
+				entry.lastUsedFrame = a.renderFrame
+			}
+		}
+	}
+	a.cleanupChunkRenderCache()
+}
+
+func (a *App) rebuildChunkRenderEntry(entry *chunkRenderEntry, chunkX, chunkZ int32, revision uint64) {
+	if entry.listID != 0 {
+		gl.DeleteLists(entry.listID, 1)
+		entry.listID = 0
+	}
+
+	listID := gl.GenLists(1)
+	if listID == 0 {
+		return
+	}
+
+	solidBatches := make(map[uint32]*textureBatch, 24)
+	overlayBatches := make(map[uint32]*textureBatch, 2)
+
+	baseX := int(chunkX) << 4
+	baseZ := int(chunkZ) << 4
+	for localX := 0; localX < 16; localX++ {
+		worldX := baseX + localX
+		for localZ := 0; localZ < 16; localZ++ {
+			worldZ := baseZ + localZ
+			topY := -1
+			for y := 255; y >= 0; y-- {
+				id, _, ok := a.session.BlockAt(worldX, y, worldZ)
+				if ok && id != 0 {
+					topY = y
+					break
+				}
+			}
+			if topY < 0 {
+				continue
+			}
+			for y := 0; y <= topY; y++ {
+				id, meta, ok := a.session.BlockAt(worldX, y, worldZ)
+				if !ok || id == 0 {
+					continue
+				}
+				faces := a.visibleBlockFaces(worldX, y, worldZ, id)
+				if !faces.any() && !isCrossedPlantRenderBlock(id) && !isFlatPlantRenderBlock(id) && id != 106 {
+					continue
+				}
+				if a.appendTexturedBlockBatches(float32(worldX), float32(y), float32(worldZ), id, meta, faces, solidBatches, overlayBatches) {
+					continue
+				}
+				r, g, b := colorForBlock(id)
+				a.appendFallbackBlockBatches(float32(worldX), float32(y), float32(worldZ), r, g, b, faces, solidBatches)
+			}
+		}
+	}
+
+	gl.NewList(listID, gl.COMPILE)
+	a.emitTextureBatches(solidBatches)
+	if len(overlayBatches) > 0 {
+		gl.Enable(gl.BLEND)
+		gl.BlendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA)
+		a.emitTextureBatches(overlayBatches)
+		gl.Disable(gl.BLEND)
+	}
+	gl.Color4f(1, 1, 1, 1)
+	gl.EndList()
+
+	entry.listID = listID
+	entry.revision = revision
+	entry.lastUsedFrame = a.renderFrame
+}
+
+func (a *App) cleanupChunkRenderCache() {
+	const staleFrames = 600
+	if a.renderFrame%60 != 0 {
+		return
+	}
+	for key, entry := range a.chunkRenderCache {
+		if entry == nil {
+			delete(a.chunkRenderCache, key)
+			continue
+		}
+		if a.renderFrame-entry.lastUsedFrame <= staleFrames {
+			continue
+		}
+		if entry.listID != 0 {
+			gl.DeleteLists(entry.listID, 1)
+		}
+		delete(a.chunkRenderCache, key)
+	}
+}
+
+func (a *App) visibleBlockFaces(x, y, z, currentID int) visibleFaces {
+	return visibleFaces{
+		Down:  a.shouldRenderFace(currentID, x, y-1, z),
+		Up:    a.shouldRenderFace(currentID, x, y+1, z),
+		North: a.shouldRenderFace(currentID, x, y, z-1),
+		South: a.shouldRenderFace(currentID, x, y, z+1),
+		West:  a.shouldRenderFace(currentID, x-1, y, z),
+		East:  a.shouldRenderFace(currentID, x+1, y, z),
+	}
+}
+
+func (a *App) shouldRenderFace(currentID, nx, ny, nz int) bool {
+	neighborID, _, ok := a.session.BlockAt(nx, ny, nz)
+	if !ok || neighborID == 0 {
+		return true
+	}
+	if neighborID == currentID {
+		// Translation reference:
+		// - net.minecraft.src.BlockLeavesBase.shouldSideBeRendered(...)
+		// Fancy leaves render inner shared faces for denser canopy look.
+		if currentID == 18 {
+			return true
+		}
+		return false
+	}
+	return !isOpaqueRenderBlock(neighborID)
+}
+
+func (a *App) appendTexturedBlockBatches(
+	x, y, z float32,
+	blockID int,
+	blockMeta int,
+	faces visibleFaces,
+	solidBatches map[uint32]*textureBatch,
+	overlayBatches map[uint32]*textureBatch,
+) bool {
+	if len(a.blockTextureDefs) == 0 || len(a.blockTextures) == 0 {
+		return false
+	}
+	if _, ok := a.blockTextureDefs[blockID]; !ok {
+		return false
+	}
+	blockX, blockY, blockZ := int(x), int(y), int(z)
+	if blockID == 106 {
+		return a.appendVineBatches(x, y, z, blockX, blockY, blockZ, blockMeta, solidBatches)
+	}
+	if isFlatPlantRenderBlock(blockID) {
+		return a.appendFlatPlantBatches(x, y, z, blockX, blockY, blockZ, blockID, solidBatches)
+	}
+	if isCrossedPlantRenderBlock(blockID) {
+		return a.appendCrossedPlantBatches(x, y, z, blockX, blockY, blockZ, blockID, blockMeta, solidBatches)
+	}
+
+	top := a.blockTextureForFace(blockID, faceUp)
+	bottom := a.blockTextureForFace(blockID, faceDown)
+	north := a.blockTextureForFace(blockID, faceNorth)
+	south := a.blockTextureForFace(blockID, faceSouth)
+	west := a.blockTextureForFace(blockID, faceWest)
+	east := a.blockTextureForFace(blockID, faceEast)
+
+	if (faces.Up && top == nil) ||
+		(faces.Down && bottom == nil) ||
+		(faces.North && north == nil) ||
+		(faces.South && south == nil) ||
+		(faces.West && west == nil) ||
+		(faces.East && east == nil) {
+		return false
+	}
+
+	x2, y2, z2 := x+1, y+1, z+1
+	addFace := func(tex *texture2D, shade, tintR, tintG, tintB float32, v0, v1, v2, v3 [3]float32, target map[uint32]*textureBatch) {
+		b := ensureTextureBatch(target, tex)
+		if b == nil {
+			return
+		}
+		appendTexturedQuad(
+			b,
+			tintR*shade, tintG*shade, tintB*shade,
+			v0, v1, v2, v3,
+		)
+	}
+	addMainFace := func(tex *texture2D, face int, shade float32, v0, v1, v2, v3 [3]float32) {
+		tintR, tintG, tintB := a.blockFaceTintAt(blockX, blockY, blockZ, blockID, blockMeta, face)
+		addFace(tex, shade, tintR, tintG, tintB, v0, v1, v2, v3, solidBatches)
+	}
+
+	if faces.Up {
+		addMainFace(top, faceUp, 1.0,
+			[3]float32{x, y2, z},
+			[3]float32{x, y2, z2},
+			[3]float32{x2, y2, z2},
+			[3]float32{x2, y2, z},
+		)
+	}
+	if faces.Down {
+		addMainFace(bottom, faceDown, 0.52,
+			[3]float32{x, y, z},
+			[3]float32{x2, y, z},
+			[3]float32{x2, y, z2},
+			[3]float32{x, y, z2},
+		)
+	}
+	if faces.North {
+		addMainFace(north, faceNorth, 0.80,
+			[3]float32{x2, y, z},
+			[3]float32{x, y, z},
+			[3]float32{x, y2, z},
+			[3]float32{x2, y2, z},
+		)
+	}
+	if faces.South {
+		addMainFace(south, faceSouth, 0.80,
+			[3]float32{x, y, z2},
+			[3]float32{x2, y, z2},
+			[3]float32{x2, y2, z2},
+			[3]float32{x, y2, z2},
+		)
+	}
+	if faces.West {
+		addMainFace(west, faceWest, 0.65,
+			[3]float32{x, y, z},
+			[3]float32{x, y, z2},
+			[3]float32{x, y2, z2},
+			[3]float32{x, y2, z},
+		)
+	}
+	if faces.East {
+		addMainFace(east, faceEast, 0.65,
+			[3]float32{x2, y, z2},
+			[3]float32{x2, y, z},
+			[3]float32{x2, y2, z},
+			[3]float32{x2, y2, z2},
+		)
+	}
+
+	overlay := a.blockSideOverlayTexture(blockID)
+	if overlay != nil {
+		overlayR, overlayG, overlayB := a.blockSideOverlayTintAt(blockX, blockY, blockZ, blockID)
+		if faces.North {
+			addFace(overlay, 0.80, overlayR, overlayG, overlayB,
+				[3]float32{x2, y, z},
+				[3]float32{x, y, z},
+				[3]float32{x, y2, z},
+				[3]float32{x2, y2, z},
+				overlayBatches,
+			)
+		}
+		if faces.South {
+			addFace(overlay, 0.80, overlayR, overlayG, overlayB,
+				[3]float32{x, y, z2},
+				[3]float32{x2, y, z2},
+				[3]float32{x2, y2, z2},
+				[3]float32{x, y2, z2},
+				overlayBatches,
+			)
+		}
+		if faces.West {
+			addFace(overlay, 0.65, overlayR, overlayG, overlayB,
+				[3]float32{x, y, z},
+				[3]float32{x, y, z2},
+				[3]float32{x, y2, z2},
+				[3]float32{x, y2, z},
+				overlayBatches,
+			)
+		}
+		if faces.East {
+			addFace(overlay, 0.65, overlayR, overlayG, overlayB,
+				[3]float32{x2, y, z2},
+				[3]float32{x2, y, z},
+				[3]float32{x2, y2, z},
+				[3]float32{x2, y2, z2},
+				overlayBatches,
+			)
+		}
+	}
+
+	return true
+}
+
+func (a *App) appendVineBatches(
+	x, y, z float32,
+	blockX, blockY, blockZ int,
+	blockMeta int,
+	solidBatches map[uint32]*textureBatch,
+) bool {
+	tex := a.blockTextureForFace(106, faceUp)
+	if tex == nil {
+		return false
+	}
+	renderMeta := blockMeta & 15
+	aboveID, aboveMeta, aboveOK := a.session.BlockAt(blockX, blockY+1, blockZ)
+	if renderMeta == 0 {
+		// Compatibility fallback for invalid meta=0 save states:
+		// keep orientation only from same-column vine segments, do not infer from
+		// surrounding solid blocks to avoid non-vanilla outward-facing artifacts.
+		if aboveOK && aboveID == 106 {
+			renderMeta = aboveMeta & 15
+		}
+		if renderMeta == 0 {
+			if belowID, belowMeta, ok := a.session.BlockAt(blockX, blockY-1, blockZ); ok && belowID == 106 && (belowMeta&15) != 0 {
+				renderMeta = belowMeta & 15
+			}
+		}
+		if renderMeta == 0 {
+			renderMeta = a.inferSingleVineAttachmentMeta(blockX, blockY, blockZ)
+		}
+	}
+
+	tintR, tintG, tintB := a.blockFaceTintAt(blockX, blockY, blockZ, 106, renderMeta, faceUp)
+	batch := ensureTextureBatch(solidBatches, tex)
+	if batch == nil {
+		return false
+	}
+
+	const inset = float32(0.05)
+	x0, y0, z0 := x, y, z
+	x1, y1, z1 := x+1, y+1, z+1
+
+	// Translation reference:
+	// - net.minecraft.src.RenderBlocks.renderBlockVine(...)
+	appendVineDoubleSidedA := func(v0, v1, v2, v3 [3]float32) {
+		appendTexturedQuadUV(
+			batch, tintR, tintG, tintB,
+			v0, 0, 1,
+			v1, 0, 0,
+			v2, 1, 0,
+			v3, 1, 1,
+		)
+		appendTexturedQuadUV(
+			batch, tintR, tintG, tintB,
+			v3, 1, 1,
+			v2, 1, 0,
+			v1, 0, 0,
+			v0, 0, 1,
+		)
+	}
+	appendVineDoubleSidedB := func(v0, v1, v2, v3 [3]float32) {
+		appendTexturedQuadUV(
+			batch, tintR, tintG, tintB,
+			v0, 1, 0,
+			v1, 1, 1,
+			v2, 0, 1,
+			v3, 0, 0,
+		)
+		appendTexturedQuadUV(
+			batch, tintR, tintG, tintB,
+			v3, 0, 0,
+			v2, 0, 1,
+			v1, 1, 1,
+			v0, 1, 0,
+		)
+	}
+	if (renderMeta & 2) != 0 {
+		xp := x0 + inset
+		appendVineDoubleSidedA(
+			[3]float32{xp, y1, z1},
+			[3]float32{xp, y0, z1},
+			[3]float32{xp, y0, z0},
+			[3]float32{xp, y1, z0},
+		)
+	}
+	if (renderMeta & 8) != 0 {
+		xp := x1 - inset
+		appendVineDoubleSidedB(
+			[3]float32{xp, y0, z1},
+			[3]float32{xp, y1, z1},
+			[3]float32{xp, y1, z0},
+			[3]float32{xp, y0, z0},
+		)
+	}
+	if (renderMeta & 4) != 0 {
+		zp := z0 + inset
+		appendVineDoubleSidedB(
+			[3]float32{x1, y0, zp},
+			[3]float32{x1, y1, zp},
+			[3]float32{x0, y1, zp},
+			[3]float32{x0, y0, zp},
+		)
+	}
+	if (renderMeta & 1) != 0 {
+		zp := z1 - inset
+		appendVineDoubleSidedA(
+			[3]float32{x1, y1, zp},
+			[3]float32{x1, y0, zp},
+			[3]float32{x0, y0, zp},
+			[3]float32{x0, y1, zp},
+		)
+	}
+
+	if aboveOK && isNormalCubeRenderBlock(aboveID) {
+		yp := y1 - inset
+		appendTexturedQuadUV(
+			batch, tintR, tintG, tintB,
+			[3]float32{x1, yp, z0},
+			0, 1,
+			[3]float32{x1, yp, z1},
+			0, 0,
+			[3]float32{x0, yp, z1},
+			1, 0,
+			[3]float32{x0, yp, z0},
+			1, 1,
+		)
+	}
+
+	return true
+}
+
+func (a *App) inferSingleVineAttachmentMeta(x, y, z int) int {
+	type candidate struct {
+		bit int
+		nx  int
+		nz  int
+	}
+	// Bit mapping from BlockVine/Direction in 1.6.4:
+	// bit2->west, bit8->east, bit4->north, bit1->south support.
+	cands := [...]candidate{
+		{bit: 2, nx: -1, nz: 0},
+		{bit: 8, nx: 1, nz: 0},
+		{bit: 4, nx: 0, nz: -1},
+		{bit: 1, nx: 0, nz: 1},
+	}
+
+	bestBit := 0
+	bestScore := -1
+	for _, c := range cands {
+		id, _, ok := a.session.BlockAt(x+c.nx, y, z+c.nz)
+		if !ok || id == 0 {
+			continue
+		}
+		if !isVineSupportRenderBlock(id) {
+			continue
+		}
+
+		score := 10
+		// Prefer obvious tree supports so legacy meta=0 vines stick to trunks/canopy,
+		// matching expected jungle/swamp visuals.
+		switch id {
+		case 17:
+			score = 100
+		case 18:
+			score = 90
+		}
+		if score > bestScore {
+			bestScore = score
+			bestBit = c.bit
+		}
+	}
+	return bestBit
+}
+
+func isVineSupportRenderBlock(id int) bool {
+	if id == 18 {
+		return true // leaves are valid vine supports in 1.6.4.
+	}
+	return isNormalCubeRenderBlock(id)
+}
+
+func (a *App) appendFlatPlantBatches(
+	x, y, z float32,
+	blockX, blockY, blockZ int,
+	blockID int,
+	solidBatches map[uint32]*textureBatch,
+) bool {
+	tex := a.blockTextureForFace(blockID, faceUp)
+	if tex == nil {
+		tex = a.blockTextureForFace(blockID, faceNorth)
+	}
+	if tex == nil {
+		return false
+	}
+
+	tintR, tintG, tintB := a.blockFaceTintAt(blockX, blockY, blockZ, blockID, 0, faceUp)
+	batch := ensureTextureBatch(solidBatches, tex)
+	if batch == nil {
+		return false
+	}
+
+	// Translation reference:
+	// - net.minecraft.src.BlockLilyPad#setBlockBounds(...)
+	// Vanilla lily pad is an ultra-thin top quad.
+	y0 := y + 0.015625
+	appendTexturedQuadUV(
+		batch, tintR, tintG, tintB,
+		[3]float32{x, y0, z}, 0, 1,
+		[3]float32{x, y0, z + 1}, 0, 0,
+		[3]float32{x + 1, y0, z + 1}, 1, 0,
+		[3]float32{x + 1, y0, z}, 1, 1,
+	)
+	return true
+}
+
+// Translation reference:
+// - net.minecraft.src.RenderBlocks#renderCrossedSquares(...)
+// - net.minecraft.src.RenderBlocks#drawCrossedSquares(...)
+func (a *App) appendCrossedPlantBatches(
+	x, y, z float32,
+	blockX, blockY, blockZ int,
+	blockID int,
+	blockMeta int,
+	solidBatches map[uint32]*textureBatch,
+) bool {
+	tex := a.blockTextureForFace(blockID, faceNorth)
+	if tex == nil {
+		tex = a.blockTextureForFace(blockID, faceUp)
+	}
+	if tex == nil {
+		return false
+	}
+
+	// Vanilla random wobble for tall grass only.
+	if blockID == 31 {
+		ix := int64(x)
+		iy := int64(y)
+		iz := int64(z)
+		seed := (ix * 3129871) ^ (iz * 116129781) ^ iy
+		seed = seed*seed*42317861 + seed*11
+		x += (float32(float64((seed>>16)&15)/15.0) - 0.5) * 0.5
+		y += (float32(float64((seed>>20)&15)/15.0) - 1.0) * 0.2
+		z += (float32(float64((seed>>24)&15)/15.0) - 0.5) * 0.5
+	}
+
+	tintR, tintG, tintB := a.blockFaceTintAt(blockX, blockY, blockZ, blockID, blockMeta, faceNorth)
+	batch := ensureTextureBatch(solidBatches, tex)
+	if batch == nil {
+		return false
+	}
+
+	const (
+		size   = 0.45
+		height = 1.0
+	)
+	x0 := x + 0.5 - size
+	x1 := x + 0.5 + size
+	z0 := z + 0.5 - size
+	z1 := z + 0.5 + size
+	y0 := y
+	y1 := y + height
+
+	// Translation reference:
+	// - net.minecraft.src.RenderBlocks#drawCrossedSquares(...)
+	// Match vanilla's explicit vertex+UV order (4 quads, including backside).
+	// Renderer note: block textures are uploaded with vertical flip in loadTexture2D,
+	// so V is inverted vs raw MCP Tessellator convention.
+	appendTexturedQuadUV(
+		batch, tintR, tintG, tintB,
+		[3]float32{x0, y1, z0}, 0, 1,
+		[3]float32{x0, y0, z0}, 0, 0,
+		[3]float32{x1, y0, z1}, 1, 0,
+		[3]float32{x1, y1, z1}, 1, 1,
+	)
+	appendTexturedQuadUV(
+		batch, tintR, tintG, tintB,
+		[3]float32{x1, y1, z1}, 0, 1,
+		[3]float32{x1, y0, z1}, 0, 0,
+		[3]float32{x0, y0, z0}, 1, 0,
+		[3]float32{x0, y1, z0}, 1, 1,
+	)
+	appendTexturedQuadUV(
+		batch, tintR, tintG, tintB,
+		[3]float32{x0, y1, z1}, 0, 1,
+		[3]float32{x0, y0, z1}, 0, 0,
+		[3]float32{x1, y0, z0}, 1, 0,
+		[3]float32{x1, y1, z0}, 1, 1,
+	)
+	appendTexturedQuadUV(
+		batch, tintR, tintG, tintB,
+		[3]float32{x1, y1, z0}, 0, 1,
+		[3]float32{x1, y0, z0}, 0, 0,
+		[3]float32{x0, y0, z1}, 1, 0,
+		[3]float32{x0, y1, z1}, 1, 1,
+	)
+	return true
+}
+
+func (a *App) appendFallbackBlockBatches(
+	x, y, z, r, g, b float32,
+	faces visibleFaces,
+	solidBatches map[uint32]*textureBatch,
+) {
+	batch := ensureTextureBatch(solidBatches, nil)
+	if batch == nil {
+		return
+	}
+	x2, y2, z2 := x+1, y+1, z+1
+
+	bright := func(v float32) float32 {
+		return float32(math.Min(float64(v+0.18), 1.0))
+	}
+	dim := func(v float32) float32 {
+		return float32(math.Max(float64(v-0.18), 0.0))
+	}
+
+	appendFace := func(rr, gg, bb float32, v0, v1, v2, v3 [3]float32) {
+		appendTexturedQuad(batch, rr, gg, bb, v0, v1, v2, v3)
+	}
+	if faces.Up {
+		appendFace(bright(r), bright(g), bright(b),
+			[3]float32{x, y2, z},
+			[3]float32{x, y2, z2},
+			[3]float32{x2, y2, z2},
+			[3]float32{x2, y2, z},
+		)
+	}
+	if faces.Down {
+		appendFace(dim(r), dim(g), dim(b),
+			[3]float32{x, y, z},
+			[3]float32{x2, y, z},
+			[3]float32{x2, y, z2},
+			[3]float32{x, y, z2},
+		)
+	}
+	if faces.North {
+		appendFace(r, g, b,
+			[3]float32{x2, y, z},
+			[3]float32{x, y, z},
+			[3]float32{x, y2, z},
+			[3]float32{x2, y2, z},
+		)
+	}
+	if faces.South {
+		appendFace(r, g, b,
+			[3]float32{x, y, z2},
+			[3]float32{x2, y, z2},
+			[3]float32{x2, y2, z2},
+			[3]float32{x, y2, z2},
+		)
+	}
+	if faces.West {
+		appendFace(dim(r), dim(g), dim(b),
+			[3]float32{x, y, z},
+			[3]float32{x, y, z2},
+			[3]float32{x, y2, z2},
+			[3]float32{x, y2, z},
+		)
+	}
+	if faces.East {
+		appendFace(r, g, b,
+			[3]float32{x2, y, z2},
+			[3]float32{x2, y, z},
+			[3]float32{x2, y2, z},
+			[3]float32{x2, y2, z2},
+		)
+	}
+}
+
+func ensureTextureBatch(batches map[uint32]*textureBatch, tex *texture2D) *textureBatch {
+	texID := uint32(0)
+	if tex != nil {
+		texID = tex.ID
+	}
+	b := batches[texID]
+	if b != nil {
+		return b
+	}
+	b = &textureBatch{tex: tex}
+	batches[texID] = b
+	return b
+}
+
+func appendTexturedQuad(batch *textureBatch, r, g, b float32, v0, v1, v2, v3 [3]float32) {
+	appendTexturedQuadUV(
+		batch,
+		r, g, b,
+		v0, 0, 0,
+		v1, 1, 0,
+		v2, 1, 1,
+		v3, 0, 1,
+	)
+}
+
+func appendTexturedQuadUV(
+	batch *textureBatch,
+	r, g, b float32,
+	p0 [3]float32, u0, v0 float32,
+	p1 [3]float32, u1, v1 float32,
+	p2 [3]float32, u2, v2 float32,
+	p3 [3]float32, u3, v3 float32,
+) {
+	if batch == nil {
+		return
+	}
+	batch.verts = append(batch.verts,
+		texturedVertex{x: p0[0], y: p0[1], z: p0[2], u: u0, v: v0, r: r, g: g, b: b},
+		texturedVertex{x: p1[0], y: p1[1], z: p1[2], u: u1, v: v1, r: r, g: g, b: b},
+		texturedVertex{x: p2[0], y: p2[1], z: p2[2], u: u2, v: v2, r: r, g: g, b: b},
+		texturedVertex{x: p3[0], y: p3[1], z: p3[2], u: u3, v: v3, r: r, g: g, b: b},
+	)
+}
+
+func (a *App) emitTextureBatches(batches map[uint32]*textureBatch) {
+	if len(batches) == 0 {
+		return
+	}
+
+	ids := make([]int, 0, len(batches))
+	for id, batch := range batches {
+		if batch == nil || len(batch.verts) == 0 {
+			continue
+		}
+		ids = append(ids, int(id))
+	}
+	if len(ids) == 0 {
+		return
+	}
+	sort.Ints(ids)
+
+	for _, id := range ids {
+		batch := batches[uint32(id)]
+		if batch == nil || len(batch.verts) == 0 {
+			continue
+		}
+
+		if batch.tex != nil {
+			gl.Enable(gl.TEXTURE_2D)
+			batch.tex.bind()
+		} else {
+			gl.Disable(gl.TEXTURE_2D)
+		}
+
+		gl.Begin(gl.QUADS)
+		for _, v := range batch.verts {
+			gl.Color3f(v.r, v.g, v.b)
+			if batch.tex != nil {
+				gl.TexCoord2f(v.u, v.v)
+			}
+			gl.Vertex3f(v.x, v.y, v.z)
+		}
+		gl.End()
+	}
+
+	gl.Enable(gl.TEXTURE_2D)
+	gl.Color4f(1, 1, 1, 1)
+}
+
+func (a *App) drawEntities() {
+	entities := a.session.EntitiesSnapshot()
+	if len(entities) == 0 {
+		return
+	}
+
+	// Temporary safety: model winding parity is still being aligned to vanilla;
+	// disabling cull avoids visual "holes"/transparent-looking limbs.
+	gl.Disable(gl.CULL_FACE)
+	gl.Disable(gl.BLEND)
+	gl.Enable(gl.ALPHA_TEST)
+	gl.AlphaFunc(gl.GREATER, 0.1)
+	gl.Disable(gl.TEXTURE_2D)
+	gl.Enable(gl.DEPTH_TEST)
+	animTime := float64(time.Now().UnixNano()) / 1e9
+	for _, ent := range entities {
+		a.drawEntityModel(ent, animTime)
+	}
+	gl.Enable(gl.TEXTURE_2D)
+	gl.Enable(gl.CULL_FACE)
+	gl.Color4f(1, 1, 1, 1)
+}
+
+func (a *App) startHandSwing() {
+	a.handSwingStart = time.Now()
+}
+
+func (a *App) currentHandSwingProgress(now time.Time) float32 {
+	const swingDuration = 300 * time.Millisecond // 6 ticks at 20 TPS
+	if a.handSwingStart.IsZero() {
+		return 0
+	}
+	elapsed := now.Sub(a.handSwingStart)
+	if elapsed <= 0 {
+		return 0
+	}
+	if elapsed >= swingDuration {
+		a.handSwingStart = time.Time{}
+		return 0
+	}
+	return float32(float64(elapsed) / float64(swingDuration))
+}
+
+// Translation references:
+// - net.minecraft.src.ItemRenderer#renderItemInFirstPerson(float)
+// - net.minecraft.src.RenderPlayer#renderFirstPersonArm(EntityPlayer)
+func (a *App) drawFirstPersonArm(_ netclient.StateSnapshot) {
+	if a.mainMenu || a.session == nil || a.hudHidden {
+		return
+	}
+
+	tex := a.entityTextureForType(0)
+	aspect := float64(a.width) / float64(maxInt(a.height, 1))
+
+	gl.MatrixMode(gl.PROJECTION)
+	gl.PushMatrix()
+	gl.LoadIdentity()
+	setPerspective(70.0, aspect, 0.05, 10.0)
+
+	gl.MatrixMode(gl.MODELVIEW)
+	gl.PushMatrix()
+	gl.LoadIdentity()
+
+	gl.Disable(gl.CULL_FACE)
+	gl.Enable(gl.ALPHA_TEST)
+	gl.AlphaFunc(gl.GREATER, 0.1)
+	gl.Enable(gl.TEXTURE_2D)
+
+	partial := float32(1.0)
+	if moveTickSeconds > 0 {
+		partial = float32(a.renderLerpTime / moveTickSeconds)
+		if partial < 0 {
+			partial = 0
+		} else if partial > 1 {
+			partial = 1
+		}
+	}
+	armPitch := float32(a.prevRenderArmPitch + (a.renderArmPitch-a.prevRenderArmPitch)*float64(partial))
+	armYaw := float32(a.prevRenderArmYaw + (a.renderArmYaw-a.prevRenderArmYaw)*float64(partial))
+	gl.Rotatef((float32(a.pitch)-armPitch)*0.1, 1, 0, 0)
+	gl.Rotatef((float32(a.yaw)-armYaw)*0.1, 0, 1, 0)
+
+	// Translation reference:
+	// - net.minecraft.src.ItemRenderer#renderItemInFirstPerson(float)
+	//   empty-hand branch (else if !player.isInvisible()).
+	swing := a.currentHandSwingProgress(time.Now())
+	sinSwing := float32(math.Sin(float64(swing) * math.Pi))
+	sinSqrtSwing := float32(math.Sin(math.Sqrt(float64(swing)) * math.Pi))
+	equip := float32(1.0)
+	armScale := float32(0.8)
+
+	gl.Translatef(-sinSqrtSwing*0.3, float32(math.Sin(math.Sqrt(float64(swing))*math.Pi*2.0))*0.4, -sinSwing*0.4)
+	gl.Translatef(0.8*armScale, -0.75*armScale-(1.0-equip)*0.6, -0.9*armScale)
+	gl.Rotatef(45.0, 0, 1, 0)
+
+	sinSwing2 := float32(math.Sin(float64(swing*swing) * math.Pi))
+	sinSqrtSwing2 := float32(math.Sin(math.Sqrt(float64(swing)) * math.Pi))
+	gl.Rotatef(sinSqrtSwing2*70.0, 0, 1, 0)
+	gl.Rotatef(-sinSwing2*20.0, 0, 0, 1)
+
+	gl.Translatef(-1.0, 3.6, 3.5)
+	gl.Rotatef(120.0, 0, 0, 1)
+	gl.Rotatef(200.0, 1, 0, 0)
+	gl.Rotatef(-135.0, 0, 1, 0)
+	gl.Translatef(5.6, 0.0, 0.0)
+
+	a.drawFirstPersonRightArmRaw(tex)
+
+	gl.Enable(gl.CULL_FACE)
+	gl.Color4f(1, 1, 1, 1)
+
+	gl.PopMatrix()
+	gl.MatrixMode(gl.PROJECTION)
+	gl.PopMatrix()
+	gl.MatrixMode(gl.MODELVIEW)
+}
+
+func (a *App) drawFirstPersonRightArmRaw(tex *texture2D) {
+	// Translation reference:
+	// - net.minecraft.src.RenderPlayer#renderFirstPersonArm(EntityPlayer)
+	// - net.minecraft.src.ModelBiped constructor for bipedRightArm
+	// RenderPlayer uses ModelRenderer raw coordinates directly (without 24-y remap used by
+	// this rewrite's world-space entity renderer path), so first-person arm needs dedicated geometry.
+	armUV := cuboidUVFromTextureOffset(tex, 40, 16, 4, 12, 4)
+	const inv16 = float32(1.0 / 16.0)
+
+	gl.PushMatrix()
+	gl.Translatef(-5.0*inv16, 2.0*inv16, 0.0)
+	drawModelPartUVRawEx(
+		-1.0*inv16,
+		4.0*inv16,
+		0.0,
+		4.0*inv16,
+		12.0*inv16,
+		4.0*inv16,
+		tex,
+		armUV,
+		false,
+		1,
+		1,
+		1,
+	)
+	gl.PopMatrix()
+}
+
+func (a *App) drawTexturedBlock(x, y, z float32, blockID int, faces visibleFaces) bool {
+	if len(a.blockTextureDefs) == 0 || len(a.blockTextures) == 0 {
+		return false
+	}
+	if _, ok := a.blockTextureDefs[blockID]; !ok {
+		return false
+	}
+
+	top := a.blockTextureForFace(blockID, faceUp)
+	bottom := a.blockTextureForFace(blockID, faceDown)
+	north := a.blockTextureForFace(blockID, faceNorth)
+	south := a.blockTextureForFace(blockID, faceSouth)
+	west := a.blockTextureForFace(blockID, faceWest)
+	east := a.blockTextureForFace(blockID, faceEast)
+
+	if (faces.Up && top == nil) ||
+		(faces.Down && bottom == nil) ||
+		(faces.North && north == nil) ||
+		(faces.South && south == nil) ||
+		(faces.West && west == nil) ||
+		(faces.East && east == nil) {
+		return false
+	}
+
+	x2, y2, z2 := x+1, y+1, z+1
+	drawFaceWithTint := func(tex *texture2D, shade, tintR, tintG, tintB float32, v0, v1, v2, v3 [3]float32) {
+		if tex == nil {
+			return
+		}
+		tex.bind()
+		gl.Color4f(tintR*shade, tintG*shade, tintB*shade, 1)
+		gl.Begin(gl.QUADS)
+		gl.TexCoord2f(0, 0)
+		gl.Vertex3f(v0[0], v0[1], v0[2])
+		gl.TexCoord2f(1, 0)
+		gl.Vertex3f(v1[0], v1[1], v1[2])
+		gl.TexCoord2f(1, 1)
+		gl.Vertex3f(v2[0], v2[1], v2[2])
+		gl.TexCoord2f(0, 1)
+		gl.Vertex3f(v3[0], v3[1], v3[2])
+		gl.End()
+	}
+	drawFace := func(tex *texture2D, face int, shade float32, v0, v1, v2, v3 [3]float32) {
+		tintR, tintG, tintB := a.blockFaceTint(blockID, face)
+		drawFaceWithTint(tex, shade, tintR, tintG, tintB, v0, v1, v2, v3)
+	}
+
+	gl.Enable(gl.TEXTURE_2D)
+	if faces.Up {
+		drawFace(top, faceUp, 1.0,
+			[3]float32{x, y2, z},
+			[3]float32{x, y2, z2},
+			[3]float32{x2, y2, z2},
+			[3]float32{x2, y2, z},
+		)
+	}
+	if faces.Down {
+		drawFace(bottom, faceDown, 0.52,
+			[3]float32{x, y, z},
+			[3]float32{x2, y, z},
+			[3]float32{x2, y, z2},
+			[3]float32{x, y, z2},
+		)
+	}
+	if faces.North {
+		drawFace(north, faceNorth, 0.80,
+			[3]float32{x2, y, z},
+			[3]float32{x, y, z},
+			[3]float32{x, y2, z},
+			[3]float32{x2, y2, z},
+		)
+	}
+	if faces.South {
+		drawFace(south, faceSouth, 0.80,
+			[3]float32{x, y, z2},
+			[3]float32{x2, y, z2},
+			[3]float32{x2, y2, z2},
+			[3]float32{x, y2, z2},
+		)
+	}
+	if faces.West {
+		drawFace(west, faceWest, 0.65,
+			[3]float32{x, y, z},
+			[3]float32{x, y, z2},
+			[3]float32{x, y2, z2},
+			[3]float32{x, y2, z},
+		)
+	}
+	if faces.East {
+		drawFace(east, faceEast, 0.65,
+			[3]float32{x2, y, z2},
+			[3]float32{x2, y, z},
+			[3]float32{x2, y2, z},
+			[3]float32{x2, y2, z2},
+		)
+	}
+
+	overlay := a.blockSideOverlayTexture(blockID)
+	if overlay != nil {
+		overlayR, overlayG, overlayB := a.blockSideOverlayTint(blockID)
+		gl.Enable(gl.BLEND)
+		gl.BlendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA)
+		if faces.North {
+			drawFaceWithTint(overlay, 0.80, overlayR, overlayG, overlayB,
+				[3]float32{x2, y, z},
+				[3]float32{x, y, z},
+				[3]float32{x, y2, z},
+				[3]float32{x2, y2, z},
+			)
+		}
+		if faces.South {
+			drawFaceWithTint(overlay, 0.80, overlayR, overlayG, overlayB,
+				[3]float32{x, y, z2},
+				[3]float32{x2, y, z2},
+				[3]float32{x2, y2, z2},
+				[3]float32{x, y2, z2},
+			)
+		}
+		if faces.West {
+			drawFaceWithTint(overlay, 0.65, overlayR, overlayG, overlayB,
+				[3]float32{x, y, z},
+				[3]float32{x, y, z2},
+				[3]float32{x, y2, z2},
+				[3]float32{x, y2, z},
+			)
+		}
+		if faces.East {
+			drawFaceWithTint(overlay, 0.65, overlayR, overlayG, overlayB,
+				[3]float32{x2, y, z2},
+				[3]float32{x2, y, z},
+				[3]float32{x2, y2, z},
+				[3]float32{x2, y2, z2},
+			)
+		}
+		gl.Disable(gl.BLEND)
+	}
+
+	gl.Color4f(1, 1, 1, 1)
+	return true
+}
+
+func (a *App) drawHUD(snap netclient.StateSnapshot) {
+	if a.hudHidden {
+		return
+	}
+	uiW, uiH := a.uiWidth(), a.uiHeight()
+
+	gl.Disable(gl.DEPTH_TEST)
+	gl.Disable(gl.CULL_FACE)
+	begin2D(uiW, uiH)
+	gl.Enable(gl.BLEND)
+	gl.BlendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA)
+
+	if !a.inventoryOpen {
+		if a.texWidgets != nil {
+			gl.Enable(gl.TEXTURE_2D)
+			gl.Color4f(1, 1, 1, 1)
+			drawTexturedRect(a.texWidgets, float32(uiW/2-91), float32(uiH-22), 182, 22, 0, 0, 182, 22)
+			held := int(snap.HeldSlot)
+			if held < 0 {
+				held = 0
+			}
+			if held > 8 {
+				held = 8
+			}
+			drawTexturedRect(a.texWidgets, float32(uiW/2-91-1+held*20), float32(uiH-23), 24, 22, 0, 22, 24, 22)
+		}
+
+		if a.texIcons != nil {
+			gl.Enable(gl.TEXTURE_2D)
+			gl.Color4f(1, 1, 1, 1)
+			gl.BlendFunc(gl.ONE_MINUS_DST_COLOR, gl.ONE_MINUS_SRC_COLOR)
+			drawTexturedRect(a.texIcons, float32(uiW/2-7), float32(uiH/2-7), 16, 16, 0, 0, 16, 16)
+			gl.BlendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA)
+		}
+
+		a.drawHealthAndFood(snap)
+		a.drawExperienceBar(snap)
+		a.drawHotbarStackCounts(snap)
+		a.drawDebugOverlay(snap)
+	}
+	a.drawChatOverlay()
+	a.drawChatInput()
+
+	gl.Disable(gl.BLEND)
+	gl.Enable(gl.CULL_FACE)
+	gl.Enable(gl.DEPTH_TEST)
+}
+
+// Translation reference:
+// - net.minecraft.src.GuiIngame.func_110327_a()
+func (a *App) drawHealthAndFood(snap netclient.StateSnapshot) {
+	if a.texIcons == nil {
+		return
+	}
+	uiW, uiH := a.uiWidth(), a.uiHeight()
+
+	gl.Enable(gl.TEXTURE_2D)
+	gl.Color4f(1, 1, 1, 1)
+	left := uiW/2 - 91
+	right := uiW/2 + 91
+	y := uiH - 39
+
+	health := int(math.Ceil(float64(snap.Health)))
+	if health < 0 {
+		health = 0
+	}
+	if health > 20 {
+		health = 20
+	}
+
+	for i := 0; i < 10; i++ {
+		x := left + i*8
+		drawTexturedRect(a.texIcons, float32(x), float32(y), 9, 9, 16, 0, 9, 9)
+		if i*2+1 < health {
+			drawTexturedRect(a.texIcons, float32(x), float32(y), 9, 9, 52, 0, 9, 9)
+		} else if i*2+1 == health {
+			drawTexturedRect(a.texIcons, float32(x), float32(y), 9, 9, 61, 0, 9, 9)
+		}
+	}
+
+	food := int(snap.Food)
+	if food < 0 {
+		food = 0
+	}
+	if food > 20 {
+		food = 20
+	}
+	for i := 0; i < 10; i++ {
+		x := right - i*8 - 9
+		drawTexturedRect(a.texIcons, float32(x), float32(y), 9, 9, 16, 27, 9, 9)
+		if i*2+1 < food {
+			drawTexturedRect(a.texIcons, float32(x), float32(y), 9, 9, 52, 27, 9, 9)
+		} else if i*2+1 == food {
+			drawTexturedRect(a.texIcons, float32(x), float32(y), 9, 9, 61, 27, 9, 9)
+		}
+	}
+}
+
+func (a *App) drawHotbarStackCounts(snap netclient.StateSnapshot) {
+	if a.font == nil {
+		return
+	}
+	uiW, uiH := a.uiWidth(), a.uiHeight()
+
+	baseX := uiW/2 - 90
+	baseY := uiH - 16 - 3
+	for i := 0; i < 9; i++ {
+		slot := snap.Hotbar[i]
+		if slot.ItemID == 0 || slot.StackSize <= 1 {
+			continue
+		}
+		count := strconv.Itoa(int(slot.StackSize))
+		x := baseX + i*20 + 2 + 19 - a.font.getStringWidth(count)
+		y := baseY + 9
+		a.font.drawStringWithShadow(count, x, y, 0xFFFFFF)
+	}
+}
+
+// Translation reference:
+// - net.minecraft.src.GuiIngame.renderGameOverlay() exp bar + level
+func (a *App) drawExperienceBar(snap netclient.StateSnapshot) {
+	if a.texIcons == nil {
+		return
+	}
+	// Translation reference:
+	// - net.minecraft.src.GuiIngame.renderGameOverlay()
+	// In vanilla 1.6.4 survival/adventure, the XP bar background is rendered
+	// whenever xpBarCap() > 0 (including level 0 with 0 progress).
+	// Creative mode suppresses this bar.
+	if snap.IsCreative {
+		return
+	}
+	uiW, uiH := a.uiWidth(), a.uiHeight()
+
+	baseX := uiW/2 - 91
+	y := uiH - 32 + 3
+	gl.Enable(gl.TEXTURE_2D)
+	gl.Color4f(1, 1, 1, 1)
+	drawTexturedRect(a.texIcons, float32(baseX), float32(y), 182, 5, 0, 64, 182, 5)
+
+	fill := int(snap.ExperienceBar * 183.0)
+	if fill < 0 {
+		fill = 0
+	}
+	if fill > 182 {
+		fill = 182
+	}
+	if fill > 0 {
+		drawTexturedRect(a.texIcons, float32(baseX), float32(y), float32(fill), 5, 0, 69, fill, 5)
+	}
+
+	if snap.ExperienceLvl > 0 && a.font != nil {
+		level := strconv.Itoa(int(snap.ExperienceLvl))
+		cx := uiW/2 - a.font.getStringWidth(level)/2
+		ty := uiH - 31 - 4
+		a.font.drawString(level, cx+1, ty, 0x000000)
+		a.font.drawString(level, cx-1, ty, 0x000000)
+		a.font.drawString(level, cx, ty+1, 0x000000)
+		a.font.drawString(level, cx, ty-1, 0x000000)
+		a.font.drawString(level, cx, ty, 0x80FF20)
+	}
+}
+
+func (a *App) drawDebugOverlay(snap netclient.StateSnapshot) {
+	if !a.showDebug || a.font == nil {
+		return
+	}
+
+	facing := facingFromYaw(float64(snap.PlayerYaw))
+	lines := []string{
+		"Minecraft 1.6.4 (GoMC dev)",
+		fmt.Sprintf("%d fps", a.currentFPS),
+		fmt.Sprintf("XYZ: %.3f / %.3f / %.3f", snap.PlayerX, snap.PlayerY, snap.PlayerZ),
+		fmt.Sprintf("Yaw/Pitch: %.2f / %.2f", snap.PlayerYaw, snap.PlayerPitch),
+		fmt.Sprintf("Facing: %s", facing),
+		fmt.Sprintf("Chunks: %d  Entities: %d", snap.LoadedChunks, snap.TrackedEntities),
+		fmt.Sprintf("RenderDist: %d chunks  Cache: %d", a.renderDistance, len(a.chunkRenderCache)),
+		fmt.Sprintf("Health/Food: %.1f / %d", snap.Health, snap.Food),
+		fmt.Sprintf("Time: %d / %d", snap.WorldAge, snap.WorldTime),
+	}
+	y := 2
+	for _, line := range lines {
+		a.font.drawStringWithShadow(line, 2, y, 0xFFFFFF)
+		y += 10
+	}
+}
+
+func (a *App) drawChatOverlay() {
+	if a.font == nil {
+		return
+	}
+	uiH := a.uiHeight()
+
+	a.chatMu.Lock()
+	lines := make([]chatLine, len(a.chatLines))
+	copy(lines, a.chatLines)
+	a.chatMu.Unlock()
+
+	if len(lines) == 0 {
+		return
+	}
+
+	maxLines := 10
+	if a.chatInputOpen {
+		maxLines = 20
+	}
+	now := time.Now()
+	baseY := uiH - 48
+	if a.chatInputOpen {
+		baseY = uiH - 28
+	}
+	drawn := 0
+
+	for i := len(lines) - 1; i >= 0 && drawn < maxLines; i-- {
+		line := lines[i]
+		age := now.Sub(line.AddedAt)
+		if !a.paused && !a.chatInputOpen && age > 10*time.Second {
+			continue
+		}
+
+		alpha := 255
+		if !a.paused && !a.chatInputOpen {
+			fade := int((10*time.Second - age) * 255 / (10 * time.Second))
+			if fade < 0 {
+				fade = 0
+			}
+			if fade > 255 {
+				fade = 255
+			}
+			alpha = fade
+		}
+		if alpha <= 8 {
+			continue
+		}
+
+		text := line.Message
+		w := a.font.getStringWidth(text)
+		y := baseY - drawn*10
+		bg := (alpha / 2) << 24
+		drawSolidRect(1, y-1, 2+w+1, y+9, bg)
+		color := (alpha << 24) | (line.Color & 0xFFFFFF)
+		a.font.drawStringWithShadow(text, 2, y, color)
+		drawn++
+	}
+}
+
+func (a *App) drawChatInput() {
+	if !a.chatInputOpen || a.font == nil {
+		return
+	}
+	uiW, uiH := a.uiWidth(), a.uiHeight()
+	drawSolidRect(2, uiH-14, uiW-2, uiH-2, 0x80000000)
+	cursor := ""
+	if (time.Now().UnixMilli()/500)%2 == 0 {
+		cursor = "_"
+	}
+	a.font.drawStringWithShadow(a.chatInput+cursor, 4, uiH-12, 0xE0E0E0)
+}
+
+func (a *App) hasMenuPanorama() bool {
+	if a.texMenuView == nil {
+		return false
+	}
+	for i := range a.texPanorama {
+		if a.texPanorama[i] == nil {
+			return false
+		}
+	}
+	return true
+}
+
+// Translation reference:
+// - net.minecraft.src.GuiMainMenu.drawPanorama()
+func (a *App) drawPanoramaCube(partial float32) {
+	gl.MatrixMode(gl.PROJECTION)
+	gl.PushMatrix()
+	gl.LoadIdentity()
+	setPerspective(120.0, 1.0, 0.05, 10.0)
+
+	gl.MatrixMode(gl.MODELVIEW)
+	gl.PushMatrix()
+	gl.LoadIdentity()
+	gl.Color4f(1, 1, 1, 1)
+	gl.Rotatef(180, 1, 0, 0)
+	gl.Enable(gl.BLEND)
+	gl.Disable(gl.ALPHA_TEST)
+	gl.Disable(gl.CULL_FACE)
+	gl.DepthMask(false)
+	gl.BlendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA)
+
+	const tiles = 8
+	rotTick := float32(a.panoramaTick) + partial
+	for tile := 0; tile < tiles*tiles; tile++ {
+		gl.PushMatrix()
+		tx := (float32(tile%tiles)/float32(tiles) - 0.5) / 64.0
+		ty := (float32(tile/tiles)/float32(tiles) - 0.5) / 64.0
+		gl.Translatef(tx, ty, 0)
+		gl.Rotatef(float32(math.Sin(float64(rotTick)/400.0))*25.0+20.0, 1, 0, 0)
+		gl.Rotatef(-rotTick*0.1, 0, 1, 0)
+
+		alpha := 1.0 / float32(tile+1)
+		for face := 0; face < 6; face++ {
+			gl.PushMatrix()
+			switch face {
+			case 1:
+				gl.Rotatef(90, 0, 1, 0)
+			case 2:
+				gl.Rotatef(180, 0, 1, 0)
+			case 3:
+				gl.Rotatef(-90, 0, 1, 0)
+			case 4:
+				gl.Rotatef(90, 1, 0, 0)
+			case 5:
+				gl.Rotatef(-90, 1, 0, 0)
+			}
+
+			gl.Enable(gl.TEXTURE_2D)
+			a.texPanorama[face].bind()
+			gl.Color4f(1, 1, 1, alpha)
+			gl.Begin(gl.QUADS)
+			gl.TexCoord2f(0, 0)
+			gl.Vertex3f(-1, -1, 1)
+			gl.TexCoord2f(1, 0)
+			gl.Vertex3f(1, -1, 1)
+			gl.TexCoord2f(1, 1)
+			gl.Vertex3f(1, 1, 1)
+			gl.TexCoord2f(0, 1)
+			gl.Vertex3f(-1, 1, 1)
+			gl.End()
+			gl.PopMatrix()
+		}
+
+		gl.PopMatrix()
+		gl.ColorMask(true, true, true, false)
+	}
+
+	gl.ColorMask(true, true, true, true)
+	gl.MatrixMode(gl.PROJECTION)
+	gl.PopMatrix()
+	gl.MatrixMode(gl.MODELVIEW)
+	gl.PopMatrix()
+	gl.DepthMask(true)
+	gl.Enable(gl.CULL_FACE)
+	gl.Enable(gl.ALPHA_TEST)
+	gl.Enable(gl.DEPTH_TEST)
+	gl.Color4f(1, 1, 1, 1)
+}
+
+// Translation reference:
+// - net.minecraft.src.GuiMainMenu.rotateAndBlurSkybox()
+func (a *App) rotateAndBlurSkybox() {
+	if a.texMenuView == nil {
+		return
+	}
+
+	a.texMenuView.bind()
+	gl.CopyTexSubImage2D(gl.TEXTURE_2D, 0, 0, 0, 0, 0, 256, 256)
+	gl.Enable(gl.BLEND)
+	gl.Enable(gl.TEXTURE_2D)
+	gl.BlendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA)
+	gl.ColorMask(true, true, true, false)
+	gl.Disable(gl.ALPHA_TEST)
+	gl.Disable(gl.DEPTH_TEST)
+	begin2D(a.width, a.height)
+
+	for pass := 0; pass < 3; pass++ {
+		offset := float32(pass-1) / 256.0
+		alpha := 1.0 / float32(pass+1)
+		gl.Color4f(1, 1, 1, alpha)
+		gl.Begin(gl.QUADS)
+		gl.TexCoord2f(0.0+offset, 0.0)
+		gl.Vertex2f(float32(a.width), float32(a.height))
+		gl.TexCoord2f(1.0+offset, 0.0)
+		gl.Vertex2f(float32(a.width), 0)
+		gl.TexCoord2f(1.0+offset, 1.0)
+		gl.Vertex2f(0, 0)
+		gl.TexCoord2f(0.0+offset, 1.0)
+		gl.Vertex2f(0, float32(a.height))
+		gl.End()
+	}
+
+	gl.ColorMask(true, true, true, true)
+	gl.Enable(gl.ALPHA_TEST)
+	gl.Color4f(1, 1, 1, 1)
+}
+
+// Translation reference:
+// - net.minecraft.src.GuiMainMenu.renderSkybox()
+func (a *App) renderSkybox(partial float32) {
+	if !a.hasMenuPanorama() {
+		return
+	}
+
+	gl.Viewport(0, 0, 256, 256)
+	a.drawPanoramaCube(partial)
+	gl.Enable(gl.TEXTURE_2D)
+	for i := 0; i < 8; i++ {
+		a.rotateAndBlurSkybox()
+	}
+
+	gl.Viewport(0, 0, int32(a.width), int32(a.height))
+	gl.Disable(gl.DEPTH_TEST)
+	gl.Disable(gl.CULL_FACE)
+	begin2D(a.width, a.height)
+	gl.Enable(gl.TEXTURE_2D)
+	a.texMenuView.bind()
+	gl.TexParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, int32(gl.LINEAR))
+	gl.TexParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, int32(gl.LINEAR))
+	gl.Color4f(1, 1, 1, 1)
+
+	scale := float32(120.0 / float32(maxInt(a.width, a.height)))
+	uRadius := float32(a.height) * scale / 256.0
+	vRadius := float32(a.width) * scale / 256.0
+
+	gl.Begin(gl.QUADS)
+	gl.TexCoord2f(0.5-uRadius, 0.5+vRadius)
+	gl.Vertex2f(0, float32(a.height))
+	gl.TexCoord2f(0.5-uRadius, 0.5-vRadius)
+	gl.Vertex2f(float32(a.width), float32(a.height))
+	gl.TexCoord2f(0.5+uRadius, 0.5-vRadius)
+	gl.Vertex2f(float32(a.width), 0)
+	gl.TexCoord2f(0.5+uRadius, 0.5+vRadius)
+	gl.Vertex2f(0, 0)
+	gl.End()
+}
+
+func (a *App) drawMainMenu() {
+	uiW, uiH := a.uiWidth(), a.uiHeight()
+	gl.Clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT)
+	if a.hasMenuPanorama() {
+		a.renderSkybox(float32(a.panoramaFrac))
+	} else if a.texOptionsBG != nil {
+		gl.Disable(gl.DEPTH_TEST)
+		gl.Disable(gl.CULL_FACE)
+		begin2D(uiW, uiH)
+		gl.Enable(gl.BLEND)
+		gl.BlendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA)
+		a.drawTiledOptionsBackground(0, 0, uiW, uiH, 0x404040)
+	}
+
+	gl.Disable(gl.DEPTH_TEST)
+	gl.Disable(gl.CULL_FACE)
+	begin2D(uiW, uiH)
+	gl.Enable(gl.BLEND)
+	gl.BlendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA)
+
+	// Match vanilla two-layer main menu darkening.
+	drawGradientRect(0, 0, uiW, uiH, 0x80FFFFFF, 0x00FFFFFF)
+	drawGradientRect(0, 0, uiW, uiH, 0x00000000, 0x80000000)
+
+	if a.texTitle != nil {
+		gl.Enable(gl.TEXTURE_2D)
+		gl.Color4f(1, 1, 1, 1)
+		x := uiW/2 - 155
+		y := 30
+		drawTexturedRect(a.texTitle, float32(x), float32(y), 155, 44, 0, 0, 155, 44)
+		drawTexturedRect(a.texTitle, float32(x+155), float32(y), 155, 44, 0, 45, 155, 44)
+	}
+
+	if a.font != nil {
+		if a.splashText != "" {
+			scale := 1.8 - math.Abs(math.Sin(float64(time.Now().UnixMilli()%1000)/1000.0*math.Pi*2.0))*0.1
+			sw := float64(a.font.getStringWidth(a.splashText) + 32)
+			if sw > 0 {
+				scale = scale * 100.0 / sw
+			}
+			cx := float32(uiW/2 + 90)
+			cy := float32(70)
+			gl.PushMatrix()
+			gl.Translatef(cx, cy, 0)
+			gl.Rotatef(-20.0, 0, 0, 1)
+			gl.Scalef(float32(scale), float32(scale), float32(scale))
+			a.font.drawCenteredString(a.splashText, 0, -8, 0xFFFF00)
+			gl.PopMatrix()
+		}
+
+		a.font.drawString("Minecraft 1.6.4", 2, uiH-10, 0xFFFFFF)
+		cr := "Copyright Mojang AB. Do not distribute!"
+		a.font.drawString(cr, uiW-a.font.getStringWidth(cr)-2, uiH-10, 0xFFFFFF)
+	}
+
+	for _, b := range a.mainButtons {
+		b.draw(a.font, a.texWidgets, a.mouseX, a.mouseY)
+	}
+
+	gl.Disable(gl.BLEND)
+	gl.Enable(gl.CULL_FACE)
+	gl.Enable(gl.DEPTH_TEST)
+}
+
+func (a *App) drawPauseMenu() {
+	uiW, uiH := a.uiWidth(), a.uiHeight()
+	gl.Disable(gl.DEPTH_TEST)
+	gl.Disable(gl.CULL_FACE)
+	begin2D(uiW, uiH)
+	gl.Enable(gl.BLEND)
+	gl.BlendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA)
+
+	if a.texOptionsBG != nil {
+		a.drawTiledOptionsBackground(0, 0, uiW, uiH, 0x404040)
+	}
+
+	drawGradientRect(0, 0, uiW, uiH, 0xC0101010, 0xD0101010)
+
+	if a.font != nil {
+		title := "Game menu"
+		if a.pauseScreen == pauseScreenOptions {
+			title = "Options"
+		}
+		a.font.drawCenteredString(title, uiW/2, 40, 0xFFFFFF)
+	}
+
+	for _, b := range a.currentPauseButtons() {
+		b.draw(a.font, a.texWidgets, a.mouseX, a.mouseY)
+	}
+	if a.pauseScreen == pauseScreenOptions && a.font != nil {
+		baseY := uiH/6 + 24
+		sensitivityPct := int((a.mouseSens / 0.50) * 200.0)
+		if sensitivityPct < 0 {
+			sensitivityPct = 0
+		}
+		if sensitivityPct > 200 {
+			sensitivityPct = 200
+		}
+		rd := fmt.Sprintf("Render Distance: %d blocks", a.renderDistance)
+		sens := fmt.Sprintf("Sensitivity: %d%%", sensitivityPct)
+		a.font.drawCenteredString(rd, uiW/2, baseY+88+6, 0xFFFFFF)
+		a.font.drawCenteredString(sens, uiW/2, baseY+112+6, 0xFFFFFF)
+	}
+	a.drawMenuStatusLine()
+
+	gl.Disable(gl.BLEND)
+	gl.Enable(gl.CULL_FACE)
+	gl.Enable(gl.DEPTH_TEST)
+}
+
+func (a *App) resolvePlayerMovement(px, py, pz, dx, dy, dz float64) (float64, float64, float64, bool) {
+	x := px
+	y := py
+	z := pz
+
+	adjDY := a.clipMovementDelta(dy, func(step float64) bool {
+		return a.playerCollidesAt(x, y+step, z)
+	})
+	y += adjDY
+
+	adjDX := a.clipMovementDelta(dx, func(step float64) bool {
+		return a.playerCollidesAt(x+step, y, z)
+	})
+	x += adjDX
+
+	adjDZ := a.clipMovementDelta(dz, func(step float64) bool {
+		return a.playerCollidesAt(x, y, z+step)
+	})
+	z += adjDZ
+
+	grounded := a.playerGroundedAt(x, y, z)
+	if dy < 0 && adjDY > dy+1e-6 {
+		grounded = true
+	}
+	return adjDX, adjDY, adjDZ, grounded
+}
+
+func (a *App) clipMovementDelta(delta float64, collides func(step float64) bool) float64 {
+	if delta == 0 || !collides(delta) {
+		return delta
+	}
+
+	const iters = 12
+	if delta > 0 {
+		lo := 0.0
+		hi := delta
+		for i := 0; i < iters; i++ {
+			mid := (lo + hi) * 0.5
+			if collides(mid) {
+				hi = mid
+			} else {
+				lo = mid
+			}
+		}
+		return lo
+	}
+
+	lo := delta
+	hi := 0.0
+	for i := 0; i < iters; i++ {
+		mid := (lo + hi) * 0.5
+		if collides(mid) {
+			lo = mid
+		} else {
+			hi = mid
+		}
+	}
+	return hi
+}
+
+func (a *App) playerGroundedAt(px, py, pz float64) bool {
+	if a.playerCollidesAt(px, py, pz) {
+		return false
+	}
+	return a.playerCollidesAt(px, py-0.05, pz)
+}
+
+func (a *App) playerCollidesAt(px, py, pz float64) bool {
+	if a.session == nil {
+		return false
+	}
+
+	minX := px - playerHalfWidth
+	maxX := px + playerHalfWidth
+	minY := py
+	maxY := py + playerHeight
+	minZ := pz - playerHalfWidth
+	maxZ := pz + playerHalfWidth
+
+	const eps = 1e-6
+	startX := int(math.Floor(minX))
+	endX := int(math.Floor(maxX - eps))
+	startY := int(math.Floor(minY))
+	endY := int(math.Floor(maxY - eps))
+	startZ := int(math.Floor(minZ))
+	endZ := int(math.Floor(maxZ - eps))
+
+	for bx := startX; bx <= endX; bx++ {
+		for by := startY; by <= endY; by++ {
+			for bz := startZ; bz <= endZ; bz++ {
+				if a.isSolidBlockAt(bx, by, bz) {
+					return true
+				}
+			}
+		}
+	}
+	return false
+}
+
+func (a *App) isSolidBlockAt(x, y, z int) bool {
+	if y >= 256 {
+		return true
+	}
+	if y < 0 {
+		return false
+	}
+	id, _, ok := a.session.BlockAt(x, y, z)
+	if !ok {
+		// Keep movement conservative when chunk data is unavailable.
+		return true
+	}
+	return block.BlocksMovement(id)
+}
+
+func (a *App) pickBlockTarget(snap netclient.StateSnapshot, reach float64) blockTarget {
+	dirX, dirY, dirZ := lookDirectionFromYawPitch(a.yaw, a.pitch)
+
+	originX := snap.PlayerX
+	originY := snap.PlayerY + playerEyeHeight
+	originZ := snap.PlayerZ
+
+	prevX := int(math.Floor(originX))
+	prevY := int(math.Floor(originY))
+	prevZ := int(math.Floor(originZ))
+
+	for dist := 0.1; dist <= reach; dist += raycastStep {
+		worldX := originX + dirX*dist
+		worldY := originY + dirY*dist
+		worldZ := originZ + dirZ*dist
+
+		blockX := int(math.Floor(worldX))
+		blockY := int(math.Floor(worldY))
+		blockZ := int(math.Floor(worldZ))
+		if blockX == prevX && blockY == prevY && blockZ == prevZ {
+			continue
+		}
+
+		id, _, ok := a.session.BlockAt(blockX, blockY, blockZ)
+		if ok && id != 0 {
+			return blockTarget{
+				X:    blockX,
+				Y:    blockY,
+				Z:    blockZ,
+				Face: blockFaceFromStep(prevX, prevY, prevZ, blockX, blockY, blockZ),
+				Hit:  true,
+			}
+		}
+
+		prevX = blockX
+		prevY = blockY
+		prevZ = blockZ
+	}
+
+	return blockTarget{}
+}
+
+func (a *App) blockTargetDistance(snap netclient.StateSnapshot, target blockTarget) float64 {
+	if !target.Hit {
+		return math.Inf(1)
+	}
+	ox := snap.PlayerX
+	oy := snap.PlayerY + playerEyeHeight
+	oz := snap.PlayerZ
+	cx := float64(target.X) + 0.5
+	cy := float64(target.Y) + 0.5
+	cz := float64(target.Z) + 0.5
+	dx := cx - ox
+	dy := cy - oy
+	dz := cz - oz
+	return math.Sqrt(dx*dx + dy*dy + dz*dz)
+}
+
+func (a *App) pickEntityTarget(snap netclient.StateSnapshot, reach float64) entityTarget {
+	if a.session == nil {
+		return entityTarget{}
+	}
+	entities := a.session.EntitiesSnapshot()
+	if len(entities) == 0 {
+		return entityTarget{}
+	}
+
+	dirX, dirY, dirZ := lookDirectionFromYawPitch(a.yaw, a.pitch)
+	originX := snap.PlayerX
+	originY := snap.PlayerY + playerEyeHeight
+	originZ := snap.PlayerZ
+
+	best := entityTarget{Dist: reach + 1.0}
+	for _, ent := range entities {
+		width, height := entityCollisionSize(ent)
+		half := width * 0.5
+		minX := ent.X - half
+		minY := ent.Y
+		minZ := ent.Z - half
+		maxX := ent.X + half
+		maxY := ent.Y + height
+		maxZ := ent.Z + half
+
+		// Translation reference:
+		// - net.minecraft.src.EntityRenderer#getMouseOver() expands hit boxes by collision border size.
+		const border = 0.1
+		minX -= border
+		minY -= border
+		minZ -= border
+		maxX += border
+		maxY += border
+		maxZ += border
+
+		dist, hit := rayIntersectAABB(originX, originY, originZ, dirX, dirY, dirZ, minX, minY, minZ, maxX, maxY, maxZ, reach)
+		if !hit {
+			continue
+		}
+		if !best.Hit || dist < best.Dist {
+			best.Hit = true
+			best.Dist = dist
+			best.EntityID = ent.EntityID
+		}
+	}
+	return best
+}
+
+func entityCollisionSize(ent netclient.EntitySnapshot) (width float64, height float64) {
+	switch ent.Type {
+	case 0: // player
+		return 0.6, 1.8
+	case 50, 51, 54, 57, 66, 120: // creeper/skeleton/zombie/pigzombie/witch/villager
+		return 0.6, 1.8
+	case 52: // spider
+		return 1.4, 0.9
+	case 55: // slime
+		size := float64(ent.SlimeSize)
+		if size < 1.0 {
+			size = 1.0
+		}
+		side := 0.6 * size
+		return side, side
+	case 58: // enderman
+		return 0.6, 2.9
+	case 65: // bat
+		return 0.5, 0.9
+	case 90: // pig
+		return 0.9, 0.9
+	case 91, 92: // sheep/cow
+		return 0.9, 1.3
+	case 93: // chicken
+		return 0.3, 0.7
+	case 94: // squid
+		return 0.95, 0.95
+	case 100: // horse
+		return 1.4, 1.6
+	default:
+		return 0.6, 1.8
+	}
+}
+
+func rayIntersectAABB(
+	ox, oy, oz float64,
+	dx, dy, dz float64,
+	minX, minY, minZ float64,
+	maxX, maxY, maxZ float64,
+	maxDist float64,
+) (float64, bool) {
+	tMin := 0.0
+	tMax := maxDist
+
+	axis := func(origin, dir, minB, maxB float64) bool {
+		if math.Abs(dir) < 1.0e-9 {
+			return origin >= minB && origin <= maxB
+		}
+		inv := 1.0 / dir
+		t1 := (minB - origin) * inv
+		t2 := (maxB - origin) * inv
+		if t1 > t2 {
+			t1, t2 = t2, t1
+		}
+		if t1 > tMin {
+			tMin = t1
+		}
+		if t2 < tMax {
+			tMax = t2
+		}
+		return tMax >= tMin
+	}
+
+	if !axis(ox, dx, minX, maxX) {
+		return 0, false
+	}
+	if !axis(oy, dy, minY, maxY) {
+		return 0, false
+	}
+	if !axis(oz, dz, minZ, maxZ) {
+		return 0, false
+	}
+	if tMax < 0 {
+		return 0, false
+	}
+	if tMin < 0 {
+		tMin = tMax
+	}
+	if tMin < 0 || tMin > maxDist {
+		return 0, false
+	}
+	return tMin, true
+}
+
+func (a *App) drainSessionEvents() {
+	if a.chatClosed || a.eventsCh == nil {
+		return
+	}
+	for {
+		select {
+		case ev, ok := <-a.eventsCh:
+			if !ok {
+				a.chatClosed = true
+				return
+			}
+			switch ev.Type {
+			case netclient.EventChat:
+				a.addChatLine(ev.Message, 0xFFFFFF)
+			case netclient.EventSystem:
+				a.addChatLine("[system] "+ev.Message, 0xA0A0A0)
+			case netclient.EventSound:
+				if ev.SoundName != "" {
+					vol := float64(ev.SoundVolume)
+					if vol <= 0 {
+						vol = 1.0
+					}
+					pitch := float64(ev.SoundPitch)
+					if pitch <= 0 {
+						pitch = 1.0
+					}
+					audio.PlaySoundKey(ev.SoundName, vol, pitch)
+				}
+			case netclient.EventKick:
+				a.addChatLine("[kick] "+ev.Message, 0xFF5555)
+			case netclient.EventDisconnect:
+				a.addChatLine("[disconnect] "+ev.Message, 0xFF5555)
+			default:
+				a.addChatLine(ev.Message, 0xFFFFFF)
+			}
+		default:
+			return
+		}
+	}
+}
+
+func (a *App) addChatLine(msg string, color int) {
+	if msg == "" {
+		return
+	}
+	a.chatMu.Lock()
+	defer a.chatMu.Unlock()
+	a.chatLines = append(a.chatLines, chatLine{
+		Message: msg,
+		AddedAt: time.Now(),
+		Color:   color,
+	})
+	if len(a.chatLines) > 200 {
+		a.chatLines = a.chatLines[len(a.chatLines)-200:]
+	}
+}
+
+// Packet15 direction mapping from clicked-face side:
+// 0=bottom, 1=top, 2=north(-z), 3=south(+z), 4=west(-x), 5=east(+x)
+func blockFaceFromStep(prevX, prevY, prevZ, hitX, hitY, hitZ int) int32 {
+	switch {
+	case hitX > prevX:
+		return 4
+	case hitX < prevX:
+		return 5
+	case hitY > prevY:
+		return 0
+	case hitY < prevY:
+		return 1
+	case hitZ > prevZ:
+		return 2
+	case hitZ < prevZ:
+		return 3
+	default:
+		return 1
+	}
+}
+
+func begin2D(width, height int) {
+	gl.MatrixMode(gl.PROJECTION)
+	gl.LoadIdentity()
+	gl.Ortho(0, float64(width), float64(height), 0, -1, 1)
+	gl.MatrixMode(gl.MODELVIEW)
+	gl.LoadIdentity()
+}
+
+func drawSolidRect(x1, y1, x2, y2 int, color int) {
+	a := float32((color>>24)&0xFF) / 255.0
+	r := float32((color>>16)&0xFF) / 255.0
+	g := float32((color>>8)&0xFF) / 255.0
+	b := float32(color&0xFF) / 255.0
+
+	gl.Disable(gl.TEXTURE_2D)
+	gl.Color4f(r, g, b, a)
+	gl.Begin(gl.QUADS)
+	gl.Vertex2f(float32(x1), float32(y1))
+	gl.Vertex2f(float32(x2), float32(y1))
+	gl.Vertex2f(float32(x2), float32(y2))
+	gl.Vertex2f(float32(x1), float32(y2))
+	gl.End()
+	gl.Enable(gl.TEXTURE_2D)
+	gl.Color4f(1, 1, 1, 1)
+}
+
+func drawGradientRect(x1, y1, x2, y2 int, topColor, bottomColor int) {
+	topA := float32((topColor>>24)&0xFF) / 255.0
+	topR := float32((topColor>>16)&0xFF) / 255.0
+	topG := float32((topColor>>8)&0xFF) / 255.0
+	topB := float32(topColor&0xFF) / 255.0
+
+	botA := float32((bottomColor>>24)&0xFF) / 255.0
+	botR := float32((bottomColor>>16)&0xFF) / 255.0
+	botG := float32((bottomColor>>8)&0xFF) / 255.0
+	botB := float32(bottomColor&0xFF) / 255.0
+
+	gl.Disable(gl.TEXTURE_2D)
+	gl.ShadeModel(gl.SMOOTH)
+	gl.Begin(gl.QUADS)
+	gl.Color4f(topR, topG, topB, topA)
+	gl.Vertex2f(float32(x1), float32(y1))
+	gl.Vertex2f(float32(x2), float32(y1))
+	gl.Color4f(botR, botG, botB, botA)
+	gl.Vertex2f(float32(x2), float32(y2))
+	gl.Vertex2f(float32(x1), float32(y2))
+	gl.End()
+	gl.ShadeModel(gl.FLAT)
+	gl.Enable(gl.TEXTURE_2D)
+	gl.Color4f(1, 1, 1, 1)
+}
+
+func facingFromYaw(yaw float64) string {
+	v := int(math.Floor(yaw*4.0/360.0 + 0.5))
+	v &= 3
+	switch v {
+	case 0:
+		return "South (+Z)"
+	case 1:
+		return "West (-X)"
+	case 2:
+		return "North (-Z)"
+	default:
+		return "East (+X)"
+	}
+}
+
+func drawCube(x, y, z, r, g, b float32) {
+	drawCubeFaces(x, y, z, r, g, b, visibleFaces{
+		Down:  true,
+		Up:    true,
+		North: true,
+		South: true,
+		West:  true,
+		East:  true,
+	})
+}
+
+func drawCubeFaces(x, y, z, r, g, b float32, faces visibleFaces) {
+	x2 := x + 1
+	y2 := y + 1
+	z2 := z + 1
+
+	bright := func(v float32) float32 {
+		return float32(math.Min(float64(v+0.18), 1.0))
+	}
+	dim := func(v float32) float32 {
+		return float32(math.Max(float64(v-0.18), 0.0))
+	}
+
+	gl.Begin(gl.QUADS)
+
+	if faces.Up {
+		gl.Color3f(bright(r), bright(g), bright(b))
+		gl.Vertex3f(x, y2, z)
+		gl.Vertex3f(x, y2, z2)
+		gl.Vertex3f(x2, y2, z2)
+		gl.Vertex3f(x2, y2, z)
+	}
+
+	if faces.Down {
+		gl.Color3f(dim(r), dim(g), dim(b))
+		gl.Vertex3f(x, y, z)
+		gl.Vertex3f(x2, y, z)
+		gl.Vertex3f(x2, y, z2)
+		gl.Vertex3f(x, y, z2)
+	}
+
+	if faces.North {
+		gl.Color3f(r, g, b)
+		gl.Vertex3f(x2, y, z)
+		gl.Vertex3f(x, y, z)
+		gl.Vertex3f(x, y2, z)
+		gl.Vertex3f(x2, y2, z)
+	}
+
+	if faces.South {
+		gl.Color3f(r, g, b)
+		gl.Vertex3f(x, y, z2)
+		gl.Vertex3f(x2, y, z2)
+		gl.Vertex3f(x2, y2, z2)
+		gl.Vertex3f(x, y2, z2)
+	}
+
+	if faces.West {
+		gl.Color3f(dim(r), dim(g), dim(b))
+		gl.Vertex3f(x, y, z)
+		gl.Vertex3f(x, y, z2)
+		gl.Vertex3f(x, y2, z2)
+		gl.Vertex3f(x, y2, z)
+	}
+
+	if faces.East {
+		gl.Color3f(r, g, b)
+		gl.Vertex3f(x2, y, z2)
+		gl.Vertex3f(x2, y, z)
+		gl.Vertex3f(x2, y2, z)
+		gl.Vertex3f(x2, y2, z2)
+	}
+
+	gl.End()
+}
+
+func drawBlockOutline(x, y, z float32) {
+	eps := float32(0.002)
+	x1 := x - eps
+	y1 := y - eps
+	z1 := z - eps
+	x2 := x + 1 + eps
+	y2 := y + 1 + eps
+	z2 := z + 1 + eps
+
+	gl.Disable(gl.TEXTURE_2D)
+	gl.LineWidth(2)
+	gl.Color3f(0.02, 0.02, 0.02)
+	gl.Begin(gl.LINES)
+	gl.Vertex3f(x1, y1, z1)
+	gl.Vertex3f(x2, y1, z1)
+	gl.Vertex3f(x2, y1, z1)
+	gl.Vertex3f(x2, y1, z2)
+	gl.Vertex3f(x2, y1, z2)
+	gl.Vertex3f(x1, y1, z2)
+	gl.Vertex3f(x1, y1, z2)
+	gl.Vertex3f(x1, y1, z1)
+
+	gl.Vertex3f(x1, y2, z1)
+	gl.Vertex3f(x2, y2, z1)
+	gl.Vertex3f(x2, y2, z1)
+	gl.Vertex3f(x2, y2, z2)
+	gl.Vertex3f(x2, y2, z2)
+	gl.Vertex3f(x1, y2, z2)
+	gl.Vertex3f(x1, y2, z2)
+	gl.Vertex3f(x1, y2, z1)
+
+	gl.Vertex3f(x1, y1, z1)
+	gl.Vertex3f(x1, y2, z1)
+	gl.Vertex3f(x2, y1, z1)
+	gl.Vertex3f(x2, y2, z1)
+	gl.Vertex3f(x2, y1, z2)
+	gl.Vertex3f(x2, y2, z2)
+	gl.Vertex3f(x1, y1, z2)
+	gl.Vertex3f(x1, y2, z2)
+	gl.End()
+	gl.Enable(gl.TEXTURE_2D)
+}
+
+func colorForBlock(id int) (float32, float32, float32) {
+	switch id {
+	case 2:
+		return 0.38, 0.72, 0.22
+	case 3:
+		return 0.49, 0.36, 0.23
+	case 12:
+		return 0.84, 0.78, 0.47
+	case 8, 9:
+		return 0.20, 0.35, 0.90
+	case 10, 11:
+		return 0.90, 0.36, 0.12
+	case 17:
+		return 0.55, 0.43, 0.28
+	case 18:
+		return 0.22, 0.60, 0.20
+	case 20:
+		return 0.70, 0.90, 0.95
+	default:
+		return 0.62, 0.62, 0.62
+	}
+}
+
+func setPerspective(fovY, aspect, near, far float64) {
+	top := near * math.Tan(fovY*math.Pi/360.0)
+	bottom := -top
+	right := top * aspect
+	left := -right
+	gl.Frustum(left, right, bottom, top, near, far)
+}
+
+// Translation reference:
+// - net.minecraft.client.Minecraft.getLimitFramerate()
+// - net.minecraft.client.Minecraft.runGameLoop() -> Display.sync(...)
+// - net.minecraft.client.renderer.EntityRenderer.performanceToFps(int)
+func (a *App) currentFrameCap() int {
+	// In vanilla, GuiMainMenu forces the "Power saver" framerate mode.
+	if a.mainMenu {
+		return performanceModeToFPS(2)
+	}
+	return performanceModeToFPS(a.limitFramerateMode)
+}
+
+func (a *App) syncFrameRate(frameStart time.Time) {
+	capFPS := a.currentFrameCap()
+	if capFPS <= 0 {
+		return
+	}
+	frameDur := time.Second / time.Duration(capFPS)
+	target := frameStart.Add(frameDur)
+	for {
+		remain := time.Until(target)
+		if remain <= 0 {
+			return
+		}
+		// Similar to LWJGL Display.sync(): sleep most of the wait budget,
+		// then yield in the final small slice for steadier pacing.
+		if remain > 2*time.Millisecond {
+			time.Sleep(remain - time.Millisecond)
+			continue
+		}
+		runtime.Gosched()
+	}
+}
+
+func performanceModeToFPS(mode int) int {
+	// Translation reference:
+	// - net.minecraft.client.renderer.EntityRenderer.performanceToFps(int)
+	switch mode {
+	case 0:
+		return 200 // Max FPS
+	case 2:
+		return 35 // Power saver
+	default:
+		return 120 // Balanced (default in 1.6.4 options)
+	}
+}
+
+func maxInt(a, b int) int {
+	if a > b {
+		return a
+	}
+	return b
+}
+
+func discoverAssetsRoot() string {
+	defaultRoot := filepath.Join("assets", "minecraft")
+	candidates := make([]string, 0, 32)
+
+	appendSearchRoots := func(base string) {
+		if base == "" {
+			return
+		}
+		cur := base
+		for i := 0; i < 8; i++ {
+			candidates = append(candidates, filepath.Join(cur, "assets", "minecraft"))
+			parent := filepath.Dir(cur)
+			if parent == cur {
+				break
+			}
+			cur = parent
+		}
+	}
+
+	if wd, err := os.Getwd(); err == nil {
+		appendSearchRoots(wd)
+	}
+	if exePath, err := os.Executable(); err == nil {
+		appendSearchRoots(filepath.Dir(exePath))
+	}
+	candidates = append(candidates, defaultRoot)
+
+	seen := make(map[string]struct{}, len(candidates))
+	uniq := make([]string, 0, len(candidates))
+	for _, c := range candidates {
+		if c == "" {
+			continue
+		}
+		if _, ok := seen[c]; ok {
+			continue
+		}
+		seen[c] = struct{}{}
+		uniq = append(uniq, c)
+	}
+
+	hasMainMenuAssets := func(root string) bool {
+		required := []string{
+			filepath.Join(root, "textures", "gui", "title", "background", "panorama_0.png"),
+			filepath.Join(root, "textures", "gui", "widgets.png"),
+			filepath.Join(root, "textures", "font", "ascii.png"),
+		}
+		for _, p := range required {
+			st, err := os.Stat(p)
+			if err != nil || st.IsDir() {
+				return false
+			}
+		}
+		return true
+	}
+
+	for _, root := range uniq {
+		if hasMainMenuAssets(root) {
+			return root
+		}
+	}
+	for _, root := range uniq {
+		if st, err := os.Stat(filepath.Join(root, "textures")); err == nil && st.IsDir() {
+			return root
+		}
+	}
+	return defaultRoot
+}
+
+func discoverFontCharsPath(assetsRoot string) string {
+	defaultPath := filepath.Join("assets", "font.txt")
+	candidates := make([]string, 0, 24)
+
+	appendSearch := func(base string) {
+		if base == "" {
+			return
+		}
+		cur := base
+		for i := 0; i < 8; i++ {
+			candidates = append(candidates, filepath.Join(cur, "assets", "font.txt"))
+			parent := filepath.Dir(cur)
+			if parent == cur {
+				break
+			}
+			cur = parent
+		}
+	}
+	candidates = append(candidates, defaultPath)
+	candidates = append(candidates, filepath.Join(filepath.Dir(assetsRoot), "font.txt"))
+	if wd, err := os.Getwd(); err == nil {
+		appendSearch(wd)
+	}
+	if exePath, err := os.Executable(); err == nil {
+		appendSearch(filepath.Dir(exePath))
+	}
+
+	for _, p := range candidates {
+		if st, err := os.Stat(p); err == nil && !st.IsDir() {
+			return p
+		}
+	}
+	return defaultPath
+}
+
+func isOpaqueRenderBlock(id int) bool {
+	switch id {
+	case 8, 9, 10, 11, 18, 20, 31, 32, 37, 38, 39, 40, 50, 51, 59, 63, 64, 65, 66, 68, 69, 70, 71, 72, 75, 76, 77, 78, 79, 83, 85, 90, 106, 111, 127:
+		return false
+	default:
+		return true
+	}
+}
+
+func isNormalCubeRenderBlock(id int) bool {
+	return isOpaqueRenderBlock(id)
+}
+
+func isFlatPlantRenderBlock(id int) bool {
+	switch id {
+	case 111:
+		return true
+	default:
+		return false
+	}
+}
+
+func isCrossedPlantRenderBlock(id int) bool {
+	switch id {
+	case 6, 31, 32, 37, 38, 39, 40, 59, 83:
+		return true
+	default:
+		return false
+	}
+}
+
+func minInt(a, b int) int {
+	if a < b {
+		return a
+	}
+	return b
+}
