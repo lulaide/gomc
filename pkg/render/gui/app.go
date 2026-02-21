@@ -3,6 +3,7 @@
 package gui
 
 import (
+	"bufio"
 	"errors"
 	"fmt"
 	"math"
@@ -38,6 +39,12 @@ const (
 	maxChunkBuilds  = 4
 	defaultFPSMode  = 1
 	sprintTapTicks  = 7
+)
+
+var (
+	// Translation reference:
+	// - net.minecraft.src.GameSettings.RENDER_DISTANCES
+	renderDistanceModeNames = []string{"Far", "Normal", "Short", "Tiny"}
 )
 
 const (
@@ -209,6 +216,8 @@ type App struct {
 	chatClosed bool
 
 	assetsRoot     string
+	optionsPath    string
+	optionsKV      map[string]string
 	texWidgets     *texture2D
 	texIcons       *texture2D
 	texOptionsBG   *texture2D
@@ -305,12 +314,6 @@ func Run(session *netclient.Session, cfg Config) error {
 	if cfg.RenderDistance <= 0 {
 		cfg.RenderDistance = 10
 	}
-	if cfg.RenderDistance < 2 {
-		cfg.RenderDistance = 2
-	}
-	if cfg.RenderDistance > 32 {
-		cfg.RenderDistance = 32
-	}
 	if cfg.MouseSensitivity <= 0 {
 		cfg.MouseSensitivity = 0.14
 	}
@@ -351,7 +354,7 @@ func Run(session *netclient.Session, cfg Config) error {
 		window:             window,
 		width:              cfg.Width,
 		height:             cfg.Height,
-		renderDistance:     cfg.RenderDistance,
+		renderDistance:     renderDistanceChunksToMode(cfg.RenderDistance),
 		moveSpeed:          cfg.MoveSpeed,
 		mouseSens:          cfg.MouseSensitivity,
 		fovSetting:         0.0,
@@ -362,6 +365,7 @@ func Run(session *netclient.Session, cfg Config) error {
 		lastMouseX:         float64(cfg.Width) / 2,
 		lastMouseY:         float64(cfg.Height) / 2,
 		assetsRoot:         discoverAssetsRoot(),
+		optionsKV:          make(map[string]string),
 		eventsCh:           session.Events(),
 		mainMenu:           cfg.StartInMainMenu,
 		pauseScreen:        pauseScreenMain,
@@ -374,6 +378,8 @@ func Run(session *netclient.Session, cfg Config) error {
 		chunkRenderCache:   make(map[chunk.CoordIntPair]*chunkRenderEntry),
 		limitFramerateMode: cfg.FPSLimitMode,
 	}
+	app.optionsPath = discoverOptionsPath(app.assetsRoot)
+	app.loadOptionsFile()
 	audio.InitWithAssets(app.assetsRoot)
 	defer func() {
 		if app.session != nil {
@@ -1344,46 +1350,58 @@ func (a *App) handlePauseMenuButton(id int) bool {
 }
 
 func (a *App) handlePauseOptionButton(id int) {
+	changed := false
 	switch id {
 	case buttonIDOptionDone:
 		a.pauseScreen = pauseScreenMain
 		a.menuStatus = ""
 	case buttonIDOptionDifficulty:
 		a.optionDifficulty = (a.optionDifficulty + 1) & 3
+		changed = true
 	case buttonIDOptionRDMinus:
-		if a.renderDistance > 4 {
-			a.renderDistance -= 4
+		if a.renderDistance < 3 {
+			a.renderDistance++
+			changed = true
 		}
 	case buttonIDOptionRDPlus:
-		if a.renderDistance < 96 {
-			a.renderDistance += 4
+		if a.renderDistance > 0 {
+			a.renderDistance--
+			changed = true
 		}
 	case buttonIDOptionFOVMinus:
 		a.fovSetting -= 0.05
 		if a.fovSetting < 0.0 {
 			a.fovSetting = 0.0
 		}
+		changed = true
 	case buttonIDOptionFOVPlus:
 		a.fovSetting += 0.05
 		if a.fovSetting > 1.0 {
 			a.fovSetting = 1.0
 		}
+		changed = true
 	case buttonIDOptionViewBobbing:
 		a.viewBobbing = !a.viewBobbing
+		changed = true
 	case buttonIDOptionSensMinus:
 		a.mouseSens -= 0.02
 		if a.mouseSens < 0.02 {
 			a.mouseSens = 0.02
 		}
+		changed = true
 	case buttonIDOptionSensPlus:
 		a.mouseSens += 0.02
 		if a.mouseSens > 0.50 {
 			a.mouseSens = 0.50
 		}
+		changed = true
 	case buttonIDOptionMusic, buttonIDOptionVideo, buttonIDOptionControls, buttonIDOptionLanguage, buttonIDOptionSnooper:
 		a.menuStatus = "This options page is not implemented yet."
 	}
 	a.updateOptionButtonsState()
+	if changed {
+		a.saveOptionsFile()
+	}
 }
 
 func (a *App) disconnectToMainMenu(status string) {
@@ -2476,11 +2494,80 @@ func (a *App) sensitivityPercent() int {
 	return v
 }
 
+func clampInt(v, lo, hi int) int {
+	if v < lo {
+		return lo
+	}
+	if v > hi {
+		return hi
+	}
+	return v
+}
+
+func normalizeRenderDistanceMode(mode int) int {
+	return clampInt(mode, 0, 3)
+}
+
+func renderDistanceChunksToMode(chunks int) int {
+	type choice struct {
+		mode   int
+		chunks int
+	}
+	choices := []choice{
+		{mode: 0, chunks: 16},
+		{mode: 1, chunks: 8},
+		{mode: 2, chunks: 4},
+		{mode: 3, chunks: 2},
+	}
+	if chunks <= 0 {
+		return 1
+	}
+	bestMode := choices[0].mode
+	bestDiff := int(math.Abs(float64(chunks - choices[0].chunks)))
+	for _, c := range choices[1:] {
+		diff := int(math.Abs(float64(chunks - c.chunks)))
+		if diff < bestDiff {
+			bestDiff = diff
+			bestMode = c.mode
+		}
+	}
+	return bestMode
+}
+
+func renderDistanceModeToChunks(mode int) int {
+	switch normalizeRenderDistanceMode(mode) {
+	case 0:
+		return 16
+	case 1:
+		return 8
+	case 2:
+		return 4
+	default:
+		return 2
+	}
+}
+
+func renderDistanceModeName(mode int) string {
+	return renderDistanceModeNames[normalizeRenderDistanceMode(mode)]
+}
+
+func (a *App) renderDistanceChunks() int {
+	return renderDistanceModeToChunks(a.renderDistance)
+}
+
+func (a *App) renderDistanceModeName() string {
+	return renderDistanceModeName(a.renderDistance)
+}
+
+func (a *App) optionRenderDistanceLabel() string {
+	return "Render Distance: " + a.renderDistanceModeName()
+}
+
 func (a *App) drawWorld(snap netclient.StateSnapshot) {
 	a.renderFrame++
 	centerChunkX := int32(int(math.Floor(snap.PlayerX)) >> 4)
 	centerChunkZ := int32(int(math.Floor(snap.PlayerZ)) >> 4)
-	radius := a.renderDistance
+	radius := a.renderDistanceChunks()
 	if radius < 1 {
 		radius = 1
 	}
@@ -4115,7 +4202,7 @@ func (a *App) drawDebugOverlay(snap netclient.StateSnapshot) {
 		fmt.Sprintf("Yaw/Pitch: %.2f / %.2f", snap.PlayerYaw, snap.PlayerPitch),
 		fmt.Sprintf("Facing: %s", facing),
 		fmt.Sprintf("Chunks: %d  Entities: %d", snap.LoadedChunks, snap.TrackedEntities),
-		fmt.Sprintf("RenderDist: %d chunks  Cache: %d", a.renderDistance, len(a.chunkRenderCache)),
+		fmt.Sprintf("RenderDist: %s (%d chunks)  Cache: %d", a.renderDistanceModeName(), a.renderDistanceChunks(), len(a.chunkRenderCache)),
 		fmt.Sprintf("Health/Food: %.1f / %d", snap.Health, snap.Food),
 		fmt.Sprintf("Time: %d / %d", snap.WorldAge, snap.WorldTime),
 	}
@@ -4455,8 +4542,8 @@ func (a *App) drawPauseMenu() {
 		b.draw(a.font, a.texWidgets, a.mouseX, a.mouseY)
 	}
 	if a.pauseScreen == pauseScreenOptions && a.font != nil {
-		baseY := uiH/6 + 24
-		rd := fmt.Sprintf("Render Distance: %d blocks", a.renderDistance)
+		baseY := uiH/6 + 12
+		rd := a.optionRenderDistanceLabel()
 		fov := a.optionFOVLabel()
 		sens := fmt.Sprintf("Sensitivity: %d%%", a.sensitivityPercent())
 		a.font.drawCenteredString(rd, uiW/2, baseY+88+6, 0xFFFFFF)
@@ -5497,6 +5584,142 @@ func maxInt(a, b int) int {
 		return a
 	}
 	return b
+}
+
+func discoverOptionsPath(assetsRoot string) string {
+	assetsRoot = filepath.Clean(assetsRoot)
+	if strings.EqualFold(filepath.Base(assetsRoot), "minecraft") {
+		assetsDir := filepath.Dir(assetsRoot)
+		if strings.EqualFold(filepath.Base(assetsDir), "assets") {
+			return filepath.Join(filepath.Dir(assetsDir), "options.txt")
+		}
+	}
+	if wd, err := os.Getwd(); err == nil {
+		return filepath.Join(wd, "options.txt")
+	}
+	return "options.txt"
+}
+
+// Translation reference:
+// - net.minecraft.src.GameSettings.loadOptions()
+func (a *App) loadOptionsFile() {
+	if a.optionsPath == "" {
+		return
+	}
+	f, err := os.Open(a.optionsPath)
+	if err != nil {
+		if !errors.Is(err, os.ErrNotExist) {
+			fmt.Printf("gui options warning: load %s failed: %v\n", a.optionsPath, err)
+		}
+		return
+	}
+	defer f.Close()
+
+	if a.optionsKV == nil {
+		a.optionsKV = make(map[string]string)
+	}
+	scanner := bufio.NewScanner(f)
+	for scanner.Scan() {
+		line := strings.TrimSpace(scanner.Text())
+		if line == "" {
+			continue
+		}
+		parts := strings.SplitN(line, ":", 2)
+		if len(parts) != 2 {
+			continue
+		}
+		key := strings.TrimSpace(parts[0])
+		value := strings.TrimSpace(parts[1])
+		a.optionsKV[key] = value
+		switch key {
+		case "fov":
+			if v, parseErr := strconv.ParseFloat(value, 64); parseErr == nil {
+				a.fovSetting = clampFloat64(v, 0.0, 1.0)
+			}
+		case "viewDistance":
+			if v, parseErr := strconv.Atoi(value); parseErr == nil {
+				a.renderDistance = normalizeRenderDistanceMode(v)
+			}
+		case "bobView":
+			if v, parseErr := strconv.ParseBool(value); parseErr == nil {
+				a.viewBobbing = v
+			}
+		case "mouseSensitivity":
+			if v, parseErr := strconv.ParseFloat(value, 64); parseErr == nil {
+				a.mouseSens = clampFloat64(v, 0.02, 0.50)
+			}
+		case "fpsLimit":
+			if v, parseErr := strconv.Atoi(value); parseErr == nil {
+				a.limitFramerateMode = clampInt(v, 0, 2)
+			}
+		case "difficulty":
+			if v, parseErr := strconv.Atoi(value); parseErr == nil {
+				a.optionDifficulty = v & 3
+			}
+		}
+	}
+	if err := scanner.Err(); err != nil {
+		fmt.Printf("gui options warning: read %s failed: %v\n", a.optionsPath, err)
+	}
+}
+
+// Translation reference:
+// - net.minecraft.src.GameSettings.saveOptions()
+func (a *App) saveOptionsFile() {
+	if a.optionsPath == "" {
+		return
+	}
+	if a.optionsKV == nil {
+		a.optionsKV = make(map[string]string)
+	}
+	a.optionsKV["fov"] = strconv.FormatFloat(clampFloat64(a.fovSetting, 0.0, 1.0), 'f', 6, 64)
+	a.optionsKV["viewDistance"] = strconv.Itoa(normalizeRenderDistanceMode(a.renderDistance))
+	a.optionsKV["bobView"] = strconv.FormatBool(a.viewBobbing)
+	a.optionsKV["mouseSensitivity"] = strconv.FormatFloat(clampFloat64(a.mouseSens, 0.02, 0.50), 'f', 6, 64)
+	a.optionsKV["fpsLimit"] = strconv.Itoa(clampInt(a.limitFramerateMode, 0, 2))
+	a.optionsKV["difficulty"] = strconv.Itoa(a.optionDifficulty & 3)
+
+	keys := make([]string, 0, len(a.optionsKV))
+	for k := range a.optionsKV {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+
+	if err := os.MkdirAll(filepath.Dir(a.optionsPath), 0o755); err != nil {
+		fmt.Printf("gui options warning: ensure options dir failed: %v\n", err)
+		return
+	}
+	tmpPath := a.optionsPath + ".tmp"
+	file, err := os.Create(tmpPath)
+	if err != nil {
+		fmt.Printf("gui options warning: create temp options failed: %v\n", err)
+		return
+	}
+	writer := bufio.NewWriter(file)
+	for _, key := range keys {
+		if _, err := fmt.Fprintf(writer, "%s:%s\n", key, a.optionsKV[key]); err != nil {
+			_ = file.Close()
+			_ = os.Remove(tmpPath)
+			fmt.Printf("gui options warning: write options failed: %v\n", err)
+			return
+		}
+	}
+	if err := writer.Flush(); err != nil {
+		_ = file.Close()
+		_ = os.Remove(tmpPath)
+		fmt.Printf("gui options warning: flush options failed: %v\n", err)
+		return
+	}
+	if err := file.Close(); err != nil {
+		_ = os.Remove(tmpPath)
+		fmt.Printf("gui options warning: close temp options failed: %v\n", err)
+		return
+	}
+	if err := os.Rename(tmpPath, a.optionsPath); err != nil {
+		_ = os.Remove(tmpPath)
+		fmt.Printf("gui options warning: replace options failed: %v\n", err)
+		return
+	}
 }
 
 func discoverAssetsRoot() string {

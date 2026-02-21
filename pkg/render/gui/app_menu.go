@@ -160,7 +160,7 @@ func (a *App) initMultiButtons() {
 
 func (a *App) initOptionButtons() {
 	w, h := a.uiWidth(), a.uiHeight()
-	baseY := h/6 + 24
+	baseY := h/6 + 12
 	a.optionButtons = []*guiButton{
 		newButton(buttonIDOptionMusic, w/2-155, baseY, 150, 20, "Music & Sounds..."),
 		newButton(buttonIDOptionVideo, w/2+5, baseY, 150, 20, "Video Settings..."),
@@ -233,9 +233,9 @@ func (a *App) updateOptionButtonsState() {
 		case buttonIDOptionViewBobbing:
 			b.Label = viewBobbingLabel
 		case buttonIDOptionRDMinus:
-			b.Enabled = a.renderDistance > 4
+			b.Enabled = a.renderDistance < 3
 		case buttonIDOptionRDPlus:
-			b.Enabled = a.renderDistance < 96
+			b.Enabled = a.renderDistance > 0
 		case buttonIDOptionFOVMinus:
 			b.Enabled = a.fovSetting > 0.0
 		case buttonIDOptionFOVPlus:
@@ -745,46 +745,58 @@ func (a *App) handleMenuButton(id int) bool {
 			a.menuStatus = "Server list management is not implemented yet."
 		}
 	case menuScreenOptions:
+		changed := false
 		switch id {
 		case buttonIDOptionDone:
 			a.menuScreen = menuScreenMain
 			a.menuStatus = ""
 		case buttonIDOptionDifficulty:
 			a.optionDifficulty = (a.optionDifficulty + 1) & 3
+			changed = true
 		case buttonIDOptionRDMinus:
-			if a.renderDistance > 4 {
-				a.renderDistance -= 4
+			if a.renderDistance < 3 {
+				a.renderDistance++
+				changed = true
 			}
 		case buttonIDOptionRDPlus:
-			if a.renderDistance < 96 {
-				a.renderDistance += 4
+			if a.renderDistance > 0 {
+				a.renderDistance--
+				changed = true
 			}
 		case buttonIDOptionFOVMinus:
 			a.fovSetting -= 0.05
 			if a.fovSetting < 0.0 {
 				a.fovSetting = 0.0
 			}
+			changed = true
 		case buttonIDOptionFOVPlus:
 			a.fovSetting += 0.05
 			if a.fovSetting > 1.0 {
 				a.fovSetting = 1.0
 			}
+			changed = true
 		case buttonIDOptionViewBobbing:
 			a.viewBobbing = !a.viewBobbing
+			changed = true
 		case buttonIDOptionSensMinus:
 			a.mouseSens -= 0.02
 			if a.mouseSens < 0.02 {
 				a.mouseSens = 0.02
 			}
+			changed = true
 		case buttonIDOptionSensPlus:
 			a.mouseSens += 0.02
 			if a.mouseSens > 0.50 {
 				a.mouseSens = 0.50
 			}
+			changed = true
 		case buttonIDOptionMusic, buttonIDOptionVideo, buttonIDOptionControls, buttonIDOptionLanguage, buttonIDOptionSnooper:
 			a.menuStatus = "This options page is not implemented yet."
 		}
 		a.updateOptionButtonsState()
+		if changed {
+			a.saveOptionsFile()
+		}
 	case menuScreenCreateWorld:
 		switch id {
 		case buttonIDCreateCancel:
@@ -1774,8 +1786,8 @@ func (a *App) drawOptionsMenu() {
 	}
 
 	if a.font != nil {
-		baseY := a.uiHeight()/6 + 24
-		rd := fmt.Sprintf("Render Distance: %d blocks", a.renderDistance)
+		baseY := a.uiHeight()/6 + 12
+		rd := a.optionRenderDistanceLabel()
 		fov := a.optionFOVLabel()
 		sens := fmt.Sprintf("Sensitivity: %d%%", a.sensitivityPercent())
 		a.font.drawCenteredString(rd, a.uiWidth()/2, baseY+88+6, 0xFFFFFF)
