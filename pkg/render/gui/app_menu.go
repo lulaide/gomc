@@ -243,9 +243,9 @@ func (a *App) updateOptionButtonsState() {
 		case buttonIDOptionFOVPlus:
 			b.Enabled = a.fovSetting < 1.0
 		case buttonIDOptionSensMinus:
-			b.Enabled = a.mouseSens > 0.02
+			b.Enabled = a.mouseSens > 0.0
 		case buttonIDOptionSensPlus:
-			b.Enabled = a.mouseSens < 0.50
+			b.Enabled = a.mouseSens < 1.0
 		}
 	}
 }
@@ -785,14 +785,14 @@ func (a *App) handleMenuButton(id int) bool {
 			changed = true
 		case buttonIDOptionSensMinus:
 			a.mouseSens -= 0.02
-			if a.mouseSens < 0.02 {
-				a.mouseSens = 0.02
+			if a.mouseSens < 0.0 {
+				a.mouseSens = 0.0
 			}
 			changed = true
 		case buttonIDOptionSensPlus:
 			a.mouseSens += 0.02
-			if a.mouseSens > 0.50 {
-				a.mouseSens = 0.50
+			if a.mouseSens > 1.0 {
+				a.mouseSens = 1.0
 			}
 			changed = true
 		case buttonIDOptionMusic, buttonIDOptionControls, buttonIDOptionLanguage, buttonIDOptionSnooper:

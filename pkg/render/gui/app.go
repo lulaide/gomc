@@ -317,8 +317,11 @@ func Run(session *netclient.Session, cfg Config) error {
 	if cfg.RenderDistance <= 0 {
 		cfg.RenderDistance = 10
 	}
-	if cfg.MouseSensitivity <= 0 {
-		cfg.MouseSensitivity = 0.14
+	if cfg.MouseSensitivity < 0 {
+		cfg.MouseSensitivity = 0.5
+	}
+	if cfg.MouseSensitivity > 1.0 {
+		cfg.MouseSensitivity = 1.0
 	}
 	if cfg.MoveSpeed <= 0 {
 		cfg.MoveSpeed = 4.3
@@ -1070,9 +1073,10 @@ func (a *App) handleInput(deltaSeconds float64) bool {
 	a.lastMouseY = y
 
 	if dxMouse != 0 || dyMouse != 0 {
-		a.yaw += dxMouse * a.mouseSens
+		turnScale := a.mouseTurnScale()
+		a.yaw += dxMouse * turnScale
 		// Match vanilla non-invert mouse look: moving mouse up looks up.
-		a.pitch += dyMouse * a.mouseSens
+		a.pitch += dyMouse * turnScale
 		if a.pitch > 89.9 {
 			a.pitch = 89.9
 		}
@@ -1391,14 +1395,14 @@ func (a *App) handlePauseOptionButton(id int) {
 		changed = true
 	case buttonIDOptionSensMinus:
 		a.mouseSens -= 0.02
-		if a.mouseSens < 0.02 {
-			a.mouseSens = 0.02
+		if a.mouseSens < 0.0 {
+			a.mouseSens = 0.0
 		}
 		changed = true
 	case buttonIDOptionSensPlus:
 		a.mouseSens += 0.02
-		if a.mouseSens > 0.50 {
-			a.mouseSens = 0.50
+		if a.mouseSens > 1.0 {
+			a.mouseSens = 1.0
 		}
 		changed = true
 	case buttonIDOptionMusic, buttonIDOptionControls, buttonIDOptionLanguage, buttonIDOptionSnooper:
@@ -2490,7 +2494,7 @@ func (a *App) optionFOVLabel() string {
 }
 
 func (a *App) sensitivityPercent() int {
-	v := int((a.mouseSens / 0.50) * 200.0)
+	v := int(a.mouseSens * 200.0)
 	if v < 0 {
 		return 0
 	}
@@ -2498,6 +2502,14 @@ func (a *App) sensitivityPercent() int {
 		return 200
 	}
 	return v
+}
+
+// Translation reference:
+// - net.minecraft.src.EntityRenderer.updateCameraAndRender(float)
+// - net.minecraft.src.Entity.setAngles(float,float)
+func (a *App) mouseTurnScale() float64 {
+	sens := clampFloat64(a.mouseSens, 0.0, 1.0)*0.6 + 0.2
+	return sens * sens * sens * 8.0 * 0.15
 }
 
 func clampInt(v, lo, hi int) int {
@@ -5657,7 +5669,7 @@ func (a *App) loadOptionsFile() {
 			}
 		case "mouseSensitivity":
 			if v, parseErr := strconv.ParseFloat(value, 64); parseErr == nil {
-				a.mouseSens = clampFloat64(v, 0.02, 0.50)
+				a.mouseSens = clampFloat64(v, 0.0, 1.0)
 			}
 		case "fpsLimit":
 			if v, parseErr := strconv.Atoi(value); parseErr == nil {
@@ -5686,7 +5698,7 @@ func (a *App) saveOptionsFile() {
 	a.optionsKV["fov"] = strconv.FormatFloat(clampFloat64(a.fovSetting, 0.0, 1.0), 'f', 6, 64)
 	a.optionsKV["viewDistance"] = strconv.Itoa(normalizeRenderDistanceMode(a.renderDistance))
 	a.optionsKV["bobView"] = strconv.FormatBool(a.viewBobbing)
-	a.optionsKV["mouseSensitivity"] = strconv.FormatFloat(clampFloat64(a.mouseSens, 0.02, 0.50), 'f', 6, 64)
+	a.optionsKV["mouseSensitivity"] = strconv.FormatFloat(clampFloat64(a.mouseSens, 0.0, 1.0), 'f', 6, 64)
 	a.optionsKV["fpsLimit"] = strconv.Itoa(clampInt(a.limitFramerateMode, 0, 2))
 	a.optionsKV["difficulty"] = strconv.Itoa(a.optionDifficulty & 3)
 

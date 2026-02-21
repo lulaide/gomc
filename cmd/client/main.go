@@ -31,7 +31,7 @@ func main() {
 	guiWidth := flag.Int("gui-width", 1280, "GUI window width")
 	guiHeight := flag.Int("gui-height", 720, "GUI window height")
 	guiRenderDistance := flag.Int("gui-render-distance", 10, "GUI client render distance in chunks")
-	guiMouseSensitivity := flag.Float64("gui-mouse-sensitivity", 0.14, "GUI mouse sensitivity")
+	guiMouseSensitivity := flag.Float64("gui-mouse-sensitivity", 0.5, "GUI mouse sensitivity")
 	guiMoveSpeed := flag.Float64("gui-move-speed", 4.3, "GUI movement speed")
 	guiFPSMode := flag.Int("gui-fps-mode", 1, "GUI framerate mode: 0=max(200), 1=balanced(120), 2=powersaver(35)")
 	guiSkipMenu := flag.Bool("gui-skip-menu", false, "skip main menu and enter world directly")

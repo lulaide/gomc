@@ -42,7 +42,7 @@ func TestOptionButtonsFOVAndViewBobbingState(t *testing.T) {
 		guiW:               854,
 		guiH:               480,
 		renderDistance:     0,
-		mouseSens:          0.02,
+		mouseSens:          0.0,
 		fovSetting:         0.0,
 		viewBobbing:        true,
 		limitFramerateMode: 1,
@@ -86,7 +86,7 @@ func TestOptionButtonsFOVAndViewBobbingState(t *testing.T) {
 	}
 
 	a.renderDistance = 3
-	a.mouseSens = 0.50
+	a.mouseSens = 1.0
 	a.fovSetting = 1.0
 	a.viewBobbing = false
 	a.updateOptionButtonsState()
