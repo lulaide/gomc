@@ -2373,11 +2373,14 @@ func (a *App) drawWorld(snap netclient.StateSnapshot) {
 			chunkX := int32(cx)
 			chunkZ := int32(cz)
 			key := chunk.NewCoordIntPair(chunkX, chunkZ)
-			revision := a.session.ChunkRevision(chunkX, chunkZ)
-			if revision == 0 {
+			baseRevision := a.session.ChunkRevision(chunkX, chunkZ)
+			if baseRevision == 0 {
 				// Chunk not available in client cache yet.
 				continue
 			}
+			revision := chunkMeshRevision(chunkX, chunkZ, func(rx, rz int32) uint64 {
+				return a.session.ChunkRevision(rx, rz)
+			})
 			entry, ok := a.chunkRenderCache[key]
 			if !ok {
 				entry = &chunkRenderEntry{}
@@ -2396,6 +2399,29 @@ func (a *App) drawWorld(snap netclient.StateSnapshot) {
 		}
 	}
 	a.cleanupChunkRenderCache()
+}
+
+func chunkMeshRevision(chunkX, chunkZ int32, revisionAt func(x, z int32) uint64) uint64 {
+	if revisionAt == nil {
+		return 0
+	}
+	base := revisionAt(chunkX, chunkZ)
+	if base == 0 {
+		return 0
+	}
+
+	// Include neighbor chunk revisions so border-dependent mesh results
+	// (face culling, liquid corner heights) rebuild when adjacent chunks load/unload.
+	mix := uint64(1469598103934665603)
+	for dz := int32(-1); dz <= 1; dz++ {
+		for dx := int32(-1); dx <= 1; dx++ {
+			rev := revisionAt(chunkX+dx, chunkZ+dz)
+			coord := uint64(uint32((dx+1)&3)<<2 | uint32((dz+1)&3))
+			v := rev ^ (coord * 0x9E3779B185EBCA87)
+			mix ^= v + 0x9E3779B185EBCA87 + (mix << 6) + (mix >> 2)
+		}
+	}
+	return mix
 }
 
 func (a *App) rebuildChunkRenderEntry(entry *chunkRenderEntry, chunkX, chunkZ int32, revision uint64) {
@@ -2863,12 +2889,17 @@ func (a *App) liquidCornerHeight(x, y, z, blockID int) float32 {
 	for i := 0; i < 4; i++ {
 		nx := x - (i & 1)
 		nz := z - ((i >> 1) & 1)
-		aboveID, _ := a.blockAtOrAir(nx, y+1, nz)
-		if isSameLiquidMaterial(blockID, aboveID) {
+		aboveID, _, aboveOK := a.blockAtOrUnknown(nx, y+1, nz)
+		if aboveOK && isSameLiquidMaterial(blockID, aboveID) {
 			return 1.0
 		}
 
-		id, meta := a.blockAtOrAir(nx, y, nz)
+		id, meta, ok := a.blockAtOrUnknown(nx, y, nz)
+		if !ok {
+			// Keep border heights stable while neighbor chunks stream in.
+			id = blockID
+			meta = 0
+		}
 		if isSameLiquidMaterial(blockID, id) {
 			h := fluidHeightPercent(meta)
 			if meta >= 8 || meta == 0 {
@@ -2978,14 +3009,19 @@ func (a *App) liquidFlowVector(blockID, x, y, z int) (float64, float64) {
 }
 
 func (a *App) blockAtOrAir(x, y, z int) (int, int) {
+	id, meta, _ := a.blockAtOrUnknown(x, y, z)
+	return id, meta
+}
+
+func (a *App) blockAtOrUnknown(x, y, z int) (int, int, bool) {
 	if a.session == nil || y < 0 || y >= 256 {
-		return 0, 0
+		return 0, 0, false
 	}
 	id, meta, ok := a.session.BlockAt(x, y, z)
 	if !ok {
-		return 0, 0
+		return 0, 0, false
 	}
-	return id, meta
+	return id, meta, true
 }
 
 func (a *App) appendVineBatches(
