@@ -77,17 +77,20 @@ const (
 	buttonIDMultiDelete  = 1205
 	buttonIDMultiRefresh = 1206
 
-	buttonIDOptionMusic      = 1301
-	buttonIDOptionVideo      = 1302
-	buttonIDOptionControls   = 1303
-	buttonIDOptionLanguage   = 1304
-	buttonIDOptionDifficulty = 1305
-	buttonIDOptionSnooper    = 1306
-	buttonIDOptionRDMinus    = 1310
-	buttonIDOptionRDPlus     = 1311
-	buttonIDOptionSensMinus  = 1312
-	buttonIDOptionSensPlus   = 1313
-	buttonIDOptionDone       = 1399
+	buttonIDOptionMusic       = 1301
+	buttonIDOptionVideo       = 1302
+	buttonIDOptionControls    = 1303
+	buttonIDOptionLanguage    = 1304
+	buttonIDOptionDifficulty  = 1305
+	buttonIDOptionSnooper     = 1306
+	buttonIDOptionRDMinus     = 1310
+	buttonIDOptionRDPlus      = 1311
+	buttonIDOptionSensMinus   = 1312
+	buttonIDOptionSensPlus    = 1313
+	buttonIDOptionFOVMinus    = 1314
+	buttonIDOptionFOVPlus     = 1315
+	buttonIDOptionViewBobbing = 1316
+	buttonIDOptionDone        = 1399
 
 	buttonIDCreateDone          = 1401
 	buttonIDCreateCancel        = 1402
@@ -164,18 +167,19 @@ func (a *App) initOptionButtons() {
 		newButton(buttonIDOptionControls, w/2-155, baseY+24, 150, 20, "Controls..."),
 		newButton(buttonIDOptionLanguage, w/2+5, baseY+24, 150, 20, "Language..."),
 		newButton(buttonIDOptionDifficulty, w/2-155, baseY+48, 150, 20, "Difficulty: Easy"),
-		newButton(buttonIDOptionSnooper, w/2+5, baseY+48, 150, 20, "Snooper Settings..."),
+		newButton(buttonIDOptionViewBobbing, w/2+5, baseY+48, 150, 20, "View Bobbing: ON"),
 		newButton(buttonIDOptionRDMinus, w/2-100, baseY+82, 20, 20, "-"),
 		newButton(buttonIDOptionRDPlus, w/2+80, baseY+82, 20, 20, "+"),
-		newButton(buttonIDOptionSensMinus, w/2-100, baseY+106, 20, 20, "-"),
-		newButton(buttonIDOptionSensPlus, w/2+80, baseY+106, 20, 20, "+"),
-		newButton(buttonIDOptionDone, w/2-100, baseY+140, 200, 20, "Done"),
+		newButton(buttonIDOptionFOVMinus, w/2-100, baseY+106, 20, 20, "-"),
+		newButton(buttonIDOptionFOVPlus, w/2+80, baseY+106, 20, 20, "+"),
+		newButton(buttonIDOptionSensMinus, w/2-100, baseY+130, 20, 20, "-"),
+		newButton(buttonIDOptionSensPlus, w/2+80, baseY+130, 20, 20, "+"),
+		newButton(buttonIDOptionDone, w/2-100, baseY+164, 200, 20, "Done"),
 	}
 	a.optionButtons[0].Enabled = false
 	a.optionButtons[1].Enabled = false
 	a.optionButtons[2].Enabled = false
 	a.optionButtons[3].Enabled = false
-	a.optionButtons[5].Enabled = false
 }
 
 func (a *App) initCreateButtons() {
@@ -215,6 +219,10 @@ func (a *App) updateSingleButtonsState() {
 
 func (a *App) updateOptionButtonsState() {
 	difficultyName := []string{"Peaceful", "Easy", "Normal", "Hard"}[a.optionDifficulty&3]
+	viewBobbingLabel := "View Bobbing: OFF"
+	if a.viewBobbing {
+		viewBobbingLabel = "View Bobbing: ON"
+	}
 	for _, b := range a.optionButtons {
 		if b == nil {
 			continue
@@ -222,10 +230,16 @@ func (a *App) updateOptionButtonsState() {
 		switch b.ID {
 		case buttonIDOptionDifficulty:
 			b.Label = "Difficulty: " + difficultyName
+		case buttonIDOptionViewBobbing:
+			b.Label = viewBobbingLabel
 		case buttonIDOptionRDMinus:
 			b.Enabled = a.renderDistance > 4
 		case buttonIDOptionRDPlus:
 			b.Enabled = a.renderDistance < 96
+		case buttonIDOptionFOVMinus:
+			b.Enabled = a.fovSetting > 0.0
+		case buttonIDOptionFOVPlus:
+			b.Enabled = a.fovSetting < 1.0
 		case buttonIDOptionSensMinus:
 			b.Enabled = a.mouseSens > 0.02
 		case buttonIDOptionSensPlus:
@@ -745,6 +759,18 @@ func (a *App) handleMenuButton(id int) bool {
 			if a.renderDistance < 96 {
 				a.renderDistance += 4
 			}
+		case buttonIDOptionFOVMinus:
+			a.fovSetting -= 0.05
+			if a.fovSetting < 0.0 {
+				a.fovSetting = 0.0
+			}
+		case buttonIDOptionFOVPlus:
+			a.fovSetting += 0.05
+			if a.fovSetting > 1.0 {
+				a.fovSetting = 1.0
+			}
+		case buttonIDOptionViewBobbing:
+			a.viewBobbing = !a.viewBobbing
 		case buttonIDOptionSensMinus:
 			a.mouseSens -= 0.02
 			if a.mouseSens < 0.02 {
@@ -1749,17 +1775,12 @@ func (a *App) drawOptionsMenu() {
 
 	if a.font != nil {
 		baseY := a.uiHeight()/6 + 24
-		sensitivityPct := int((a.mouseSens / 0.50) * 200.0)
-		if sensitivityPct < 0 {
-			sensitivityPct = 0
-		}
-		if sensitivityPct > 200 {
-			sensitivityPct = 200
-		}
 		rd := fmt.Sprintf("Render Distance: %d blocks", a.renderDistance)
-		sens := fmt.Sprintf("Sensitivity: %d%%", sensitivityPct)
+		fov := a.optionFOVLabel()
+		sens := fmt.Sprintf("Sensitivity: %d%%", a.sensitivityPercent())
 		a.font.drawCenteredString(rd, a.uiWidth()/2, baseY+88+6, 0xFFFFFF)
-		a.font.drawCenteredString(sens, a.uiWidth()/2, baseY+112+6, 0xFFFFFF)
+		a.font.drawCenteredString(fov, a.uiWidth()/2, baseY+112+6, 0xFFFFFF)
+		a.font.drawCenteredString(sens, a.uiWidth()/2, baseY+136+6, 0xFFFFFF)
 	}
 
 	a.drawMenuStatusLine()

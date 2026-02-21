@@ -121,12 +121,21 @@ type App struct {
 	renderDistance int
 	moveSpeed      float64
 	mouseSens      float64
+	fovSetting     float64
+	viewBobbing    bool
 	activeWorld    string
 	playWorldFn    func(worldDir string) (*netclient.Session, error)
 
 	yaw   float64
 	pitch float64
 	velY  float64
+
+	walkDistance     float64
+	prevWalkDistance float64
+	cameraYaw        float64
+	prevCameraYaw    float64
+	cameraPitch      float64
+	prevCameraPitch  float64
 
 	firstMouse bool
 	lastMouseX float64
@@ -345,6 +354,8 @@ func Run(session *netclient.Session, cfg Config) error {
 		renderDistance:     cfg.RenderDistance,
 		moveSpeed:          cfg.MoveSpeed,
 		mouseSens:          cfg.MouseSensitivity,
+		fovSetting:         0.0,
+		viewBobbing:        true,
 		activeWorld:        cfg.CurrentWorld,
 		playWorldFn:        cfg.PlayWorld,
 		firstMouse:         true,
@@ -1207,9 +1218,39 @@ func (a *App) applyMovementTick(
 	if a.localSprinting && collidedHoriz {
 		a.setLocalSprinting(false)
 	}
+	a.updateViewBobbingState(dxMove, dyMove, dzMove, groundedAfter, snapMove.Health <= 0)
 	if dxMove != 0 || dyMove != 0 || dzMove != 0 {
 		_ = a.session.MoveRelative(dxMove, dyMove, dzMove)
 	}
+}
+
+// Translation reference:
+// - net.minecraft.src.EntityPlayerSP.onLivingUpdate()
+// - net.minecraft.src.EntityRenderer.setupViewBobbing(float)
+func (a *App) updateViewBobbingState(dxMove, dyMove, dzMove float64, onGround, dead bool) {
+	a.prevWalkDistance = a.walkDistance
+	a.prevCameraYaw = a.cameraYaw
+	a.prevCameraPitch = a.cameraPitch
+
+	step := math.Sqrt(dxMove*dxMove+dzMove*dzMove) * 0.6
+	if step > 1.0 {
+		step = 1.0
+	}
+	a.walkDistance += step
+
+	targetYaw := math.Sqrt(dxMove*dxMove + dzMove*dzMove)
+	if targetYaw > 0.1 {
+		targetYaw = 0.1
+	}
+	targetPitch := math.Atan(-dyMove*0.2) * 15.0
+	if !onGround || dead {
+		targetYaw = 0.0
+	}
+	if onGround || dead {
+		targetPitch = 0.0
+	}
+	a.cameraYaw += (targetYaw - a.cameraYaw) * 0.4
+	a.cameraPitch += (targetPitch - a.cameraPitch) * 0.8
 }
 
 // Translation reference:
@@ -1317,6 +1358,18 @@ func (a *App) handlePauseOptionButton(id int) {
 		if a.renderDistance < 96 {
 			a.renderDistance += 4
 		}
+	case buttonIDOptionFOVMinus:
+		a.fovSetting -= 0.05
+		if a.fovSetting < 0.0 {
+			a.fovSetting = 0.0
+		}
+	case buttonIDOptionFOVPlus:
+		a.fovSetting += 0.05
+		if a.fovSetting > 1.0 {
+			a.fovSetting = 1.0
+		}
+	case buttonIDOptionViewBobbing:
+		a.viewBobbing = !a.viewBobbing
 	case buttonIDOptionSensMinus:
 		a.mouseSens -= 0.02
 		if a.mouseSens < 0.02 {
@@ -1739,6 +1792,12 @@ func (a *App) replaceSession(next *netclient.Session) {
 	a.sprintTimer = 0
 	a.localSprinting = false
 	a.renderTrackInit = false
+	a.walkDistance = 0
+	a.prevWalkDistance = 0
+	a.cameraYaw = 0
+	a.prevCameraYaw = 0
+	a.cameraPitch = 0
+	a.prevCameraPitch = 0
 	for i := range a.prevDigit {
 		a.prevDigit[i] = false
 	}
@@ -1775,7 +1834,8 @@ func (a *App) render(snap netclient.StateSnapshot, target blockTarget) {
 	} else if alpha > 1 {
 		alpha = 1
 	}
-	skyR, skyG, skyB := worldSkyColor(snap.WorldTime, float32(alpha), 0.8)
+	partial := float32(alpha)
+	skyR, skyG, skyB := worldSkyColor(snap.WorldTime, partial, 0.8)
 	gl.ClearColor(skyR, skyG, skyB, 1.0)
 	gl.Clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT)
 	gl.Enable(gl.DEPTH_TEST)
@@ -1786,14 +1846,15 @@ func (a *App) render(snap netclient.StateSnapshot, target blockTarget) {
 	aspect := float64(a.width) / float64(maxInt(a.height, 1))
 	gl.MatrixMode(gl.PROJECTION)
 	gl.LoadIdentity()
-	setPerspective(70.0, aspect, 0.05, 256.0)
+	setPerspective(a.currentFOVDegrees(), aspect, 0.05, 256.0)
 
 	gl.MatrixMode(gl.MODELVIEW)
 	gl.LoadIdentity()
+	a.applyViewBobbingTransform(partial)
 	gl.Rotatef(float32(a.pitch), 1, 0, 0)
 	gl.Rotatef(float32(a.yaw+180.0), 0, 1, 0)
-	a.drawSky(snap, float32(alpha))
-	a.drawCloudLayer(snap, float32(alpha))
+	a.drawSky(snap, partial)
+	a.drawCloudLayer(snap, partial)
 	camX, camY, camZ := a.interpolatedRenderPlayer(alpha, snap)
 	gl.Translatef(float32(-camX), float32(-(camY + playerEyeHeight)), float32(-camZ))
 	a.drawWorld(snap)
@@ -1818,6 +1879,30 @@ func (a *App) render(snap netclient.StateSnapshot, target blockTarget) {
 	if a.paused {
 		a.drawPauseMenu()
 	}
+}
+
+// Translation reference:
+// - net.minecraft.src.EntityRenderer.setupViewBobbing(float)
+func (a *App) applyViewBobbingTransform(partial float32) {
+	if !a.viewBobbing {
+		return
+	}
+	var3 := float32(a.walkDistance - a.prevWalkDistance)
+	var4 := float32(-(a.walkDistance + float64(var3)*float64(partial)))
+	var5 := float32(a.prevCameraYaw + (a.cameraYaw-a.prevCameraYaw)*float64(partial))
+	var6 := float32(a.prevCameraPitch + (a.cameraPitch-a.prevCameraPitch)*float64(partial))
+	walkPi := float64(var4) * math.Pi
+	sinWalk := float32(math.Sin(walkPi))
+	cosWalk := float32(math.Cos(walkPi))
+
+	gl.Translatef(
+		sinWalk*var5*0.5,
+		-float32(math.Abs(float64(cosWalk*var5))),
+		0.0,
+	)
+	gl.Rotatef(sinWalk*var5*3.0, 0.0, 0.0, 1.0)
+	gl.Rotatef(float32(math.Abs(math.Cos(walkPi-0.2)*float64(var5)))*5.0, 1.0, 0.0, 0.0)
+	gl.Rotatef(var6, 1.0, 0.0, 0.0)
 }
 
 // Translation reference:
@@ -2354,6 +2439,39 @@ func clampFloat32(v, lo, hi float32) float32 {
 	}
 	if v > hi {
 		return hi
+	}
+	return v
+}
+
+func clampFloat64(v, lo, hi float64) float64 {
+	if v < lo {
+		return lo
+	}
+	if v > hi {
+		return hi
+	}
+	return v
+}
+
+func (a *App) currentFOVDegrees() float64 {
+	return 70.0 + clampFloat64(a.fovSetting, 0.0, 1.0)*40.0
+}
+
+func (a *App) optionFOVLabel() string {
+	fov := a.currentFOVDegrees()
+	if math.Abs(fov-70.0) < 1.0e-6 {
+		return "FOV: Normal"
+	}
+	return fmt.Sprintf("FOV: %d", int(math.Round(fov)))
+}
+
+func (a *App) sensitivityPercent() int {
+	v := int((a.mouseSens / 0.50) * 200.0)
+	if v < 0 {
+		return 0
+	}
+	if v > 200 {
+		return 200
 	}
 	return v
 }
@@ -3592,7 +3710,7 @@ func (a *App) drawFirstPersonArm(_ netclient.StateSnapshot) {
 	gl.MatrixMode(gl.PROJECTION)
 	gl.PushMatrix()
 	gl.LoadIdentity()
-	setPerspective(70.0, aspect, 0.05, 10.0)
+	setPerspective(a.currentFOVDegrees(), aspect, 0.05, 10.0)
 
 	gl.MatrixMode(gl.MODELVIEW)
 	gl.PushMatrix()
@@ -4338,17 +4456,12 @@ func (a *App) drawPauseMenu() {
 	}
 	if a.pauseScreen == pauseScreenOptions && a.font != nil {
 		baseY := uiH/6 + 24
-		sensitivityPct := int((a.mouseSens / 0.50) * 200.0)
-		if sensitivityPct < 0 {
-			sensitivityPct = 0
-		}
-		if sensitivityPct > 200 {
-			sensitivityPct = 200
-		}
 		rd := fmt.Sprintf("Render Distance: %d blocks", a.renderDistance)
-		sens := fmt.Sprintf("Sensitivity: %d%%", sensitivityPct)
+		fov := a.optionFOVLabel()
+		sens := fmt.Sprintf("Sensitivity: %d%%", a.sensitivityPercent())
 		a.font.drawCenteredString(rd, uiW/2, baseY+88+6, 0xFFFFFF)
-		a.font.drawCenteredString(sens, uiW/2, baseY+112+6, 0xFFFFFF)
+		a.font.drawCenteredString(fov, uiW/2, baseY+112+6, 0xFFFFFF)
+		a.font.drawCenteredString(sens, uiW/2, baseY+136+6, 0xFFFFFF)
 	}
 	a.drawMenuStatusLine()
 
