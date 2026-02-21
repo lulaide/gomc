@@ -2735,6 +2735,10 @@ func (a *App) appendLiquidBlockBatches(
 				u3 = 0.5 + (cosF - sinF)
 				v3 = 0.5 + (-cosF - sinF)
 			}
+			u0, v0 = a.liquidAnimatedUV(tex, u0, v0)
+			u1, v1 = a.liquidAnimatedUV(tex, u1, v1)
+			u2, v2 = a.liquidAnimatedUV(tex, u2, v2)
+			u3, v3 = a.liquidAnimatedUV(tex, u3, v3)
 
 			appendTexturedQuadUV(
 				batch, tintR, tintG, tintB,
@@ -2750,12 +2754,16 @@ func (a *App) appendLiquidBlockBatches(
 		batch := ensureTextureBatch(translucentBatches, stillTex)
 		if batch != nil {
 			y0 := y + eps
+			u0, v0 := a.liquidAnimatedUV(stillTex, 0, 0)
+			u1, v1 := a.liquidAnimatedUV(stillTex, 1, 0)
+			u2, v2 := a.liquidAnimatedUV(stillTex, 1, 1)
+			u3, v3 := a.liquidAnimatedUV(stillTex, 0, 1)
 			appendTexturedQuadUV(
 				batch, tintR*0.5, tintG*0.5, tintB*0.5,
-				[3]float32{x + 0, y0, z + 0}, 0, 0,
-				[3]float32{x + 1, y0, z + 0}, 1, 0,
-				[3]float32{x + 1, y0, z + 1}, 1, 1,
-				[3]float32{x + 0, y0, z + 1}, 0, 1,
+				[3]float32{x + 0, y0, z + 0}, u0, v0,
+				[3]float32{x + 1, y0, z + 0}, u1, v1,
+				[3]float32{x + 1, y0, z + 1}, u2, v2,
+				[3]float32{x + 0, y0, z + 1}, u3, v3,
 			)
 		}
 	}
@@ -2765,15 +2773,15 @@ func (a *App) appendLiquidBlockBatches(
 		return true
 	}
 	appendSide := func(shade, hA, hB float32, p0, p1, p2, p3 [3]float32) {
-		vTopA := (1.0 - hA) * 0.5
-		vTopB := (1.0 - hB) * 0.5
-		vBottom := float32(0.5)
+		u0, vTopA := a.liquidAnimatedUV(flowTex, 0.0, (1.0-hA)*0.5)
+		u1, vTopB := a.liquidAnimatedUV(flowTex, 0.5, (1.0-hB)*0.5)
+		_, vBottom := a.liquidAnimatedUV(flowTex, 0.0, 0.5)
 		appendTexturedQuadUV(
 			sideBatch, tintR*shade, tintG*shade, tintB*shade,
-			p0, 0.0, vTopA,
-			p1, 0.5, vTopB,
-			p2, 0.5, vBottom,
-			p3, 0.0, vBottom,
+			p0, u0, vTopA,
+			p1, u1, vTopB,
+			p2, u1, vBottom,
+			p3, u0, vBottom,
 		)
 	}
 
@@ -2865,6 +2873,26 @@ func fluidHeightPercent(meta int) float32 {
 		meta = 0
 	}
 	return float32(meta+1) / 9.0
+}
+
+func (a *App) liquidAnimatedUV(tex *texture2D, u, v float32) (float32, float32) {
+	if tex == nil || tex.Width <= 0 || tex.Height <= tex.Width || tex.Height%tex.Width != 0 {
+		return u, v
+	}
+
+	frameCount := tex.Height / tex.Width
+	if frameCount <= 1 {
+		return u, v
+	}
+
+	// Translation reference:
+	// - net.minecraft.src.TextureWaterFX / TextureWaterFlowFX (tick-driven animation)
+	// Use 20 TPS timing to step strip frames.
+	frame := int((time.Now().UnixMilli() / 50) % int64(frameCount))
+	// Texture strips are loaded flipped with the full image, so frame order is reversed.
+	frame = frameCount - 1 - frame
+	frameSpan := 1.0 / float32(frameCount)
+	return u, float32(frame)*frameSpan + v*frameSpan
 }
 
 func (a *App) effectiveLiquidFlowDecay(blockID, x, y, z int) int {
