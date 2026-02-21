@@ -45,6 +45,7 @@ func TestOptionButtonsFOVAndViewBobbingState(t *testing.T) {
 		mouseSens:          0.0,
 		fovSetting:         0.0,
 		viewBobbing:        true,
+		guiScaleMode:       0,
 		limitFramerateMode: 1,
 	}
 	a.initOptionButtons()
@@ -65,6 +66,15 @@ func TestOptionButtonsFOVAndViewBobbingState(t *testing.T) {
 			enabled = b.Enabled
 		}
 		t.Fatalf("framerate button mismatch: got label=%q enabled=%t", got, enabled)
+	}
+	if b := findOptionButton(a.optionButtons, buttonIDOptionLanguage); b == nil || !b.Enabled || b.Label != "GUI Scale: Auto" {
+		got := "<nil>"
+		enabled := false
+		if b != nil {
+			got = b.Label
+			enabled = b.Enabled
+		}
+		t.Fatalf("gui scale button mismatch: got label=%q enabled=%t", got, enabled)
 	}
 	if b := findOptionButton(a.optionButtons, buttonIDOptionRDMinus); b == nil || !b.Enabled {
 		t.Fatal("render distance minus should be enabled at far")
@@ -89,6 +99,7 @@ func TestOptionButtonsFOVAndViewBobbingState(t *testing.T) {
 	a.mouseSens = 1.0
 	a.fovSetting = 1.0
 	a.viewBobbing = false
+	a.guiScaleMode = 3
 	a.updateOptionButtonsState()
 
 	if b := findOptionButton(a.optionButtons, buttonIDOptionViewBobbing); b == nil || b.Label != "View Bobbing: OFF" {
@@ -97,6 +108,13 @@ func TestOptionButtonsFOVAndViewBobbingState(t *testing.T) {
 			got = b.Label
 		}
 		t.Fatalf("view bobbing off label mismatch: got=%q want=%q", got, "View Bobbing: OFF")
+	}
+	if b := findOptionButton(a.optionButtons, buttonIDOptionLanguage); b == nil || b.Label != "GUI Scale: Large" {
+		got := "<nil>"
+		if b != nil {
+			got = b.Label
+		}
+		t.Fatalf("gui scale label mismatch at max: got=%q want=%q", got, "GUI Scale: Large")
 	}
 	if b := findOptionButton(a.optionButtons, buttonIDOptionRDPlus); b == nil || !b.Enabled {
 		t.Fatal("render distance plus should be enabled at tiny")
@@ -135,6 +153,26 @@ func TestPauseOptionVideoCyclesFramerateMode(t *testing.T) {
 	}
 }
 
+func TestPauseOptionLanguageCyclesGUIScaleMode(t *testing.T) {
+	a := &App{
+		width:        1280,
+		height:       720,
+		guiScaleMode: 0,
+		optionsKV:    make(map[string]string),
+		optionsPath:  filepath.Join(t.TempDir(), "options.txt"),
+	}
+	a.handlePauseOptionButton(buttonIDOptionLanguage)
+	if a.guiScaleMode != 1 {
+		t.Fatalf("first gui scale cycle mismatch: got=%d want=1", a.guiScaleMode)
+	}
+	a.handlePauseOptionButton(buttonIDOptionLanguage)
+	a.handlePauseOptionButton(buttonIDOptionLanguage)
+	a.handlePauseOptionButton(buttonIDOptionLanguage)
+	if a.guiScaleMode != 0 {
+		t.Fatalf("gui scale should wrap to auto: got=%d want=0", a.guiScaleMode)
+	}
+}
+
 func TestRenderDistanceModeMappings(t *testing.T) {
 	if got := renderDistanceModeToChunks(0); got != 16 {
 		t.Fatalf("mode far chunks mismatch: got=%d want=16", got)
@@ -162,6 +200,7 @@ func TestOptionsFileLoadAndSave(t *testing.T) {
 	content := strings.Join([]string{
 		"fov:0.25",
 		"viewDistance:2",
+		"guiScale:3",
 		"bobView:false",
 		"mouseSensitivity:0.30",
 		"fpsLimit:2",
@@ -178,6 +217,7 @@ func TestOptionsFileLoadAndSave(t *testing.T) {
 		mouseSens:          0.14,
 		renderDistance:     1,
 		viewBobbing:        true,
+		guiScaleMode:       0,
 		limitFramerateMode: 1,
 		optionDifficulty:   1,
 	}
@@ -190,6 +230,9 @@ func TestOptionsFileLoadAndSave(t *testing.T) {
 	}
 	if a.viewBobbing {
 		t.Fatal("loaded bobView should be false")
+	}
+	if a.guiScaleMode != 3 {
+		t.Fatalf("loaded guiScale mismatch: got=%d want=3", a.guiScaleMode)
 	}
 	if a.mouseSens != 0.30 {
 		t.Fatalf("loaded sensitivity mismatch: got=%.2f want=0.30", a.mouseSens)
@@ -204,6 +247,7 @@ func TestOptionsFileLoadAndSave(t *testing.T) {
 	a.fovSetting = 1.0
 	a.renderDistance = 0
 	a.viewBobbing = true
+	a.guiScaleMode = 2
 	a.mouseSens = 0.5
 	a.limitFramerateMode = 0
 	a.optionDifficulty = 0
@@ -217,6 +261,7 @@ func TestOptionsFileLoadAndSave(t *testing.T) {
 	checks := []string{
 		"fov:1.000000",
 		"viewDistance:0",
+		"guiScale:2",
 		"bobView:true",
 		"mouseSensitivity:0.500000",
 		"fpsLimit:0",

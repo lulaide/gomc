@@ -48,6 +48,9 @@ var (
 	// Translation reference:
 	// - net.minecraft.src.GameSettings.LIMIT_FRAMERATES
 	framerateModeNames = []string{"Max FPS", "Balanced", "Power saver"}
+	// Translation reference:
+	// - net.minecraft.src.GameSettings.GUISCALES
+	guiScaleModeNames = []string{"Auto", "Small", "Normal", "Large"}
 )
 
 const (
@@ -122,11 +125,12 @@ type App struct {
 	session *netclient.Session
 	window  *glfw.Window
 
-	width  int
-	height int
-	guiW   int
-	guiH   int
-	guiS   int
+	width        int
+	height       int
+	guiW         int
+	guiH         int
+	guiS         int
+	guiScaleMode int
 
 	renderDistance int
 	moveSpeed      float64
@@ -360,6 +364,7 @@ func Run(session *netclient.Session, cfg Config) error {
 		window:             window,
 		width:              cfg.Width,
 		height:             cfg.Height,
+		guiScaleMode:       0,
 		renderDistance:     renderDistanceChunksToMode(cfg.RenderDistance),
 		moveSpeed:          cfg.MoveSpeed,
 		mouseSens:          cfg.MouseSensitivity,
@@ -611,9 +616,14 @@ func (a *App) initGLState() {
 	a.initSkyRenderLists()
 }
 
-func autoGUIScale(displayW, displayH int) int {
+func autoGUIScale(displayW, displayH, guiScaleMode int) int {
 	scale := 1
-	for displayW/(scale+1) >= 320 && displayH/(scale+1) >= 240 {
+	mode := clampInt(guiScaleMode, 0, len(guiScaleModeNames)-1)
+	maxScale := 1000
+	if mode > 0 {
+		maxScale = mode
+	}
+	for scale < maxScale && displayW/(scale+1) >= 320 && displayH/(scale+1) >= 240 {
 		scale++
 	}
 	return maxInt(scale, 1)
@@ -641,7 +651,7 @@ func (a *App) uiScale() int {
 }
 
 func (a *App) updateGUIMetrics() {
-	newS := autoGUIScale(maxInt(a.width, 1), maxInt(a.height, 1))
+	newS := autoGUIScale(maxInt(a.width, 1), maxInt(a.height, 1), a.guiScaleMode)
 	// Translation reference:
 	// - net.minecraft.src.ScaledResolution
 	// Vanilla uses ceil(display / scaleFactor).
@@ -1393,6 +1403,10 @@ func (a *App) handlePauseOptionButton(id int) {
 	case buttonIDOptionVideo:
 		a.limitFramerateMode = (a.limitFramerateMode + 1) % len(framerateModeNames)
 		changed = true
+	case buttonIDOptionLanguage:
+		a.guiScaleMode = (a.guiScaleMode + 1) % len(guiScaleModeNames)
+		a.updateGUIMetrics()
+		changed = true
 	case buttonIDOptionSensMinus:
 		a.mouseSens -= 0.02
 		if a.mouseSens < 0.0 {
@@ -1405,7 +1419,7 @@ func (a *App) handlePauseOptionButton(id int) {
 			a.mouseSens = 1.0
 		}
 		changed = true
-	case buttonIDOptionMusic, buttonIDOptionControls, buttonIDOptionLanguage, buttonIDOptionSnooper:
+	case buttonIDOptionMusic, buttonIDOptionControls, buttonIDOptionSnooper:
 		a.menuStatus = "This options page is not implemented yet."
 	}
 	a.updateOptionButtonsState()
@@ -2584,6 +2598,11 @@ func (a *App) optionRenderDistanceLabel() string {
 func (a *App) optionFramerateLabel() string {
 	mode := clampInt(a.limitFramerateMode, 0, len(framerateModeNames)-1)
 	return "Max Framerate: " + framerateModeNames[mode]
+}
+
+func (a *App) optionGUIScaleLabel() string {
+	mode := clampInt(a.guiScaleMode, 0, len(guiScaleModeNames)-1)
+	return "GUI Scale: " + guiScaleModeNames[mode]
 }
 
 func (a *App) drawWorld(snap netclient.StateSnapshot) {
@@ -5663,6 +5682,10 @@ func (a *App) loadOptionsFile() {
 			if v, parseErr := strconv.Atoi(value); parseErr == nil {
 				a.renderDistance = normalizeRenderDistanceMode(v)
 			}
+		case "guiScale":
+			if v, parseErr := strconv.Atoi(value); parseErr == nil {
+				a.guiScaleMode = clampInt(v, 0, len(guiScaleModeNames)-1)
+			}
 		case "bobView":
 			if v, parseErr := strconv.ParseBool(value); parseErr == nil {
 				a.viewBobbing = v
@@ -5697,6 +5720,7 @@ func (a *App) saveOptionsFile() {
 	}
 	a.optionsKV["fov"] = strconv.FormatFloat(clampFloat64(a.fovSetting, 0.0, 1.0), 'f', 6, 64)
 	a.optionsKV["viewDistance"] = strconv.Itoa(normalizeRenderDistanceMode(a.renderDistance))
+	a.optionsKV["guiScale"] = strconv.Itoa(clampInt(a.guiScaleMode, 0, len(guiScaleModeNames)-1))
 	a.optionsKV["bobView"] = strconv.FormatBool(a.viewBobbing)
 	a.optionsKV["mouseSensitivity"] = strconv.FormatFloat(clampFloat64(a.mouseSens, 0.0, 1.0), 'f', 6, 64)
 	a.optionsKV["fpsLimit"] = strconv.Itoa(clampInt(a.limitFramerateMode, 0, 2))

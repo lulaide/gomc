@@ -178,7 +178,6 @@ func (a *App) initOptionButtons() {
 	}
 	a.optionButtons[0].Enabled = false
 	a.optionButtons[2].Enabled = false
-	a.optionButtons[3].Enabled = false
 }
 
 func (a *App) initCreateButtons() {
@@ -231,6 +230,9 @@ func (a *App) updateOptionButtonsState() {
 			b.Label = "Difficulty: " + difficultyName
 		case buttonIDOptionVideo:
 			b.Label = a.optionFramerateLabel()
+			b.Enabled = true
+		case buttonIDOptionLanguage:
+			b.Label = a.optionGUIScaleLabel()
 			b.Enabled = true
 		case buttonIDOptionViewBobbing:
 			b.Label = viewBobbingLabel
@@ -783,6 +785,10 @@ func (a *App) handleMenuButton(id int) bool {
 		case buttonIDOptionVideo:
 			a.limitFramerateMode = (a.limitFramerateMode + 1) % len(framerateModeNames)
 			changed = true
+		case buttonIDOptionLanguage:
+			a.guiScaleMode = (a.guiScaleMode + 1) % len(guiScaleModeNames)
+			a.updateGUIMetrics()
+			changed = true
 		case buttonIDOptionSensMinus:
 			a.mouseSens -= 0.02
 			if a.mouseSens < 0.0 {
@@ -795,7 +801,7 @@ func (a *App) handleMenuButton(id int) bool {
 				a.mouseSens = 1.0
 			}
 			changed = true
-		case buttonIDOptionMusic, buttonIDOptionControls, buttonIDOptionLanguage, buttonIDOptionSnooper:
+		case buttonIDOptionMusic, buttonIDOptionControls, buttonIDOptionSnooper:
 			a.menuStatus = "This options page is not implemented yet."
 		}
 		a.updateOptionButtonsState()
