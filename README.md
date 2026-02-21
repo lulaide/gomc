@@ -1,0 +1,194 @@
+# gomc
+
+Go rewrite workspace for Minecraft Java Edition 1.6.4 (MCP 8.11 source-aligned translation).
+
+Current status is intentionally limited to **Phase 1 core foundations**:
+
+- `pkg/util/JavaRandom` parity with `java.util.Random`
+- `pkg/nbt` parity baseline for `NBTBase`, `NBTTag*`, `CompressedStreamTools`
+- `pkg/network/protocol` packet stream baseline (`Packet` helpers + keepalive/login/client-protocol/client-command/kick packets)
+- `pkg/network/protocol` play/login expansion (`chat/time/spawn/health/respawn/flying/look/move/abilities/custom-payload/auth/ping`)
+- `pkg/network/protocol` player state packet baseline (`Packet43Experience`)
+- `pkg/network/protocol` chunk stream packets (`Packet51MapChunk`, `Packet56MapChunks`) + client info/item switch packets (`Packet204`, `Packet16`)
+- `pkg/network/protocol` inventory sync packets (`Packet103SetSlot`, `Packet104WindowItems`)
+- `pkg/network/protocol` window transaction packets (`Packet101CloseWindow`, `Packet102WindowClick`, `Packet106Transaction`)
+- `pkg/network/protocol` creative inventory packet (`Packet107CreativeSetSlot`)
+- `pkg/network/protocol` client action packets (`Packet7UseEntity`, `Packet18Animation`, `Packet19EntityAction` with `auxData` parity)
+- `pkg/network/protocol` player/world interaction packets (`Packet201PlayerInfo`, `Packet14BlockDig`, `Packet15Place`, `Packet53BlockChange`)
+- `pkg/network/protocol` entity sync packets (`Packet20`, `Packet23`, `Packet28`, `Packet29`, `Packet30/31/32/33`, `Packet34`, `Packet35`) with `DataWatcher` watchable-object wire format support
+- `pkg/network/protocol` entity metadata packet (`Packet40EntityMetadata`)
+- `pkg/network/protocol` entity status packet (`Packet38EntityStatus`)
+- `pkg/network/crypt` baseline (`CryptManager` key generation/hash/RSA/AES-CFB8 stream wrappers)
+- `pkg/network/client` baseline play session (`Packet2 -> Packet253 -> Packet252 -> Packet205`), keepalive echo, world/chunk cache (`Packet51/56/53`), entity cache (`Packet20/23/28/29/31/32/33/34/35`), and state snapshot APIs
+- `pkg/network/client` tracked-entity metadata handling (`Packet40`) for sneak/sprint/using-item flag state, plus entity status handling (`Packet38`)
+- `pkg/network/client` now surfaces remote entity animation notifications (`Packet18` swing/eat) as system events for CLI/debug visibility
+- `pkg/network/server` status ping gateway baseline (`Packet254 -> Packet255` formatting + protocol-version kick path)
+- `pkg/network/server` login-session baseline (`Packet2 -> Packet253 -> Packet252 -> Packet205 -> login init packets`), including AES/CFB8 stream switch timing
+- `pkg/network/server` login init now sends brand/spawn abilities/held item/position + spawn chunk snapshot (`Packet51`)
+- `pkg/network/server` keepalive loop baseline (`Packet0`) and player-count tracking on login session lifetime
+- `pkg/network/server` flat-world chunk source + spiral chunk queue (PlayerManager-style) with batched `Packet56MapChunks` streaming
+- `pkg/network/server` flat-world source now supports optional Anvil persistence (startup load + autosave + shutdown flush)
+- `pkg/network/server` player data persistence baseline (`world/playerdata/*.dat`): position/rotation/health/food/gamemode/held-slot/inventory load+save on session lifecycle
+- `pkg/network/server` play-session handling for movement, chat JSON broadcast (`chat.type.text`), `/list` baseline command, and block interaction resync packets (`Packet53`)
+- `pkg/network/server` block interaction now mutates shared world state for dig/place baseline (`Packet14` status=2, `Packet15` block-item placement) and broadcasts `Packet53` to watching players
+- `pkg/network/server` placement path now includes `ItemBlock`-style replaceable-target handling (snow layer / vine / tall grass / dead bush) baseline
+- `pkg/network/server` world time progression wiring (`cmd/server` tick loop -> periodic client `Packet4UpdateTime`)
+- `pkg/network/server` player entity visibility baseline: join spawn (`Packet20`), relative/teleport movement sync (`Packet31/32/33/34`), disconnect destroy (`Packet29`)
+- `pkg/network/server` player list ping behavior baseline: keepalive RTT smoothing + periodic `Packet201` refresh cadence
+- `pkg/network/server` watcher-aware entity tracking baseline: first-visibility spawn (`Packet20`), out-of-visibility destroy (`Packet29`), in-visibility movement/head sync (`Packet31/32/33/34/35`)
+- `pkg/network/server` movement validation baseline: illegal stance/position checks + fast-move correction via server `Packet13PlayerLookMove`
+- `pkg/network/server` baseline server command handling now includes `/list` and `/tp x y z` with teleport sync (`Packet34`) to watchers
+- `pkg/network/server` command/inventory baseline now includes `/give <id> [count] [damage]` with hotbar-first insertion and slot sync (`Packet103`)
+- `pkg/network/server` command baseline now includes `/gamemode <0|1|survival|creative>` with ability sync (`Packet202`)
+- `pkg/network/server` now handles client `Packet202PlayerAbilities` to update flying state with server-side allow-flying gate (`isFlying && allowFlying`)
+- `pkg/network/server` death/respawn baseline: `/kill` -> zero-health sync (`Packet8`) and client `Packet205` respawn request -> `Packet9` + relocation/health sync
+- `pkg/network/server` command baseline now includes `/setblock <x> <y> <z> <id> [meta]` with world mutation + `Packet53` broadcast
+- `pkg/network/server` login init now includes baseline HUD state sync (`Packet8UpdateHealth`, `Packet43Experience`)
+- `pkg/network/server` placement now consumes held inventory stack baseline (slot 36-44 mapping) and syncs client held slot updates (`Packet103`)
+- `pkg/network/server` placement consumption now respects game mode baseline: survival consumes held stack, creative does not
+- `pkg/network/server` window interaction baseline for player inventory: simple left/right click cursor model + transaction ack (`Packet106`) + resync (`Packet104/103`)
+- `pkg/network/server` player inventory shift-click baseline (`main <-> hotbar`) for `Packet102` transactions
+- `pkg/network/server` creative inventory slot set baseline (`Packet107`) gated by creative game mode
+- `pkg/network/server` command baseline now includes `/time set|add` with immediate `Packet4UpdateTime` broadcast
+- `pkg/network/server` baseline handling for client action packets (`Packet7/18/19`): swing animation relay to watchers, sneak/sprint state toggles, and invalid self-attack kick validation
+- `pkg/network/server` player-vs-player attack baseline for `Packet7` action=1: melee damage application, hurt-resistant timer behavior (`20` with half-window same-damage reject), death-state transition, and health packet sync
+- `pkg/network/server` entity metadata sync baseline: sneak/sprint flag updates sent to watchers via `Packet40`
+- `pkg/network/server` player spawn packet (`Packet20`) now carries baseline DataWatcher flags and held-item ID
+- `pkg/network/server` melee translation now includes held-weapon attack modifiers (sword/tool IDs), hit durability consumption, sword blocking damage reduction, and hurt/death status broadcast (`Packet38`)
+- `pkg/network/server` melee translation now includes falling critical-hit multiplier subset (`x1.5` gate from `EntityPlayer#attackTargetEntityWithCurrentItem`)
+- `pkg/network/server` item-use state baseline: `Packet15` (`direction=255`) starts using duration-based held items (sword blocking path), `Packet14` (`status=5`) stops using item
+- `pkg/network/server` held-item use tick baseline: food/milk/non-splash potion finish consumption, food/saturation updates, bow-use precondition (arrow/creative), use-finish status (`Packet38 id=9`) and using-item metadata transitions
+- `pkg/network/server` bow release now spawns tracked arrow projectiles (`Packet23` + `Packet28`) with ticked gravity/drag, teleport sync (`Packet34`), impact damage, in-ground state, pickup rules (survival/creative-only), per-viewer visibility tracking, and destroy sync (`Packet29`)
+- `pkg/network/server` food use start now emits eat animation (`Packet18 id=5`) to watchers (EntityPlayerMP#setItemInUse baseline)
+- `pkg/network/server` food tick baseline (`FoodStats#onUpdate` subset): exhaustion drain, natural regeneration timer, starvation timer/damage thresholds (easy difficulty), attack exhaustion (`0.3F`), and health/status packet sync
+- `pkg/network/server` playerdata food persistence now includes `foodTickTimer` + `foodExhaustionLevel` tags (with load/save sanitization)
+- `pkg/network/server` movement baseline now applies landing fall damage (`ceil(fallDistance-3)`) for survival and routes non-player damage through hurt/death status sync
+- `pkg/network/server` movement now applies exhaustion subset from `EntityPlayer#addMovementStat` and `EntityPlayer#jump` (walk/sprint ground move + jump/sprint-jump costs)
+- `pkg/network/server` now applies out-of-world damage baseline when `y < -64` (Entity update path)
+- `pkg/world/block` baseline for `Block.isAssociatedBlockID(...)` behavior
+- `pkg/world/block` static property tables (`lightOpacity`, movement/liquid flags, tile-entity-provider flags)
+- `pkg/tick/NextTickListEntry` parity baseline
+- `pkg/tick/Scheduler` baseline for `WorldServer` pending tick set+ordered queue semantics
+- `pkg/tick/ServerLoop` 20TPS loop baseline from `MinecraftServer#run` + fixed stage pipeline hook
+- `pkg/world/chunk/NibbleArray` parity baseline
+- `pkg/world/chunk/ExtendedBlockStorage` parity baseline
+- `pkg/world/chunk/CoordIntPair` parity baseline
+- `pkg/world/chunk/Chunk` core height/sky-light/block-set paths (`generateHeightMap`, `generateSkylightMap`, `setBlockIDWithMetadata`, `getPrecipitationHeight`, `get/setSavedLightValue`)
+- `pkg/world/storage/RegionFile` + `RegionFileCache` parity baseline
+- `pkg/world/storage/AnvilChunk codec` baseline for `Sections` + `Biomes` + `TileTicks` serialization path
+- `pkg/world/storage/AnvilChunkLoader` queue/load/save baseline + runtime `Chunk <-> Column` bridge
+- `cmd/server` runnable status server + 20TPS loop skeleton (world time + projectile tick integration)
+- `cmd/server` adds world persistence flags (`-persist-world`, `-world-dir`, `-autosave-ticks`)
+- `cmd/client` runnable status probe + login probe + interactive play CLI (`-play`) with movement/look/chat/dig/place, hotbar switch (`slot 0..8`), inventory click commands (`click`, `closewin`), and entity action commands (`entities`, `swing`, `use`, `sneak`, `sprint`)
+- `cmd/client` now supports integrated offline singleplayer mode (`-offline`) that starts/stops a local server process in-client and auto-connects
+
+Translation references used in this step:
+
+- `src/NBTBase.java`
+- `src/NBTTagEnd.java`
+- `src/NBTTagByte.java`
+- `src/NBTTagShort.java`
+- `src/NBTTagInt.java`
+- `src/NBTTagLong.java`
+- `src/NBTTagFloat.java`
+- `src/NBTTagDouble.java`
+- `src/NBTTagByteArray.java`
+- `src/NBTTagString.java`
+- `src/NBTTagList.java`
+- `src/NBTTagCompound.java`
+- `src/NBTTagIntArray.java`
+- `src/CompressedStreamTools.java`
+- `src/Packet.java` (`writeString`, `readString`, `write/readByteArray`, `write/readItemStack`, `write/readNBTTagCompound`, packet id mapping rules)
+- `src/Packet0KeepAlive.java`
+- `src/Packet1Login.java`
+- `src/Packet2ClientProtocol.java`
+- `src/Packet205ClientCommand.java`
+- `src/Packet255KickDisconnect.java`
+- `src/Packet3Chat.java`
+- `src/Packet4UpdateTime.java`
+- `src/Packet6SpawnPosition.java`
+- `src/Packet8UpdateHealth.java`
+- `src/Packet9Respawn.java`
+- `src/Packet10Flying.java`
+- `src/Packet11PlayerPosition.java`
+- `src/Packet12PlayerLook.java`
+- `src/Packet13PlayerLookMove.java`
+- `src/Packet202PlayerAbilities.java`
+- `src/Packet16BlockItemSwitch.java`
+- `src/Packet43Experience.java`
+- `src/Packet14BlockDig.java`
+- `src/Packet15Place.java`
+- `src/Packet7UseEntity.java`
+- `src/Packet18Animation.java`
+- `src/Packet19EntityAction.java`
+- `src/Packet103SetSlot.java`
+- `src/Packet104WindowItems.java`
+- `src/Packet101CloseWindow.java`
+- `src/Packet102WindowClick.java`
+- `src/Packet106Transaction.java`
+- `src/Packet107CreativeSetSlot.java`
+- `src/Packet204ClientInfo.java`
+- `src/Packet201PlayerInfo.java`
+- `src/Packet20NamedEntitySpawn.java`
+- `src/Packet23VehicleSpawn.java`
+- `src/Packet28EntityVelocity.java`
+- `src/Packet29DestroyEntity.java`
+- `src/Packet30Entity.java`
+- `src/Packet31RelEntityMove.java`
+- `src/Packet32EntityLook.java`
+- `src/Packet33RelEntityMoveLook.java`
+- `src/Packet34EntityTeleport.java`
+- `src/Packet35EntityHeadRotation.java`
+- `src/Packet38EntityStatus.java`
+- `src/Packet40EntityMetadata.java`
+- `src/Packet51MapChunk.java`
+- `src/Packet51MapChunkData.java`
+- `src/Packet53BlockChange.java`
+- `src/Packet56MapChunks.java`
+- `src/Packet250CustomPayload.java`
+- `src/Packet252SharedKey.java`
+- `src/Packet253ServerAuthData.java`
+- `src/Packet254ServerPing.java`
+- `src/EnumGameType.java`
+- `src/WorldType.java`
+- `src/CryptManager.java`
+- `src/NetLoginHandler.java`
+- `src/NetClientHandler.java`
+- `src/NetServerHandler.java` (`handleFlying`, `handleChat`, `handlePlace`, `handleBlockDig`, `setPlayerLocation`)
+- `src/NetServerHandler.java` (`handleAnimation`, `handleEntityAction`, `handleUseEntity`)
+- `src/ItemBlock.java` (`onItemUse` replaceable/offset target handling cues for current placement subset)
+- `src/ItemInWorldManager.java` (`onBlockClicked`, `uncheckedTryHarvestBlock`, `activateBlockOrUseItem`, `tryHarvestBlock` reference points for current translated subset)
+- `src/EntityPlayer.java` (`attackTargetEntityWithCurrentItem`)
+- `src/EntityPlayer.java` (`setItemInUse` eat animation trigger + `addExhaustion`)
+- `src/EntityLivingBase.java` (`attackEntityFrom`, `damageEntity`, hurt-resistant timing behavior)
+- `src/EntityLivingBase.java` (`fall(float)` damage formula baseline)
+- `src/ItemSword.java` / `src/ItemTool.java` / `src/EnumToolMaterial.java` (attack modifier and durability constants)
+- `src/ItemStack.java` (`damageItem` creative bypass and break semantics)
+- `src/ItemFood.java` / `src/ItemSoup.java` / `src/ItemSeedFood.java` (eat duration and food stats inputs)
+- `src/ItemBow.java` / `src/ItemPotion.java` / `src/ItemBucketMilk.java` (right-click use-duration behavior)
+- `src/EntityArrow.java` (spawn heading, velocity, gravity/drag, impact damage)
+- `src/FoodStats.java` (`addStats` + `onUpdate` hunger/regeneration/starvation logic)
+- `src/DataWatcher.java` (`readWatchableObjects`, `writeWatchableObject` packet wire format)
+- `src/PlayerManager.java` (`filterChunkLoadQueue` spiral ordering, view-distance chunk window)
+- `src/EntityTrackerEntry.java` (`Packet20/23/28/31/32/33/34/35` visibility and movement/head update patterns)
+- `src/ServerConfigurationManager.java` (`Packet201` periodic ping update cadence)
+- `src/EntityPlayerMP.java` (`loadedChunks` queue + `Packet56MapChunks` batching)
+- `src/MathHelper.java` (`floor_double` chunk-coordinate semantics)
+- `src/ChatAllowedCharacters.java`
+- `src/TcpConnection.java` (Packet252 input/output encryption switch timing)
+- `server/MinecraftServer.java`
+- `src/NextTickListEntry.java`
+- `src/Block.java` (`isAssociatedBlockID` only)
+- `src/WorldServer.java` (`scheduleBlockUpdateWithPriority`, `scheduleBlockUpdateFromLoad`, `tickUpdates` cleaning phase)
+- `src/NibbleArray.java`
+- `src/ExtendedBlockStorage.java`
+- `src/ChunkCoordIntPair.java`
+- `src/Chunk.java` (`generateHeightMap`, `generateSkylightMap`, `setBlockIDWithMetadata`, `setBlockMetadata`, `getSavedLightValue`, `setLightValue`, `getPrecipitationHeight`, skylight neighbor update path)
+- `src/EnumSkyBlock.java`
+- `src/Material.java`
+- `src/RegionFile.java`
+- `src/RegionFileCache.java`
+- `src/AnvilChunkLoader.java` (`writeChunkToNBT`, `readChunkFromNBT` section/tiletick paths)
+- `src/AnvilChunkLoaderPending.java`
+
+This module is the canonical rewrite target (`module github.com/lulaide/gomc`).
