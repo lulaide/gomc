@@ -57,3 +57,63 @@ func TestVineSelectionRelativeAABB_MetaWestPlate(t *testing.T) {
 		)
 	}
 }
+
+func TestBlockSelectionRelativeAABBs_Farmland(t *testing.T) {
+	boxes := blockSelectionRelativeAABBs(60, 0)
+	if len(boxes) != 1 {
+		t.Fatalf("farmland box count mismatch: got=%d want=1", len(boxes))
+	}
+	if boxes[0].maxY != 0.9375 {
+		t.Fatalf("farmland maxY mismatch: got=%.4f want=0.9375", boxes[0].maxY)
+	}
+}
+
+func TestBlockSelectionRelativeAABBs_HalfSlabTopBottom(t *testing.T) {
+	bottom := blockSelectionRelativeAABBs(44, 0)
+	if len(bottom) != 1 {
+		t.Fatalf("bottom slab box count mismatch: got=%d want=1", len(bottom))
+	}
+	if bottom[0].minY != 0.0 || bottom[0].maxY != 0.5 {
+		t.Fatalf("bottom slab Y bounds mismatch: got=(%.4f,%.4f) want=(0.0000,0.5000)", bottom[0].minY, bottom[0].maxY)
+	}
+
+	top := blockSelectionRelativeAABBs(44, 8)
+	if len(top) != 1 {
+		t.Fatalf("top slab box count mismatch: got=%d want=1", len(top))
+	}
+	if top[0].minY != 0.5 || top[0].maxY != 1.0 {
+		t.Fatalf("top slab Y bounds mismatch: got=(%.4f,%.4f) want=(0.5000,1.0000)", top[0].minY, top[0].maxY)
+	}
+}
+
+func TestBlockSelectionRelativeAABBs_SnowLayer(t *testing.T) {
+	boxes := blockSelectionRelativeAABBs(78, 0)
+	if len(boxes) != 1 {
+		t.Fatalf("snow layer box count mismatch: got=%d want=1", len(boxes))
+	}
+	if boxes[0].maxY != 0.125 {
+		t.Fatalf("snow meta0 maxY mismatch: got=%.4f want=0.1250", boxes[0].maxY)
+	}
+
+	boxes = blockSelectionRelativeAABBs(78, 7)
+	if len(boxes) != 1 {
+		t.Fatalf("snow layer box count mismatch at meta7: got=%d want=1", len(boxes))
+	}
+	if boxes[0].maxY != 1.0 {
+		t.Fatalf("snow meta7 maxY mismatch: got=%.4f want=1.0000", boxes[0].maxY)
+	}
+}
+
+func TestBlockSelectionRelativeAABBs_CactusInset(t *testing.T) {
+	boxes := blockSelectionRelativeAABBs(81, 0)
+	if len(boxes) != 1 {
+		t.Fatalf("cactus box count mismatch: got=%d want=1", len(boxes))
+	}
+	bb := boxes[0]
+	if bb.minX != 0.0625 || bb.minZ != 0.0625 || bb.maxX != 0.9375 || bb.maxZ != 0.9375 || bb.maxY != 1.0 {
+		t.Fatalf(
+			"cactus bounds mismatch: got=(%.4f,%.4f,%.4f)->(%.4f,%.4f,%.4f)",
+			bb.minX, bb.minY, bb.minZ, bb.maxX, bb.maxY, bb.maxZ,
+		)
+	}
+}

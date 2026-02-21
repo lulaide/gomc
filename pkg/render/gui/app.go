@@ -4487,6 +4487,65 @@ func blockSelectionRelativeAABBs(blockID, blockMeta int) []axisAlignedBB {
 	switch blockID {
 	case 8, 9, 10, 11:
 		return nil
+	case 44, 126:
+		// Translation reference:
+		// - net.minecraft.src.BlockHalfSlab#setBlockBoundsBasedOnState(...)
+		if blockMeta&8 != 0 {
+			return []axisAlignedBB{{
+				minX: 0.0, minY: 0.5, minZ: 0.0,
+				maxX: 1.0, maxY: 1.0, maxZ: 1.0,
+			}}
+		}
+		return []axisAlignedBB{{
+			minX: 0.0, minY: 0.0, minZ: 0.0,
+			maxX: 1.0, maxY: 0.5, maxZ: 1.0,
+		}}
+	case 60:
+		// Translation reference:
+		// - net.minecraft.src.BlockFarmland constructor bounds.
+		return []axisAlignedBB{{
+			minX: 0.0, minY: 0.0, minZ: 0.0,
+			maxX: 1.0, maxY: 0.9375, maxZ: 1.0,
+		}}
+	case 66:
+		// Translation reference:
+		// - net.minecraft.src.BlockRailBase#setBlockBoundsBasedOnState(...)
+		railMeta := blockMeta & 7
+		railHeight := 0.125
+		if railMeta >= 2 && railMeta <= 5 {
+			railHeight = 0.625
+		}
+		return []axisAlignedBB{{
+			minX: 0.0, minY: 0.0, minZ: 0.0,
+			maxX: 1.0, maxY: railHeight, maxZ: 1.0,
+		}}
+	case 70, 72:
+		// Translation reference:
+		// - net.minecraft.src.BlockBasePressurePlate#setBlockBoundsBasedOnState(...)
+		height := 0.0625
+		if blockMeta > 0 {
+			height = 0.03125
+		}
+		return []axisAlignedBB{{
+			minX: 0.0625, minY: 0.0, minZ: 0.0625,
+			maxX: 0.9375, maxY: height, maxZ: 0.9375,
+		}}
+	case 78:
+		// Translation reference:
+		// - net.minecraft.src.BlockSnow#setBlockBoundsForSnowDepth(...)
+		depth := blockMeta & 7
+		height := float64(2*(1+depth)) / 16.0
+		return []axisAlignedBB{{
+			minX: 0.0, minY: 0.0, minZ: 0.0,
+			maxX: 1.0, maxY: height, maxZ: 1.0,
+		}}
+	case 81:
+		// Translation reference:
+		// - net.minecraft.src.BlockCactus#getSelectedBoundingBoxFromPool(...)
+		return []axisAlignedBB{{
+			minX: 0.0625, minY: 0.0, minZ: 0.0625,
+			maxX: 0.9375, maxY: 1.0, maxZ: 0.9375,
+		}}
 	case 6, 31, 32:
 		// Translation reference:
 		// - net.minecraft.src.BlockSapling
