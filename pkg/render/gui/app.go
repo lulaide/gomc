@@ -4331,8 +4331,31 @@ func (a *App) collisionBoxesForAABB(query axisAlignedBB) []axisAlignedBB {
 	for bx := startX; bx <= endX; bx++ {
 		for by := startY; by <= endY; by++ {
 			for bz := startZ; bz <= endZ; bz++ {
-				if a.isSolidBlockAt(bx, by, bz) {
+				if by >= 256 {
 					boxes = append(boxes, unitBlockAABB(bx, by, bz))
+					continue
+				}
+				if by < 0 {
+					continue
+				}
+
+				id, meta, ok := a.session.BlockAt(bx, by, bz)
+				if !ok {
+					// Keep movement conservative when chunk data is unavailable.
+					boxes = append(boxes, unitBlockAABB(bx, by, bz))
+					continue
+				}
+
+				collision := blockCollisionRelativeAABBs(id, meta)
+				for _, bb := range collision {
+					boxes = append(boxes, axisAlignedBB{
+						minX: float64(bx) + bb.minX,
+						minY: float64(by) + bb.minY,
+						minZ: float64(bz) + bb.minZ,
+						maxX: float64(bx) + bb.maxX,
+						maxY: float64(by) + bb.maxY,
+						maxZ: float64(bz) + bb.maxZ,
+					})
 				}
 			}
 		}
@@ -4340,19 +4363,84 @@ func (a *App) collisionBoxesForAABB(query axisAlignedBB) []axisAlignedBB {
 	return boxes
 }
 
-func (a *App) isSolidBlockAt(x, y, z int) bool {
-	if y >= 256 {
-		return true
+func blockCollisionRelativeAABBs(blockID, blockMeta int) []axisAlignedBB {
+	switch blockID {
+	case 0:
+		return nil
+	case 8, 9, 10, 11:
+		return nil
+	case 6, 31, 32, 37, 38, 39, 40, 59, 83, 106:
+		return nil
+	case 66:
+		// Translation reference:
+		// - net.minecraft.src.BlockRailBase#getCollisionBoundingBoxFromPool(...)
+		return nil
+	case 70, 72:
+		// Translation reference:
+		// - net.minecraft.src.BlockBasePressurePlate#getCollisionBoundingBoxFromPool(...)
+		return nil
+	case 44, 126:
+		// Translation reference:
+		// - net.minecraft.src.BlockHalfSlab#setBlockBoundsBasedOnState(...)
+		if blockMeta&8 != 0 {
+			return []axisAlignedBB{{
+				minX: 0.0, minY: 0.5, minZ: 0.0,
+				maxX: 1.0, maxY: 1.0, maxZ: 1.0,
+			}}
+		}
+		return []axisAlignedBB{{
+			minX: 0.0, minY: 0.0, minZ: 0.0,
+			maxX: 1.0, maxY: 0.5, maxZ: 1.0,
+		}}
+	case 60:
+		// Translation reference:
+		// - net.minecraft.src.BlockFarmland#getCollisionBoundingBoxFromPool(...)
+		return []axisAlignedBB{{
+			minX: 0.0, minY: 0.0, minZ: 0.0,
+			maxX: 1.0, maxY: 1.0, maxZ: 1.0,
+		}}
+	case 78:
+		// Translation reference:
+		// - net.minecraft.src.BlockSnow#getCollisionBoundingBoxFromPool(...)
+		// collision height uses metadata*0.125, unlike render/selection bounds.
+		height := float64(blockMeta&7) * 0.125
+		if height <= 0 {
+			return nil
+		}
+		return []axisAlignedBB{{
+			minX: 0.0, minY: 0.0, minZ: 0.0,
+			maxX: 1.0, maxY: height, maxZ: 1.0,
+		}}
+	case 81:
+		// Translation reference:
+		// - net.minecraft.src.BlockCactus#getCollisionBoundingBoxFromPool(...)
+		return []axisAlignedBB{{
+			minX: 0.0625, minY: 0.0, minZ: 0.0625,
+			maxX: 0.9375, maxY: 0.9375, maxZ: 0.9375,
+		}}
+	case 88:
+		// Translation reference:
+		// - net.minecraft.src.BlockSoulSand#getCollisionBoundingBoxFromPool(...)
+		return []axisAlignedBB{{
+			minX: 0.0, minY: 0.0, minZ: 0.0,
+			maxX: 1.0, maxY: 0.875, maxZ: 1.0,
+		}}
+	case 111:
+		// Translation reference:
+		// - net.minecraft.src.BlockLilyPad#getCollisionBoundingBoxFromPool(...)
+		return []axisAlignedBB{{
+			minX: 0.0, minY: 0.0, minZ: 0.0,
+			maxX: 1.0, maxY: 0.015625, maxZ: 1.0,
+		}}
 	}
-	if y < 0 {
-		return false
+
+	if block.BlocksMovement(blockID) || isNormalCubeRenderBlock(blockID) || blockID == 20 {
+		return []axisAlignedBB{{
+			minX: 0.0, minY: 0.0, minZ: 0.0,
+			maxX: 1.0, maxY: 1.0, maxZ: 1.0,
+		}}
 	}
-	id, _, ok := a.session.BlockAt(x, y, z)
-	if !ok {
-		// Keep movement conservative when chunk data is unavailable.
-		return true
-	}
-	return block.BlocksMovement(id)
+	return nil
 }
 
 func (a *App) pickBlockTarget(snap netclient.StateSnapshot, reach float64) blockTarget {

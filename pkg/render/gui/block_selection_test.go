@@ -117,3 +117,50 @@ func TestBlockSelectionRelativeAABBs_CactusInset(t *testing.T) {
 		)
 	}
 }
+
+func TestBlockCollisionRelativeAABBs_LiquidAndRailNoCollision(t *testing.T) {
+	if boxes := blockCollisionRelativeAABBs(8, 0); len(boxes) != 0 {
+		t.Fatalf("water should have no collision: got boxes=%d", len(boxes))
+	}
+	if boxes := blockCollisionRelativeAABBs(66, 0); len(boxes) != 0 {
+		t.Fatalf("rail should have no collision: got boxes=%d", len(boxes))
+	}
+}
+
+func TestBlockCollisionRelativeAABBs_SoulSandAndCactus(t *testing.T) {
+	soul := blockCollisionRelativeAABBs(88, 0)
+	if len(soul) != 1 {
+		t.Fatalf("soul sand collision box count mismatch: got=%d want=1", len(soul))
+	}
+	if soul[0].maxY != 0.875 {
+		t.Fatalf("soul sand maxY mismatch: got=%.4f want=0.8750", soul[0].maxY)
+	}
+
+	cactus := blockCollisionRelativeAABBs(81, 0)
+	if len(cactus) != 1 {
+		t.Fatalf("cactus collision box count mismatch: got=%d want=1", len(cactus))
+	}
+	if cactus[0].maxY != 0.9375 || cactus[0].minX != 0.0625 || cactus[0].maxX != 0.9375 {
+		t.Fatalf(
+			"cactus collision bounds mismatch: got=(%.4f,%.4f,%.4f)->(%.4f,%.4f,%.4f)",
+			cactus[0].minX, cactus[0].minY, cactus[0].minZ, cactus[0].maxX, cactus[0].maxY, cactus[0].maxZ,
+		)
+	}
+}
+
+func TestBlockCollisionRelativeAABBs_SnowAndSlab(t *testing.T) {
+	snow0 := blockCollisionRelativeAABBs(78, 0)
+	if len(snow0) != 0 {
+		t.Fatalf("snow meta0 should have no collision: got boxes=%d", len(snow0))
+	}
+
+	snow7 := blockCollisionRelativeAABBs(78, 7)
+	if len(snow7) != 1 || snow7[0].maxY != 0.875 {
+		t.Fatalf("snow meta7 collision mismatch: boxes=%d maxY=%.4f want=1,0.8750", len(snow7), snow7[0].maxY)
+	}
+
+	topSlab := blockCollisionRelativeAABBs(44, 8)
+	if len(topSlab) != 1 || topSlab[0].minY != 0.5 || topSlab[0].maxY != 1.0 {
+		t.Fatalf("top slab collision mismatch: boxes=%d y=(%.4f,%.4f)", len(topSlab), topSlab[0].minY, topSlab[0].maxY)
+	}
+}
