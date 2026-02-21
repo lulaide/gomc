@@ -135,6 +135,7 @@ type App struct {
 	renderDistance int
 	moveSpeed      float64
 	mouseSens      float64
+	invertMouse    bool
 	fovSetting     float64
 	viewBobbing    bool
 	activeWorld    string
@@ -368,6 +369,7 @@ func Run(session *netclient.Session, cfg Config) error {
 		renderDistance:     renderDistanceChunksToMode(cfg.RenderDistance),
 		moveSpeed:          cfg.MoveSpeed,
 		mouseSens:          cfg.MouseSensitivity,
+		invertMouse:        false,
 		fovSetting:         0.0,
 		viewBobbing:        true,
 		activeWorld:        cfg.CurrentWorld,
@@ -1085,8 +1087,12 @@ func (a *App) handleInput(deltaSeconds float64) bool {
 	if dxMouse != 0 || dyMouse != 0 {
 		turnScale := a.mouseTurnScale()
 		a.yaw += dxMouse * turnScale
-		// Match vanilla non-invert mouse look: moving mouse up looks up.
-		a.pitch += dyMouse * turnScale
+		pitchSign := 1.0
+		if a.invertMouse {
+			pitchSign = -1.0
+		}
+		// Match vanilla: invert option flips pitch sign only.
+		a.pitch += dyMouse * turnScale * pitchSign
 		if a.pitch > 89.9 {
 			a.pitch = 89.9
 		}
@@ -1407,6 +1413,9 @@ func (a *App) handlePauseOptionButton(id int) {
 		a.guiScaleMode = (a.guiScaleMode + 1) % len(guiScaleModeNames)
 		a.updateGUIMetrics()
 		changed = true
+	case buttonIDOptionControls:
+		a.invertMouse = !a.invertMouse
+		changed = true
 	case buttonIDOptionSensMinus:
 		a.mouseSens -= 0.02
 		if a.mouseSens < 0.0 {
@@ -1419,7 +1428,7 @@ func (a *App) handlePauseOptionButton(id int) {
 			a.mouseSens = 1.0
 		}
 		changed = true
-	case buttonIDOptionMusic, buttonIDOptionControls, buttonIDOptionSnooper:
+	case buttonIDOptionMusic, buttonIDOptionSnooper:
 		a.menuStatus = "This options page is not implemented yet."
 	}
 	a.updateOptionButtonsState()
@@ -2603,6 +2612,13 @@ func (a *App) optionFramerateLabel() string {
 func (a *App) optionGUIScaleLabel() string {
 	mode := clampInt(a.guiScaleMode, 0, len(guiScaleModeNames)-1)
 	return "GUI Scale: " + guiScaleModeNames[mode]
+}
+
+func (a *App) optionInvertMouseLabel() string {
+	if a.invertMouse {
+		return "Invert Mouse: ON"
+	}
+	return "Invert Mouse: OFF"
 }
 
 func (a *App) drawWorld(snap netclient.StateSnapshot) {
@@ -5678,6 +5694,10 @@ func (a *App) loadOptionsFile() {
 			if v, parseErr := strconv.ParseFloat(value, 64); parseErr == nil {
 				a.fovSetting = clampFloat64(v, 0.0, 1.0)
 			}
+		case "invertYMouse":
+			if v, parseErr := strconv.ParseBool(value); parseErr == nil {
+				a.invertMouse = v
+			}
 		case "viewDistance":
 			if v, parseErr := strconv.Atoi(value); parseErr == nil {
 				a.renderDistance = normalizeRenderDistanceMode(v)
@@ -5719,6 +5739,7 @@ func (a *App) saveOptionsFile() {
 		a.optionsKV = make(map[string]string)
 	}
 	a.optionsKV["fov"] = strconv.FormatFloat(clampFloat64(a.fovSetting, 0.0, 1.0), 'f', 6, 64)
+	a.optionsKV["invertYMouse"] = strconv.FormatBool(a.invertMouse)
 	a.optionsKV["viewDistance"] = strconv.Itoa(normalizeRenderDistanceMode(a.renderDistance))
 	a.optionsKV["guiScale"] = strconv.Itoa(clampInt(a.guiScaleMode, 0, len(guiScaleModeNames)-1))
 	a.optionsKV["bobView"] = strconv.FormatBool(a.viewBobbing)

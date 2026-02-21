@@ -44,6 +44,7 @@ func TestOptionButtonsFOVAndViewBobbingState(t *testing.T) {
 		renderDistance:     0,
 		mouseSens:          0.0,
 		fovSetting:         0.0,
+		invertMouse:        false,
 		viewBobbing:        true,
 		guiScaleMode:       0,
 		limitFramerateMode: 1,
@@ -76,6 +77,15 @@ func TestOptionButtonsFOVAndViewBobbingState(t *testing.T) {
 		}
 		t.Fatalf("gui scale button mismatch: got label=%q enabled=%t", got, enabled)
 	}
+	if b := findOptionButton(a.optionButtons, buttonIDOptionControls); b == nil || !b.Enabled || b.Label != "Invert Mouse: OFF" {
+		got := "<nil>"
+		enabled := false
+		if b != nil {
+			got = b.Label
+			enabled = b.Enabled
+		}
+		t.Fatalf("invert mouse button mismatch: got label=%q enabled=%t", got, enabled)
+	}
 	if b := findOptionButton(a.optionButtons, buttonIDOptionRDMinus); b == nil || !b.Enabled {
 		t.Fatal("render distance minus should be enabled at far")
 	}
@@ -98,6 +108,7 @@ func TestOptionButtonsFOVAndViewBobbingState(t *testing.T) {
 	a.renderDistance = 3
 	a.mouseSens = 1.0
 	a.fovSetting = 1.0
+	a.invertMouse = true
 	a.viewBobbing = false
 	a.guiScaleMode = 3
 	a.updateOptionButtonsState()
@@ -115,6 +126,13 @@ func TestOptionButtonsFOVAndViewBobbingState(t *testing.T) {
 			got = b.Label
 		}
 		t.Fatalf("gui scale label mismatch at max: got=%q want=%q", got, "GUI Scale: Large")
+	}
+	if b := findOptionButton(a.optionButtons, buttonIDOptionControls); b == nil || b.Label != "Invert Mouse: ON" {
+		got := "<nil>"
+		if b != nil {
+			got = b.Label
+		}
+		t.Fatalf("invert mouse label mismatch at on: got=%q want=%q", got, "Invert Mouse: ON")
 	}
 	if b := findOptionButton(a.optionButtons, buttonIDOptionRDPlus); b == nil || !b.Enabled {
 		t.Fatal("render distance plus should be enabled at tiny")
@@ -173,6 +191,22 @@ func TestPauseOptionLanguageCyclesGUIScaleMode(t *testing.T) {
 	}
 }
 
+func TestPauseOptionControlsTogglesInvertMouse(t *testing.T) {
+	a := &App{
+		invertMouse: false,
+		optionsKV:   make(map[string]string),
+		optionsPath: filepath.Join(t.TempDir(), "options.txt"),
+	}
+	a.handlePauseOptionButton(buttonIDOptionControls)
+	if !a.invertMouse {
+		t.Fatal("invert mouse should toggle on")
+	}
+	a.handlePauseOptionButton(buttonIDOptionControls)
+	if a.invertMouse {
+		t.Fatal("invert mouse should toggle off")
+	}
+}
+
 func TestRenderDistanceModeMappings(t *testing.T) {
 	if got := renderDistanceModeToChunks(0); got != 16 {
 		t.Fatalf("mode far chunks mismatch: got=%d want=16", got)
@@ -199,6 +233,7 @@ func TestOptionsFileLoadAndSave(t *testing.T) {
 	path := filepath.Join(dir, "options.txt")
 	content := strings.Join([]string{
 		"fov:0.25",
+		"invertYMouse:true",
 		"viewDistance:2",
 		"guiScale:3",
 		"bobView:false",
@@ -216,6 +251,7 @@ func TestOptionsFileLoadAndSave(t *testing.T) {
 		optionsKV:          make(map[string]string),
 		mouseSens:          0.14,
 		renderDistance:     1,
+		invertMouse:        false,
 		viewBobbing:        true,
 		guiScaleMode:       0,
 		limitFramerateMode: 1,
@@ -230,6 +266,9 @@ func TestOptionsFileLoadAndSave(t *testing.T) {
 	}
 	if a.viewBobbing {
 		t.Fatal("loaded bobView should be false")
+	}
+	if !a.invertMouse {
+		t.Fatal("loaded invertYMouse should be true")
 	}
 	if a.guiScaleMode != 3 {
 		t.Fatalf("loaded guiScale mismatch: got=%d want=3", a.guiScaleMode)
@@ -246,6 +285,7 @@ func TestOptionsFileLoadAndSave(t *testing.T) {
 
 	a.fovSetting = 1.0
 	a.renderDistance = 0
+	a.invertMouse = false
 	a.viewBobbing = true
 	a.guiScaleMode = 2
 	a.mouseSens = 0.5
@@ -260,6 +300,7 @@ func TestOptionsFileLoadAndSave(t *testing.T) {
 	updated := string(updatedBytes)
 	checks := []string{
 		"fov:1.000000",
+		"invertYMouse:false",
 		"viewDistance:0",
 		"guiScale:2",
 		"bobView:true",
