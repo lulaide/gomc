@@ -261,9 +261,10 @@ type chatLine struct {
 }
 
 type chunkRenderEntry struct {
-	listID        uint32
-	revision      uint64
-	lastUsedFrame uint64
+	listOpaque      uint32
+	listTranslucent uint32
+	revision        uint64
+	lastUsedFrame   uint64
 }
 
 type textureBatch struct {
@@ -553,8 +554,13 @@ func (a *App) releaseAssets() {
 
 func (a *App) releaseChunkRenderCache() {
 	for key, entry := range a.chunkRenderCache {
-		if entry != nil && entry.listID != 0 {
-			gl.DeleteLists(entry.listID, 1)
+		if entry != nil {
+			if entry.listOpaque != 0 {
+				gl.DeleteLists(entry.listOpaque, 1)
+			}
+			if entry.listTranslucent != 0 {
+				gl.DeleteLists(entry.listTranslucent, 1)
+			}
 		}
 		delete(a.chunkRenderCache, key)
 	}
@@ -2362,6 +2368,11 @@ func (a *App) drawWorld(snap netclient.StateSnapshot) {
 	}
 	radiusSq := radius * radius
 	buildBudget := maxChunkBuilds
+	type translucentChunkDraw struct {
+		listID uint32
+		distSq float64
+	}
+	translucentChunks := make([]translucentChunkDraw, 0, (radius*2+1)*(radius*2+1))
 
 	for cx := int(centerChunkX) - radius; cx <= int(centerChunkX)+radius; cx++ {
 		for cz := int(centerChunkZ) - radius; cz <= int(centerChunkZ)+radius; cz++ {
@@ -2387,16 +2398,48 @@ func (a *App) drawWorld(snap netclient.StateSnapshot) {
 				a.chunkRenderCache[key] = entry
 			}
 
-			if (entry.listID == 0 || entry.revision != revision) && buildBudget > 0 {
+			if (entry.listOpaque == 0 || entry.revision != revision) && buildBudget > 0 {
 				a.rebuildChunkRenderEntry(entry, chunkX, chunkZ, revision)
 				buildBudget--
 			}
 
-			if entry.listID != 0 {
-				gl.CallList(entry.listID)
+			if entry.listOpaque != 0 {
+				gl.CallList(entry.listOpaque)
+			}
+			if entry.listTranslucent != 0 {
+				chunkCenterX := float64(int(chunkX)<<4) + 8.0
+				chunkCenterZ := float64(int(chunkZ)<<4) + 8.0
+				dx := chunkCenterX - snap.PlayerX
+				dz := chunkCenterZ - snap.PlayerZ
+				translucentChunks = append(translucentChunks, translucentChunkDraw{
+					listID: entry.listTranslucent,
+					distSq: dx*dx + dz*dz,
+				})
+			}
+			if entry.listOpaque != 0 || entry.listTranslucent != 0 {
 				entry.lastUsedFrame = a.renderFrame
 			}
 		}
+	}
+
+	if len(translucentChunks) > 1 {
+		sort.Slice(translucentChunks, func(i, j int) bool {
+			return translucentChunks[i].distSq > translucentChunks[j].distSq
+		})
+	}
+	if len(translucentChunks) > 0 {
+		// Translation reference:
+		// - net.minecraft.src.EntityRenderer / RenderGlobal translucent pass.
+		// Blend pass keeps depth test but disables depth writes and renders back-to-front.
+		gl.Enable(gl.BLEND)
+		gl.BlendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA)
+		gl.DepthMask(false)
+		for _, draw := range translucentChunks {
+			gl.CallList(draw.listID)
+		}
+		gl.DepthMask(true)
+		gl.Disable(gl.BLEND)
+		gl.Color4f(1, 1, 1, 1)
 	}
 	a.cleanupChunkRenderCache()
 }
@@ -2425,13 +2468,17 @@ func chunkMeshRevision(chunkX, chunkZ int32, revisionAt func(x, z int32) uint64)
 }
 
 func (a *App) rebuildChunkRenderEntry(entry *chunkRenderEntry, chunkX, chunkZ int32, revision uint64) {
-	if entry.listID != 0 {
-		gl.DeleteLists(entry.listID, 1)
-		entry.listID = 0
+	if entry.listOpaque != 0 {
+		gl.DeleteLists(entry.listOpaque, 1)
+		entry.listOpaque = 0
+	}
+	if entry.listTranslucent != 0 {
+		gl.DeleteLists(entry.listTranslucent, 1)
+		entry.listTranslucent = 0
 	}
 
-	listID := gl.GenLists(1)
-	if listID == 0 {
+	listOpaque := gl.GenLists(1)
+	if listOpaque == 0 {
 		return
 	}
 
@@ -2474,7 +2521,7 @@ func (a *App) rebuildChunkRenderEntry(entry *chunkRenderEntry, chunkX, chunkZ in
 		}
 	}
 
-	gl.NewList(listID, gl.COMPILE)
+	gl.NewList(listOpaque, gl.COMPILE)
 	a.emitTextureBatches(solidBatches)
 	if len(overlayBatches) > 0 {
 		gl.Enable(gl.BLEND)
@@ -2482,16 +2529,22 @@ func (a *App) rebuildChunkRenderEntry(entry *chunkRenderEntry, chunkX, chunkZ in
 		a.emitTextureBatches(overlayBatches)
 		gl.Disable(gl.BLEND)
 	}
-	if len(translucentBatches) > 0 {
-		gl.Enable(gl.BLEND)
-		gl.BlendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA)
-		a.emitTextureBatches(translucentBatches)
-		gl.Disable(gl.BLEND)
-	}
 	gl.Color4f(1, 1, 1, 1)
 	gl.EndList()
 
-	entry.listID = listID
+	var listTranslucent uint32
+	if len(translucentBatches) > 0 {
+		listTranslucent = gl.GenLists(1)
+		if listTranslucent != 0 {
+			gl.NewList(listTranslucent, gl.COMPILE)
+			a.emitTextureBatches(translucentBatches)
+			gl.Color4f(1, 1, 1, 1)
+			gl.EndList()
+		}
+	}
+
+	entry.listOpaque = listOpaque
+	entry.listTranslucent = listTranslucent
 	entry.revision = revision
 	entry.lastUsedFrame = a.renderFrame
 }
@@ -2509,8 +2562,11 @@ func (a *App) cleanupChunkRenderCache() {
 		if a.renderFrame-entry.lastUsedFrame <= staleFrames {
 			continue
 		}
-		if entry.listID != 0 {
-			gl.DeleteLists(entry.listID, 1)
+		if entry.listOpaque != 0 {
+			gl.DeleteLists(entry.listOpaque, 1)
+		}
+		if entry.listTranslucent != 0 {
+			gl.DeleteLists(entry.listTranslucent, 1)
 		}
 		delete(a.chunkRenderCache, key)
 	}
