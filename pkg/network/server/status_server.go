@@ -158,6 +158,7 @@ func (s *StatusServer) AdvanceWorldTime(ticks int64) {
 	}
 	s.worldAge.Add(ticks)
 	s.worldTime.Add(ticks)
+	s.tickWaterFlow()
 }
 
 func (s *StatusServer) CurrentWorldTime() (int64, int64) {

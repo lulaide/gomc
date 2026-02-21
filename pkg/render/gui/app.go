@@ -37,6 +37,7 @@ const (
 	maxMoveCatchUp  = 4
 	maxChunkBuilds  = 4
 	defaultFPSMode  = 1
+	sprintTapTicks  = 7
 )
 
 const (
@@ -140,8 +141,8 @@ type App struct {
 	prevUp         bool
 	prevDown       bool
 	prevSneakKey   bool
-	prevSprintKey  bool
 	prevDigit      [9]bool
+	prevForwardKey bool
 
 	hudHidden     bool
 	showDebug     bool
@@ -191,26 +192,28 @@ type App struct {
 	chatLines  []chatLine
 	chatClosed bool
 
-	assetsRoot    string
-	texWidgets    *texture2D
-	texIcons      *texture2D
-	texOptionsBG  *texture2D
-	texInventory  *texture2D
-	texTitle      *texture2D
-	texPanorama   [6]*texture2D
-	texMenuView   *texture2D
-	texSun        *texture2D
-	texMoonPhases *texture2D
-	texClouds     *texture2D
-	font          *fontRenderer
-	splashText    string
-	panoramaTick  int
-	panoramaFrac  float64
-	lastSpaceTap  time.Time
-	lastOnGround  time.Time
-	localOnGround bool
-	prevTab       bool
-	prevBacksp    bool
+	assetsRoot     string
+	texWidgets     *texture2D
+	texIcons       *texture2D
+	texOptionsBG   *texture2D
+	texInventory   *texture2D
+	texTitle       *texture2D
+	texPanorama    [6]*texture2D
+	texMenuView    *texture2D
+	texSun         *texture2D
+	texMoonPhases  *texture2D
+	texClouds      *texture2D
+	font           *fontRenderer
+	splashText     string
+	panoramaTick   int
+	panoramaFrac   float64
+	lastSpaceTap   time.Time
+	sprintTimer    int
+	localSprinting bool
+	lastOnGround   time.Time
+	localOnGround  bool
+	prevTab        bool
+	prevBacksp     bool
 
 	blockTextureDefs   map[int]blockTextureDef
 	blockTextures      map[string]*texture2D
@@ -1080,10 +1083,6 @@ func (a *App) handleInput(deltaSeconds float64) bool {
 		_ = a.session.SetSneaking(sneakPressed)
 		a.prevSneakKey = sneakPressed
 	}
-	if sprintPressed != a.prevSprintKey {
-		_ = a.session.SetSprinting(sprintPressed)
-		a.prevSprintKey = sprintPressed
-	}
 
 	forward := 0.0
 	strafe := 0.0
@@ -1131,8 +1130,11 @@ func (a *App) applyMovementTick(
 	}
 
 	snapMove := a.session.Snapshot()
+	grounded := a.playerGroundedAt(snapMove.PlayerX, snapMove.PlayerY, snapMove.PlayerZ)
+	a.tickSprintState(forward, sneakPressed, sprintPressed, grounded, allowFlight, snapMove.Food)
+
 	speed := a.moveSpeed * stepSeconds
-	if sprintPressed {
+	if a.localSprinting {
 		speed *= 1.30
 	}
 	if sneakPressed {
@@ -1142,7 +1144,6 @@ func (a *App) applyMovementTick(
 	dxDesired, dzDesired := movementDeltaFromYaw(a.yaw, forward, strafe, speed)
 	dyDesired := 0.0
 
-	grounded := a.playerGroundedAt(snapMove.PlayerX, snapMove.PlayerY, snapMove.PlayerZ)
 	if allowFlight && flyingNow {
 		a.velY = 0
 		if spacePressed {
@@ -1181,8 +1182,63 @@ func (a *App) applyMovementTick(
 	}
 	a.localOnGround = groundedAfter
 	a.session.SetLocalOnGround(groundedAfter)
+	collidedHoriz := (math.Abs(dxMove-dxDesired) > 1.0e-6 || math.Abs(dzMove-dzDesired) > 1.0e-6) &&
+		(math.Abs(dxDesired) > 1.0e-9 || math.Abs(dzDesired) > 1.0e-9)
+	if a.localSprinting && collidedHoriz {
+		a.setLocalSprinting(false)
+	}
 	if dxMove != 0 || dyMove != 0 || dzMove != 0 {
 		_ = a.session.MoveRelative(dxMove, dyMove, dzMove)
+	}
+}
+
+// Translation reference:
+// - net.minecraft.src.EntityPlayerSP.onLivingUpdate()
+func (a *App) tickSprintState(
+	forward float64,
+	sneakPressed, sprintPressed, grounded, allowFlight bool,
+	foodLevel int16,
+) {
+	if a.sprintTimer > 0 {
+		a.sprintTimer--
+	}
+
+	forwardPressed := forward > 0.0
+	justPressedForward := forwardPressed && !a.prevForwardKey
+	canSprintFood := foodLevel > 6 || allowFlight
+	canSprintNow := forwardPressed && !sneakPressed && canSprintFood
+
+	if a.localSprinting {
+		if !canSprintNow {
+			a.setLocalSprinting(false)
+		}
+	} else if canSprintNow && grounded {
+		if sprintPressed {
+			a.setLocalSprinting(true)
+			a.sprintTimer = 0
+		} else if justPressedForward {
+			if a.sprintTimer > 0 {
+				a.setLocalSprinting(true)
+				a.sprintTimer = 0
+			} else {
+				a.sprintTimer = sprintTapTicks
+			}
+		}
+	}
+
+	if !forwardPressed {
+		a.sprintTimer = 0
+	}
+	a.prevForwardKey = forwardPressed
+}
+
+func (a *App) setLocalSprinting(enabled bool) {
+	if a.localSprinting == enabled {
+		return
+	}
+	a.localSprinting = enabled
+	if a.session != nil {
+		_ = a.session.SetSprinting(enabled)
 	}
 }
 
@@ -1659,7 +1715,9 @@ func (a *App) replaceSession(next *netclient.Session) {
 	a.prevUp = false
 	a.prevDown = false
 	a.prevSneakKey = false
-	a.prevSprintKey = false
+	a.prevForwardKey = false
+	a.sprintTimer = 0
+	a.localSprinting = false
 	a.renderTrackInit = false
 	for i := range a.prevDigit {
 		a.prevDigit[i] = false
@@ -3861,102 +3919,78 @@ func (a *App) drawPauseMenu() {
 }
 
 func (a *App) resolvePlayerMovement(px, py, pz, dx, dy, dz float64) (float64, float64, float64, bool) {
-	x := px
-	y := py
-	z := pz
+	// Translation reference:
+	// - net.minecraft.src.Entity.moveEntity(double,double,double)
+	playerBB := playerBoundingBox(px, py, pz)
+	expanded := playerBB.addCoord(dx, dy, dz)
+	collisions := a.collisionBoxesForAABB(expanded)
 
-	adjDY := a.clipMovementDelta(dy, func(step float64) bool {
-		return a.playerCollidesAt(x, y+step, z)
-	})
-	y += adjDY
-
-	adjDX := a.clipMovementDelta(dx, func(step float64) bool {
-		return a.playerCollidesAt(x+step, y, z)
-	})
-	x += adjDX
-
-	adjDZ := a.clipMovementDelta(dz, func(step float64) bool {
-		return a.playerCollidesAt(x, y, z+step)
-	})
-	z += adjDZ
-
-	grounded := a.playerGroundedAt(x, y, z)
-	if dy < 0 && adjDY > dy+1e-6 {
-		grounded = true
+	origDY := dy
+	for _, bb := range collisions {
+		dy = bb.calculateYOffset(playerBB, dy)
 	}
-	return adjDX, adjDY, adjDZ, grounded
-}
+	playerBB = playerBB.offset(0, dy, 0)
 
-func (a *App) clipMovementDelta(delta float64, collides func(step float64) bool) float64 {
-	if delta == 0 || !collides(delta) {
-		return delta
+	for _, bb := range collisions {
+		dx = bb.calculateXOffset(playerBB, dx)
 	}
+	playerBB = playerBB.offset(dx, 0, 0)
 
-	const iters = 12
-	if delta > 0 {
-		lo := 0.0
-		hi := delta
-		for i := 0; i < iters; i++ {
-			mid := (lo + hi) * 0.5
-			if collides(mid) {
-				hi = mid
-			} else {
-				lo = mid
-			}
-		}
-		return lo
+	for _, bb := range collisions {
+		dz = bb.calculateZOffset(playerBB, dz)
 	}
+	playerBB = playerBB.offset(0, 0, dz)
 
-	lo := delta
-	hi := 0.0
-	for i := 0; i < iters; i++ {
-		mid := (lo + hi) * 0.5
-		if collides(mid) {
-			lo = mid
-		} else {
-			hi = mid
-		}
-	}
-	return hi
+	grounded := origDY < 0 && origDY != dy
+	return dx, dy, dz, grounded
 }
 
 func (a *App) playerGroundedAt(px, py, pz float64) bool {
-	if a.playerCollidesAt(px, py, pz) {
-		return false
+	playerBB := playerBoundingBox(px, py, pz)
+	query := playerBB.addCoord(0, -0.001, 0)
+	collisions := a.collisionBoxesForAABB(query)
+	dy := -0.001
+	for _, bb := range collisions {
+		dy = bb.calculateYOffset(playerBB, dy)
 	}
-	return a.playerCollidesAt(px, py-0.05, pz)
+	return dy != -0.001
 }
 
 func (a *App) playerCollidesAt(px, py, pz float64) bool {
+	playerBB := playerBoundingBox(px, py, pz)
+	collisions := a.collisionBoxesForAABB(playerBB)
+	for _, bb := range collisions {
+		if bb.intersects(playerBB) {
+			return true
+		}
+	}
+	return false
+}
+
+func (a *App) collisionBoxesForAABB(query axisAlignedBB) []axisAlignedBB {
 	if a.session == nil {
-		return false
+		return nil
 	}
 
-	minX := px - playerHalfWidth
-	maxX := px + playerHalfWidth
-	minY := py
-	maxY := py + playerHeight
-	minZ := pz - playerHalfWidth
-	maxZ := pz + playerHalfWidth
-
 	const eps = 1e-6
-	startX := int(math.Floor(minX))
-	endX := int(math.Floor(maxX - eps))
-	startY := int(math.Floor(minY))
-	endY := int(math.Floor(maxY - eps))
-	startZ := int(math.Floor(minZ))
-	endZ := int(math.Floor(maxZ - eps))
+	startX := int(math.Floor(query.minX))
+	endX := int(math.Floor(query.maxX - eps))
+	startY := int(math.Floor(query.minY))
+	endY := int(math.Floor(query.maxY - eps))
+	startZ := int(math.Floor(query.minZ))
+	endZ := int(math.Floor(query.maxZ - eps))
 
+	boxes := make([]axisAlignedBB, 0, 24)
 	for bx := startX; bx <= endX; bx++ {
 		for by := startY; by <= endY; by++ {
 			for bz := startZ; bz <= endZ; bz++ {
 				if a.isSolidBlockAt(bx, by, bz) {
-					return true
+					boxes = append(boxes, unitBlockAABB(bx, by, bz))
 				}
 			}
 		}
 	}
-	return false
+	return boxes
 }
 
 func (a *App) isSolidBlockAt(x, y, z int) bool {
