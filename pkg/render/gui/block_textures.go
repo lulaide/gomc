@@ -98,10 +98,10 @@ func defaultBlockTextureDefs() map[int]blockTextureDef {
 		5:   blockAll("planks_oak.png"),
 		6:   blockAll("sapling_oak.png"),
 		7:   blockAll("bedrock.png"),
-		8:   blockAll("water_still.png"),
-		9:   blockAll("water_still.png"),
-		10:  blockAll("lava_still.png"),
-		11:  blockAll("lava_still.png"),
+		8:   blockTopBottomSide("water_still.png", "water_still.png", "water_flow.png"),
+		9:   blockTopBottomSide("water_still.png", "water_still.png", "water_flow.png"),
+		10:  blockTopBottomSide("lava_still.png", "lava_still.png", "lava_flow.png"),
+		11:  blockTopBottomSide("lava_still.png", "lava_still.png", "lava_flow.png"),
 		12:  blockAll("sand.png"),
 		13:  blockAll("gravel.png"),
 		14:  blockAll("gold_ore.png"),
@@ -333,6 +333,9 @@ func (a *App) blockFaceTintAt(x, y, z, blockID, blockMeta, face int) (float32, f
 		// Translation reference:
 		// - net.minecraft.src.BlockVine#colorMultiplier(...)
 		return a.biomeFoliageTintAt(x, z)
+	case 8, 9: // water
+		// 1.6.4 water uses biome multiplier in BlockFluid#colorMultiplier.
+		return rgbIntToFloat(0x3F76E4)
 	case 111: // lily pad
 		return 32.0 / 255.0, 128.0 / 255.0, 48.0 / 255.0
 	}

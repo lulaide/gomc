@@ -2389,6 +2389,7 @@ func (a *App) rebuildChunkRenderEntry(entry *chunkRenderEntry, chunkX, chunkZ in
 	}
 
 	solidBatches := make(map[uint32]*textureBatch, 24)
+	translucentBatches := make(map[uint32]*textureBatch, 8)
 	overlayBatches := make(map[uint32]*textureBatch, 2)
 
 	baseX := int(chunkX) << 4
@@ -2417,7 +2418,7 @@ func (a *App) rebuildChunkRenderEntry(entry *chunkRenderEntry, chunkX, chunkZ in
 				if !faces.any() && !isCrossedPlantRenderBlock(id) && !isFlatPlantRenderBlock(id) && id != 106 {
 					continue
 				}
-				if a.appendTexturedBlockBatches(float32(worldX), float32(y), float32(worldZ), id, meta, faces, solidBatches, overlayBatches) {
+				if a.appendTexturedBlockBatches(float32(worldX), float32(y), float32(worldZ), id, meta, faces, solidBatches, translucentBatches, overlayBatches) {
 					continue
 				}
 				r, g, b := colorForBlock(id)
@@ -2432,6 +2433,12 @@ func (a *App) rebuildChunkRenderEntry(entry *chunkRenderEntry, chunkX, chunkZ in
 		gl.Enable(gl.BLEND)
 		gl.BlendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA)
 		a.emitTextureBatches(overlayBatches)
+		gl.Disable(gl.BLEND)
+	}
+	if len(translucentBatches) > 0 {
+		gl.Enable(gl.BLEND)
+		gl.BlendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA)
+		a.emitTextureBatches(translucentBatches)
 		gl.Disable(gl.BLEND)
 	}
 	gl.Color4f(1, 1, 1, 1)
@@ -2478,6 +2485,9 @@ func (a *App) shouldRenderFace(currentID, nx, ny, nz int) bool {
 	if !ok || neighborID == 0 {
 		return true
 	}
+	if isSameLiquidMaterial(currentID, neighborID) {
+		return false
+	}
 	if neighborID == currentID {
 		// Translation reference:
 		// - net.minecraft.src.BlockLeavesBase.shouldSideBeRendered(...)
@@ -2496,6 +2506,7 @@ func (a *App) appendTexturedBlockBatches(
 	blockMeta int,
 	faces visibleFaces,
 	solidBatches map[uint32]*textureBatch,
+	translucentBatches map[uint32]*textureBatch,
 	overlayBatches map[uint32]*textureBatch,
 ) bool {
 	if len(a.blockTextureDefs) == 0 || len(a.blockTextures) == 0 {
@@ -2505,6 +2516,9 @@ func (a *App) appendTexturedBlockBatches(
 		return false
 	}
 	blockX, blockY, blockZ := int(x), int(y), int(z)
+	if isLiquidRenderBlock(blockID) {
+		return a.appendLiquidBlockBatches(x, y, z, blockX, blockY, blockZ, blockID, blockMeta, translucentBatches)
+	}
 	if blockID == 106 {
 		return a.appendVineBatches(x, y, z, blockX, blockY, blockZ, blockMeta, solidBatches)
 	}
@@ -2639,6 +2653,290 @@ func (a *App) appendTexturedBlockBatches(
 	}
 
 	return true
+}
+
+// Translation reference:
+// - net.minecraft.src.RenderBlocks.renderBlockFluids(...)
+// - net.minecraft.src.RenderBlocks.getFluidHeight(...)
+// - net.minecraft.src.BlockFluid.getFluidHeightPercent(...)
+// - net.minecraft.src.BlockFluid.getFlowDirection(...)
+func (a *App) appendLiquidBlockBatches(
+	x, y, z float32,
+	blockX, blockY, blockZ int,
+	blockID int,
+	blockMeta int,
+	translucentBatches map[uint32]*textureBatch,
+) bool {
+	if translucentBatches == nil {
+		return false
+	}
+
+	stillTex := a.blockTextureForFace(blockID, faceUp)
+	flowTex := a.blockTextureForFace(blockID, faceNorth)
+	if flowTex == nil {
+		flowTex = stillTex
+	}
+	if stillTex == nil && flowTex == nil {
+		return false
+	}
+	if stillTex == nil {
+		stillTex = flowTex
+	}
+	if flowTex == nil {
+		flowTex = stillTex
+	}
+
+	renderTop := a.shouldRenderLiquidFace(blockID, blockX, blockY+1, blockZ, faceUp)
+	renderBottom := a.shouldRenderLiquidFace(blockID, blockX, blockY-1, blockZ, faceDown)
+	renderNorth := a.shouldRenderLiquidFace(blockID, blockX, blockY, blockZ-1, faceNorth)
+	renderSouth := a.shouldRenderLiquidFace(blockID, blockX, blockY, blockZ+1, faceSouth)
+	renderWest := a.shouldRenderLiquidFace(blockID, blockX-1, blockY, blockZ, faceWest)
+	renderEast := a.shouldRenderLiquidFace(blockID, blockX+1, blockY, blockZ, faceEast)
+	if !renderTop && !renderBottom && !renderNorth && !renderSouth && !renderWest && !renderEast {
+		return false
+	}
+
+	// Corner heights follow vanilla getFluidHeight sampling order:
+	// (x,z), (x,z+1), (x+1,z+1), (x+1,z).
+	h00 := a.liquidCornerHeight(blockX, blockY, blockZ, blockID)
+	h01 := a.liquidCornerHeight(blockX, blockY, blockZ+1, blockID)
+	h11 := a.liquidCornerHeight(blockX+1, blockY, blockZ+1, blockID)
+	h10 := a.liquidCornerHeight(blockX+1, blockY, blockZ, blockID)
+
+	tintR, tintG, tintB := a.blockFaceTintAt(blockX, blockY, blockZ, blockID, blockMeta, faceUp)
+	const eps = float32(0.0010000000474974513)
+
+	if renderTop {
+		tex := stillTex
+		flowDirection := a.liquidFlowDirection(blockID, blockX, blockY, blockZ)
+		if flowDirection > -999.0 {
+			tex = flowTex
+		}
+		batch := ensureTextureBatch(translucentBatches, tex)
+		if batch != nil {
+			y00 := y + h00 - eps
+			y01 := y + h01 - eps
+			y11 := y + h11 - eps
+			y10 := y + h10 - eps
+
+			u0, v0 := float32(0), float32(0)
+			u1, v1 := float32(0), float32(1)
+			u2, v2 := float32(1), float32(1)
+			u3, v3 := float32(1), float32(0)
+			if flowDirection > -999.0 {
+				sinF := float32(math.Sin(flowDirection)) * 0.25
+				cosF := float32(math.Cos(flowDirection)) * 0.25
+				u0 = 0.5 + (-cosF - sinF)
+				v0 = 0.5 + (-cosF + sinF)
+				u1 = 0.5 + (-cosF + sinF)
+				v1 = 0.5 + (cosF + sinF)
+				u2 = 0.5 + (cosF + sinF)
+				v2 = 0.5 + (cosF - sinF)
+				u3 = 0.5 + (cosF - sinF)
+				v3 = 0.5 + (-cosF - sinF)
+			}
+
+			appendTexturedQuadUV(
+				batch, tintR, tintG, tintB,
+				[3]float32{x + 0, y00, z + 0}, u0, v0,
+				[3]float32{x + 0, y01, z + 1}, u1, v1,
+				[3]float32{x + 1, y11, z + 1}, u2, v2,
+				[3]float32{x + 1, y10, z + 0}, u3, v3,
+			)
+		}
+	}
+
+	if renderBottom {
+		batch := ensureTextureBatch(translucentBatches, stillTex)
+		if batch != nil {
+			y0 := y + eps
+			appendTexturedQuadUV(
+				batch, tintR*0.5, tintG*0.5, tintB*0.5,
+				[3]float32{x + 0, y0, z + 0}, 0, 0,
+				[3]float32{x + 1, y0, z + 0}, 1, 0,
+				[3]float32{x + 1, y0, z + 1}, 1, 1,
+				[3]float32{x + 0, y0, z + 1}, 0, 1,
+			)
+		}
+	}
+
+	sideBatch := ensureTextureBatch(translucentBatches, flowTex)
+	if sideBatch == nil {
+		return true
+	}
+	appendSide := func(shade, hA, hB float32, p0, p1, p2, p3 [3]float32) {
+		vTopA := (1.0 - hA) * 0.5
+		vTopB := (1.0 - hB) * 0.5
+		vBottom := float32(0.5)
+		appendTexturedQuadUV(
+			sideBatch, tintR*shade, tintG*shade, tintB*shade,
+			p0, 0.0, vTopA,
+			p1, 0.5, vTopB,
+			p2, 0.5, vBottom,
+			p3, 0.0, vBottom,
+		)
+	}
+
+	if renderNorth {
+		appendSide(0.8, h00, h10,
+			[3]float32{x + 0, y + h00, z + eps},
+			[3]float32{x + 1, y + h10, z + eps},
+			[3]float32{x + 1, y + 0, z + eps},
+			[3]float32{x + 0, y + 0, z + eps},
+		)
+	}
+	if renderSouth {
+		appendSide(0.8, h11, h01,
+			[3]float32{x + 1, y + h11, z + 1 - eps},
+			[3]float32{x + 0, y + h01, z + 1 - eps},
+			[3]float32{x + 0, y + 0, z + 1 - eps},
+			[3]float32{x + 1, y + 0, z + 1 - eps},
+		)
+	}
+	if renderWest {
+		appendSide(0.6, h01, h00,
+			[3]float32{x + eps, y + h01, z + 1},
+			[3]float32{x + eps, y + h00, z + 0},
+			[3]float32{x + eps, y + 0, z + 0},
+			[3]float32{x + eps, y + 0, z + 1},
+		)
+	}
+	if renderEast {
+		appendSide(0.6, h10, h11,
+			[3]float32{x + 1 - eps, y + h10, z + 0},
+			[3]float32{x + 1 - eps, y + h11, z + 1},
+			[3]float32{x + 1 - eps, y + 0, z + 1},
+			[3]float32{x + 1 - eps, y + 0, z + 0},
+		)
+	}
+
+	return true
+}
+
+func (a *App) shouldRenderLiquidFace(blockID, nx, ny, nz, side int) bool {
+	neighborID, _ := a.blockAtOrAir(nx, ny, nz)
+	if isSameLiquidMaterial(blockID, neighborID) {
+		return false
+	}
+	if side == faceUp {
+		return true
+	}
+	if neighborID == 79 { // ice special-case from BlockFluid.shouldSideBeRendered
+		return false
+	}
+	return !isOpaqueRenderBlock(neighborID)
+}
+
+func (a *App) liquidCornerHeight(x, y, z, blockID int) float32 {
+	weight := 0
+	accum := float32(0)
+
+	for i := 0; i < 4; i++ {
+		nx := x - (i & 1)
+		nz := z - ((i >> 1) & 1)
+		aboveID, _ := a.blockAtOrAir(nx, y+1, nz)
+		if isSameLiquidMaterial(blockID, aboveID) {
+			return 1.0
+		}
+
+		id, meta := a.blockAtOrAir(nx, y, nz)
+		if isSameLiquidMaterial(blockID, id) {
+			h := fluidHeightPercent(meta)
+			if meta >= 8 || meta == 0 {
+				accum += h * 10.0
+				weight += 10
+			}
+			accum += h
+			weight++
+		} else if !block.BlocksMovement(id) {
+			accum++
+			weight++
+		}
+	}
+
+	if weight == 0 {
+		return 1.0
+	}
+	return 1.0 - accum/float32(weight)
+}
+
+func fluidHeightPercent(meta int) float32 {
+	if meta >= 8 {
+		meta = 0
+	}
+	return float32(meta+1) / 9.0
+}
+
+func (a *App) effectiveLiquidFlowDecay(blockID, x, y, z int) int {
+	id, meta := a.blockAtOrAir(x, y, z)
+	if !isSameLiquidMaterial(blockID, id) {
+		return -1
+	}
+	if meta >= 8 {
+		meta = 0
+	}
+	return meta
+}
+
+func (a *App) liquidFlowDirection(blockID, x, y, z int) float64 {
+	flowX, flowZ := a.liquidFlowVector(blockID, x, y, z)
+	if math.Abs(flowX) <= 1.0e-9 && math.Abs(flowZ) <= 1.0e-9 {
+		return -1000.0
+	}
+	return math.Atan2(flowZ, flowX) - (math.Pi / 2.0)
+}
+
+func (a *App) liquidFlowVector(blockID, x, y, z int) (float64, float64) {
+	baseDecay := a.effectiveLiquidFlowDecay(blockID, x, y, z)
+	if baseDecay < 0 {
+		return 0, 0
+	}
+
+	flowX := 0.0
+	flowZ := 0.0
+	for dir := 0; dir < 4; dir++ {
+		nx, nz := x, z
+		switch dir {
+		case 0:
+			nx = x - 1
+		case 1:
+			nz = z - 1
+		case 2:
+			nx = x + 1
+		case 3:
+			nz = z + 1
+		}
+
+		neighborDecay := a.effectiveLiquidFlowDecay(blockID, nx, y, nz)
+		if neighborDecay < 0 {
+			neighborID, _ := a.blockAtOrAir(nx, y, nz)
+			if !block.BlocksMovement(neighborID) {
+				neighborDecay = a.effectiveLiquidFlowDecay(blockID, nx, y-1, nz)
+				if neighborDecay >= 0 {
+					delta := neighborDecay - (baseDecay - 8)
+					flowX += float64((nx - x) * delta)
+					flowZ += float64((nz - z) * delta)
+				}
+			}
+			continue
+		}
+
+		delta := neighborDecay - baseDecay
+		flowX += float64((nx - x) * delta)
+		flowZ += float64((nz - z) * delta)
+	}
+	return flowX, flowZ
+}
+
+func (a *App) blockAtOrAir(x, y, z int) (int, int) {
+	if a.session == nil || y < 0 || y >= 256 {
+		return 0, 0
+	}
+	id, meta, ok := a.session.BlockAt(x, y, z)
+	if !ok {
+		return 0, 0
+	}
+	return id, meta
 }
 
 func (a *App) appendVineBatches(
@@ -4657,6 +4955,28 @@ func isOpaqueRenderBlock(id int) bool {
 	default:
 		return true
 	}
+}
+
+func isWaterRenderBlock(id int) bool {
+	return id == 8 || id == 9
+}
+
+func isLavaRenderBlock(id int) bool {
+	return id == 10 || id == 11
+}
+
+func isLiquidRenderBlock(id int) bool {
+	return isWaterRenderBlock(id) || isLavaRenderBlock(id)
+}
+
+func isSameLiquidMaterial(a, b int) bool {
+	if isWaterRenderBlock(a) {
+		return isWaterRenderBlock(b)
+	}
+	if isLavaRenderBlock(a) {
+		return isLavaRenderBlock(b)
+	}
+	return false
 }
 
 func isNormalCubeRenderBlock(id int) bool {
