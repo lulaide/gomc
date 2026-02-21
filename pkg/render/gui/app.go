@@ -45,6 +45,9 @@ var (
 	// Translation reference:
 	// - net.minecraft.src.GameSettings.RENDER_DISTANCES
 	renderDistanceModeNames = []string{"Far", "Normal", "Short", "Tiny"}
+	// Translation reference:
+	// - net.minecraft.src.GameSettings.LIMIT_FRAMERATES
+	framerateModeNames = []string{"Max FPS", "Balanced", "Power saver"}
 )
 
 const (
@@ -1383,6 +1386,9 @@ func (a *App) handlePauseOptionButton(id int) {
 	case buttonIDOptionViewBobbing:
 		a.viewBobbing = !a.viewBobbing
 		changed = true
+	case buttonIDOptionVideo:
+		a.limitFramerateMode = (a.limitFramerateMode + 1) % len(framerateModeNames)
+		changed = true
 	case buttonIDOptionSensMinus:
 		a.mouseSens -= 0.02
 		if a.mouseSens < 0.02 {
@@ -1395,7 +1401,7 @@ func (a *App) handlePauseOptionButton(id int) {
 			a.mouseSens = 0.50
 		}
 		changed = true
-	case buttonIDOptionMusic, buttonIDOptionVideo, buttonIDOptionControls, buttonIDOptionLanguage, buttonIDOptionSnooper:
+	case buttonIDOptionMusic, buttonIDOptionControls, buttonIDOptionLanguage, buttonIDOptionSnooper:
 		a.menuStatus = "This options page is not implemented yet."
 	}
 	a.updateOptionButtonsState()
@@ -2561,6 +2567,11 @@ func (a *App) renderDistanceModeName() string {
 
 func (a *App) optionRenderDistanceLabel() string {
 	return "Render Distance: " + a.renderDistanceModeName()
+}
+
+func (a *App) optionFramerateLabel() string {
+	mode := clampInt(a.limitFramerateMode, 0, len(framerateModeNames)-1)
+	return "Max Framerate: " + framerateModeNames[mode]
 }
 
 func (a *App) drawWorld(snap netclient.StateSnapshot) {

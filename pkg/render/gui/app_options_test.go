@@ -39,12 +39,13 @@ func TestOptionFOVLabelAndClamp(t *testing.T) {
 
 func TestOptionButtonsFOVAndViewBobbingState(t *testing.T) {
 	a := &App{
-		guiW:           854,
-		guiH:           480,
-		renderDistance: 0,
-		mouseSens:      0.02,
-		fovSetting:     0.0,
-		viewBobbing:    true,
+		guiW:               854,
+		guiH:               480,
+		renderDistance:     0,
+		mouseSens:          0.02,
+		fovSetting:         0.0,
+		viewBobbing:        true,
+		limitFramerateMode: 1,
 	}
 	a.initOptionButtons()
 	a.updateOptionButtonsState()
@@ -55,6 +56,15 @@ func TestOptionButtonsFOVAndViewBobbingState(t *testing.T) {
 			got = b.Label
 		}
 		t.Fatalf("view bobbing label mismatch: got=%q want=%q", got, "View Bobbing: ON")
+	}
+	if b := findOptionButton(a.optionButtons, buttonIDOptionVideo); b == nil || !b.Enabled || b.Label != "Max Framerate: Balanced" {
+		got := "<nil>"
+		enabled := false
+		if b != nil {
+			got = b.Label
+			enabled = b.Enabled
+		}
+		t.Fatalf("framerate button mismatch: got label=%q enabled=%t", got, enabled)
 	}
 	if b := findOptionButton(a.optionButtons, buttonIDOptionRDMinus); b == nil || !b.Enabled {
 		t.Fatal("render distance minus should be enabled at far")
@@ -105,6 +115,23 @@ func TestOptionButtonsFOVAndViewBobbingState(t *testing.T) {
 	}
 	if b := findOptionButton(a.optionButtons, buttonIDOptionSensMinus); b == nil || !b.Enabled {
 		t.Fatal("sensitivity minus should be enabled at maximum")
+	}
+}
+
+func TestPauseOptionVideoCyclesFramerateMode(t *testing.T) {
+	a := &App{
+		optionButtons:      []*guiButton{},
+		limitFramerateMode: 1,
+		optionsKV:          make(map[string]string),
+		optionsPath:        filepath.Join(t.TempDir(), "options.txt"),
+	}
+	a.handlePauseOptionButton(buttonIDOptionVideo)
+	if a.limitFramerateMode != 2 {
+		t.Fatalf("first framerate cycle mismatch: got=%d want=2", a.limitFramerateMode)
+	}
+	a.handlePauseOptionButton(buttonIDOptionVideo)
+	if a.limitFramerateMode != 0 {
+		t.Fatalf("second framerate cycle mismatch: got=%d want=0", a.limitFramerateMode)
 	}
 }
 
