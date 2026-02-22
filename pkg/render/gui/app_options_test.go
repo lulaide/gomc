@@ -334,6 +334,8 @@ func TestOptionsFileLoadAndSave(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "options.txt")
 	content := strings.Join([]string{
+		"music:0.40",
+		"sound:0.70",
 		"fov:0.25",
 		"invertYMouse:true",
 		"viewDistance:2",
@@ -353,6 +355,8 @@ func TestOptionsFileLoadAndSave(t *testing.T) {
 	a := &App{
 		optionsPath:        path,
 		optionsKV:          make(map[string]string),
+		musicVolume:        1.0,
+		soundVolume:        1.0,
 		mouseSens:          0.14,
 		renderDistance:     1,
 		invertMouse:        false,
@@ -364,6 +368,12 @@ func TestOptionsFileLoadAndSave(t *testing.T) {
 		optionDifficulty:   1,
 	}
 	a.loadOptionsFile()
+	if a.musicVolume != 0.40 {
+		t.Fatalf("loaded music mismatch: got=%.2f want=0.40", a.musicVolume)
+	}
+	if a.soundVolume != 0.70 {
+		t.Fatalf("loaded sound mismatch: got=%.2f want=0.70", a.soundVolume)
+	}
 	if a.fovSetting != 0.25 {
 		t.Fatalf("loaded fov mismatch: got=%.2f want=0.25", a.fovSetting)
 	}
@@ -395,6 +405,8 @@ func TestOptionsFileLoadAndSave(t *testing.T) {
 		t.Fatal("loaded clouds should be false")
 	}
 
+	a.musicVolume = 0.35
+	a.soundVolume = 0.65
 	a.fovSetting = 1.0
 	a.renderDistance = 0
 	a.invertMouse = false
@@ -413,6 +425,8 @@ func TestOptionsFileLoadAndSave(t *testing.T) {
 	}
 	updated := string(updatedBytes)
 	checks := []string{
+		"music:0.350000",
+		"sound:0.650000",
 		"fov:1.000000",
 		"invertYMouse:false",
 		"viewDistance:0",

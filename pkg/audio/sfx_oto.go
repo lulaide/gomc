@@ -59,7 +59,10 @@ func playPCMBytes(data []byte, volume float64) bool {
 	if player == nil {
 		return false
 	}
-	if volume <= 0 {
+	if volume < 0 {
+		volume = 0
+	}
+	if volume > 1 {
 		volume = 1
 	}
 	player.SetVolume(volume)

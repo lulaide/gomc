@@ -75,6 +75,7 @@ const (
 	pauseScreenOptions
 	pauseScreenVideo
 	pauseScreenControls
+	pauseScreenSounds
 )
 
 type Config struct {
@@ -137,6 +138,8 @@ type App struct {
 	renderDistance int
 	moveSpeed      float64
 	mouseSens      float64
+	musicVolume    float64
+	soundVolume    float64
 	invertMouse    bool
 	fovSetting     float64
 	viewBobbing    bool
@@ -200,6 +203,7 @@ type App struct {
 	optionButtons      []*guiButton
 	videoButtons       []*guiButton
 	controlButtons     []*guiButton
+	soundButtons       []*guiButton
 	createButtons      []*guiButton
 	renameButtons      []*guiButton
 	singleWorlds       []string
@@ -375,6 +379,8 @@ func Run(session *netclient.Session, cfg Config) error {
 		renderDistance:     renderDistanceChunksToMode(cfg.RenderDistance),
 		moveSpeed:          cfg.MoveSpeed,
 		mouseSens:          cfg.MouseSensitivity,
+		musicVolume:        1.0,
+		soundVolume:        1.0,
 		invertMouse:        false,
 		fovSetting:         0.0,
 		viewBobbing:        true,
@@ -955,7 +961,7 @@ func (a *App) handleInput(deltaSeconds float64) bool {
 		if a.paused {
 			if a.pauseScreen == pauseScreenOptions {
 				a.pauseScreen = pauseScreenMain
-			} else if a.pauseScreen == pauseScreenVideo || a.pauseScreen == pauseScreenControls {
+			} else if a.pauseScreen == pauseScreenVideo || a.pauseScreen == pauseScreenControls || a.pauseScreen == pauseScreenSounds {
 				a.pauseScreen = pauseScreenOptions
 			} else {
 				a.setPaused(false)
@@ -1002,13 +1008,17 @@ func (a *App) handleInput(deltaSeconds float64) bool {
 				if b == nil || !b.Enabled || !b.contains(a.mouseX, a.mouseY) {
 					continue
 				}
-				audio.PlaySoundKey("random.click", 1.0, 1.0)
+				if a.soundVolume > 0 {
+					audio.PlaySoundKey("random.click", a.soundVolume, 1.0)
+				}
 				if a.pauseScreen == pauseScreenOptions {
 					a.handlePauseOptionButton(b.ID)
 				} else if a.pauseScreen == pauseScreenVideo {
 					a.handlePauseVideoButton(b.ID)
 				} else if a.pauseScreen == pauseScreenControls {
 					a.handlePauseControlButton(b.ID)
+				} else if a.pauseScreen == pauseScreenSounds {
+					a.handlePauseSoundButton(b.ID)
 				} else {
 					if !a.handlePauseMenuButton(b.ID) {
 						return false
@@ -1370,6 +1380,9 @@ func (a *App) currentPauseButtons() []*guiButton {
 	if a.pauseScreen == pauseScreenControls {
 		return a.controlButtons
 	}
+	if a.pauseScreen == pauseScreenSounds {
+		return a.soundButtons
+	}
 	return a.pauseButtons
 }
 
@@ -1410,13 +1423,15 @@ func (a *App) handlePauseOptionButton(id int) {
 	case buttonIDOptionLanguage:
 		a.menuStatus = "Language screen is not implemented yet."
 	case buttonIDOptionMusic:
-		a.menuStatus = "Music & Sounds screen is not implemented yet."
+		a.pauseScreen = pauseScreenSounds
+		a.menuStatus = ""
 	case buttonIDOptionSnooper:
 		a.menuStatus = "Snooper Settings are not implemented yet."
 	}
 	a.updatePauseOptionButtonsState()
 	a.updateVideoButtonsState()
 	a.updateControlButtonsState()
+	a.updateSoundButtonsState()
 	if changed {
 		a.saveOptionsFile()
 	}
@@ -1470,6 +1485,7 @@ func (a *App) handlePauseVideoButton(id int) {
 	a.updatePauseOptionButtonsState()
 	a.updateVideoButtonsState()
 	a.updateControlButtonsState()
+	a.updateSoundButtonsState()
 	if changed {
 		a.saveOptionsFile()
 	}
@@ -1502,6 +1518,40 @@ func (a *App) handlePauseControlButton(id int) {
 		a.menuStatus = "Touchscreen mode is not available on desktop."
 	}
 	a.updateControlButtonsState()
+	a.updateSoundButtonsState()
+	if changed {
+		a.saveOptionsFile()
+	}
+}
+
+func (a *App) handlePauseSoundButton(id int) {
+	changed := false
+	switch id {
+	case buttonIDSoundDone:
+		a.pauseScreen = pauseScreenOptions
+		a.menuStatus = ""
+	case buttonIDSoundMusicMinus:
+		if a.musicVolume > 0.0 {
+			a.musicVolume = clampFloat64(a.musicVolume-0.1, 0.0, 1.0)
+			changed = true
+		}
+	case buttonIDSoundMusicPlus:
+		if a.musicVolume < 1.0 {
+			a.musicVolume = clampFloat64(a.musicVolume+0.1, 0.0, 1.0)
+			changed = true
+		}
+	case buttonIDSoundSoundMinus:
+		if a.soundVolume > 0.0 {
+			a.soundVolume = clampFloat64(a.soundVolume-0.1, 0.0, 1.0)
+			changed = true
+		}
+	case buttonIDSoundSoundPlus:
+		if a.soundVolume < 1.0 {
+			a.soundVolume = clampFloat64(a.soundVolume+0.1, 0.0, 1.0)
+			changed = true
+		}
+	}
+	a.updateSoundButtonsState()
 	if changed {
 		a.saveOptionsFile()
 	}
@@ -1849,9 +1899,11 @@ func (a *App) initPauseOptionsButtons() {
 	a.initOptionButtons()
 	a.initVideoButtons()
 	a.initControlButtons()
+	a.initSoundButtons()
 	a.updatePauseOptionButtonsState()
 	a.updateVideoButtonsState()
 	a.updateControlButtonsState()
+	a.updateSoundButtonsState()
 	a.pauseOptionButtons = append(a.pauseOptionButtons[:0], a.optionButtons...)
 }
 
@@ -2790,6 +2842,33 @@ func (a *App) optionCloudsLabel() string {
 		return "Clouds: ON"
 	}
 	return "Clouds: OFF"
+}
+
+func volumePercent(v float64) int {
+	p := int(math.Round(clampFloat64(v, 0.0, 1.0) * 100.0))
+	if p < 0 {
+		return 0
+	}
+	if p > 100 {
+		return 100
+	}
+	return p
+}
+
+func (a *App) optionMusicVolumeLabel() string {
+	p := volumePercent(a.musicVolume)
+	if p <= 0 {
+		return "Music: OFF"
+	}
+	return fmt.Sprintf("Music: %d%%", p)
+}
+
+func (a *App) optionSoundVolumeLabel() string {
+	p := volumePercent(a.soundVolume)
+	if p <= 0 {
+		return "Sound: OFF"
+	}
+	return fmt.Sprintf("Sound: %d%%", p)
 }
 
 func (a *App) drawWorld(snap netclient.StateSnapshot) {
@@ -4781,6 +4860,8 @@ func (a *App) drawPauseMenu() {
 			title = "Video Settings"
 		} else if a.pauseScreen == pauseScreenControls {
 			title = "Controls"
+		} else if a.pauseScreen == pauseScreenSounds {
+			title = "Music & Sounds"
 		}
 		a.font.drawCenteredString(title, uiW/2, 40, 0xFFFFFF)
 	}
@@ -4798,6 +4879,10 @@ func (a *App) drawPauseMenu() {
 		baseY := uiH/6 + 20
 		sens := fmt.Sprintf("Sensitivity: %d%%", a.sensitivityPercent())
 		a.font.drawCenteredString(sens, uiW/2, baseY+24+6, 0xFFFFFF)
+	} else if a.pauseScreen == pauseScreenSounds && a.font != nil {
+		baseY := uiH/6 + 20
+		a.font.drawCenteredString(a.optionMusicVolumeLabel(), uiW/2, baseY+6, 0xFFFFFF)
+		a.font.drawCenteredString(a.optionSoundVolumeLabel(), uiW/2, baseY+24+6, 0xFFFFFF)
 	}
 	a.drawMenuStatusLine()
 
@@ -5610,11 +5695,14 @@ func (a *App) drainSessionEvents() {
 					if vol <= 0 {
 						vol = 1.0
 					}
+					vol *= clampFloat64(a.soundVolume, 0.0, 1.0)
 					pitch := float64(ev.SoundPitch)
 					if pitch <= 0 {
 						pitch = 1.0
 					}
-					audio.PlaySoundKey(ev.SoundName, vol, pitch)
+					if vol > 0 {
+						audio.PlaySoundKey(ev.SoundName, vol, pitch)
+					}
 				}
 			case netclient.EventKick:
 				a.addChatLine("[kick] "+ev.Message, 0xFF5555)
@@ -5987,6 +6075,14 @@ func (a *App) loadOptionsFile() {
 		value := strings.TrimSpace(parts[1])
 		a.optionsKV[key] = value
 		switch key {
+		case "music":
+			if v, parseErr := strconv.ParseFloat(value, 64); parseErr == nil {
+				a.musicVolume = clampFloat64(v, 0.0, 1.0)
+			}
+		case "sound":
+			if v, parseErr := strconv.ParseFloat(value, 64); parseErr == nil {
+				a.soundVolume = clampFloat64(v, 0.0, 1.0)
+			}
 		case "fov":
 			if v, parseErr := strconv.ParseFloat(value, 64); parseErr == nil {
 				a.fovSetting = clampFloat64(v, 0.0, 1.0)
@@ -6043,6 +6139,8 @@ func (a *App) saveOptionsFile() {
 	if a.optionsKV == nil {
 		a.optionsKV = make(map[string]string)
 	}
+	a.optionsKV["music"] = strconv.FormatFloat(clampFloat64(a.musicVolume, 0.0, 1.0), 'f', 6, 64)
+	a.optionsKV["sound"] = strconv.FormatFloat(clampFloat64(a.soundVolume, 0.0, 1.0), 'f', 6, 64)
 	a.optionsKV["fov"] = strconv.FormatFloat(clampFloat64(a.fovSetting, 0.0, 1.0), 'f', 6, 64)
 	a.optionsKV["invertYMouse"] = strconv.FormatBool(a.invertMouse)
 	a.optionsKV["viewDistance"] = strconv.Itoa(normalizeRenderDistanceMode(a.renderDistance))

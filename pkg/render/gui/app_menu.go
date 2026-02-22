@@ -27,6 +27,7 @@ const (
 	menuScreenOptions
 	menuScreenVideo
 	menuScreenControls
+	menuScreenSounds
 	menuScreenCreateWorld
 	menuScreenRenameWorld
 )
@@ -114,6 +115,12 @@ const (
 	buttonIDControlKeybinds    = 1705
 	buttonIDControlTouchscreen = 1706
 
+	buttonIDSoundMusicMinus = 1801
+	buttonIDSoundMusicPlus  = 1802
+	buttonIDSoundSoundMinus = 1803
+	buttonIDSoundSoundPlus  = 1804
+	buttonIDSoundDone       = 1805
+
 	buttonIDCreateDone          = 1401
 	buttonIDCreateCancel        = 1402
 	buttonIDCreateGameMode      = 1403
@@ -135,6 +142,7 @@ func (a *App) initAllMenuButtons() {
 	a.initOptionButtons()
 	a.initVideoButtons()
 	a.initControlButtons()
+	a.initSoundButtons()
 	a.initCreateButtons()
 	a.initRenameButtons()
 	if len(a.singleWorlds) == 0 {
@@ -144,6 +152,7 @@ func (a *App) initAllMenuButtons() {
 	a.updateOptionButtonsState()
 	a.updateVideoButtonsState()
 	a.updateControlButtonsState()
+	a.updateSoundButtonsState()
 	a.updateCreateButtonsState()
 	a.updateRenameButtonsState()
 }
@@ -234,6 +243,18 @@ func (a *App) initControlButtons() {
 		newButton(buttonIDControlSensPlus, w/2+80, baseY+24, 20, 20, "+"),
 		newButton(buttonIDControlInvert, w/2-75, baseY+48, 150, 20, "Invert Mouse: OFF"),
 		newButton(buttonIDControlDone, w/2-100, baseY+84, 200, 20, "Done"),
+	}
+}
+
+func (a *App) initSoundButtons() {
+	w, h := a.uiWidth(), a.uiHeight()
+	baseY := h/6 + 20
+	a.soundButtons = []*guiButton{
+		newButton(buttonIDSoundMusicMinus, w/2-100, baseY, 20, 20, "-"),
+		newButton(buttonIDSoundMusicPlus, w/2+80, baseY, 20, 20, "+"),
+		newButton(buttonIDSoundSoundMinus, w/2-100, baseY+24, 20, 20, "-"),
+		newButton(buttonIDSoundSoundPlus, w/2+80, baseY+24, 20, 20, "+"),
+		newButton(buttonIDSoundDone, w/2-100, baseY+60, 200, 20, "Done"),
 	}
 }
 
@@ -450,6 +471,27 @@ func (a *App) updateControlButtonsState() {
 			b.Label = a.optionInvertMouseLabel()
 			b.Enabled = true
 		case buttonIDControlDone:
+			b.Enabled = true
+		}
+	}
+}
+
+func (a *App) updateSoundButtonsState() {
+	for _, b := range a.soundButtons {
+		if b == nil {
+			continue
+		}
+		b.Visible = true
+		switch b.ID {
+		case buttonIDSoundMusicMinus:
+			b.Enabled = a.musicVolume > 0.0
+		case buttonIDSoundMusicPlus:
+			b.Enabled = a.musicVolume < 1.0
+		case buttonIDSoundSoundMinus:
+			b.Enabled = a.soundVolume > 0.0
+		case buttonIDSoundSoundPlus:
+			b.Enabled = a.soundVolume < 1.0
+		case buttonIDSoundDone:
 			b.Enabled = true
 		}
 	}
@@ -706,6 +748,8 @@ func (a *App) currentMenuButtons() []*guiButton {
 		return a.videoButtons
 	case menuScreenControls:
 		return a.controlButtons
+	case menuScreenSounds:
+		return a.soundButtons
 	case menuScreenCreateWorld:
 		return a.createButtons
 	case menuScreenRenameWorld:
@@ -741,7 +785,9 @@ func (a *App) handleMainMenuInput(leftMouse, enterPressed bool) bool {
 			if b == nil || !b.Enabled || !b.contains(a.mouseX, a.mouseY) {
 				continue
 			}
-			audio.PlaySoundKey("random.click", 1.0, 1.0)
+			if a.soundVolume > 0 {
+				audio.PlaySoundKey("random.click", a.soundVolume, 1.0)
+			}
 			return a.handleMenuButton(b.ID)
 		}
 	}
@@ -1016,7 +1062,8 @@ func (a *App) handleMenuButton(id int) bool {
 			}
 		case buttonIDOptionMusic:
 			if a.mainMenu {
-				a.menuStatus = "Music & Sounds screen is not implemented yet."
+				a.menuScreen = menuScreenSounds
+				a.menuStatus = ""
 			} else {
 				a.fancyGraphics = !a.fancyGraphics
 				changed = true
@@ -1052,6 +1099,7 @@ func (a *App) handleMenuButton(id int) bool {
 		a.updateOptionButtonsState()
 		a.updateVideoButtonsState()
 		a.updateControlButtonsState()
+		a.updateSoundButtonsState()
 		if changed {
 			a.saveOptionsFile()
 		}
@@ -1103,6 +1151,7 @@ func (a *App) handleMenuButton(id int) bool {
 		a.updateOptionButtonsState()
 		a.updateVideoButtonsState()
 		a.updateControlButtonsState()
+		a.updateSoundButtonsState()
 		if changed {
 			a.saveOptionsFile()
 		}
@@ -1133,6 +1182,38 @@ func (a *App) handleMenuButton(id int) bool {
 			a.menuStatus = "Touchscreen mode is not available on desktop."
 		}
 		a.updateControlButtonsState()
+		a.updateSoundButtonsState()
+		if changed {
+			a.saveOptionsFile()
+		}
+	case menuScreenSounds:
+		changed := false
+		switch id {
+		case buttonIDSoundDone:
+			a.menuScreen = menuScreenOptions
+			a.menuStatus = ""
+		case buttonIDSoundMusicMinus:
+			if a.musicVolume > 0.0 {
+				a.musicVolume = clampFloat64(a.musicVolume-0.1, 0.0, 1.0)
+				changed = true
+			}
+		case buttonIDSoundMusicPlus:
+			if a.musicVolume < 1.0 {
+				a.musicVolume = clampFloat64(a.musicVolume+0.1, 0.0, 1.0)
+				changed = true
+			}
+		case buttonIDSoundSoundMinus:
+			if a.soundVolume > 0.0 {
+				a.soundVolume = clampFloat64(a.soundVolume-0.1, 0.0, 1.0)
+				changed = true
+			}
+		case buttonIDSoundSoundPlus:
+			if a.soundVolume < 1.0 {
+				a.soundVolume = clampFloat64(a.soundVolume+0.1, 0.0, 1.0)
+				changed = true
+			}
+		}
+		a.updateSoundButtonsState()
 		if changed {
 			a.saveOptionsFile()
 		}
@@ -1856,6 +1937,8 @@ func (a *App) drawMenuScreen() {
 		a.drawVideoMenu()
 	case menuScreenControls:
 		a.drawControlsMenu()
+	case menuScreenSounds:
+		a.drawSoundsMenu()
 	case menuScreenCreateWorld:
 		a.drawCreateWorldMenu()
 	case menuScreenRenameWorld:
@@ -1878,6 +1961,10 @@ func (a *App) handleMenuEscape() bool {
 		a.menuStatus = ""
 		return true
 	case menuScreenControls:
+		a.menuScreen = menuScreenOptions
+		a.menuStatus = ""
+		return true
+	case menuScreenSounds:
 		a.menuScreen = menuScreenOptions
 		a.menuStatus = ""
 		return true
@@ -2186,6 +2273,26 @@ func (a *App) drawVideoMenu() {
 		fov := a.optionFOVLabel()
 		a.font.drawCenteredString(rd, a.uiWidth()/2, baseY+24+6, 0xFFFFFF)
 		a.font.drawCenteredString(fov, a.uiWidth()/2, baseY+48+6, 0xFFFFFF)
+	}
+
+	a.drawMenuStatusLine()
+	gl.Disable(gl.BLEND)
+	gl.Enable(gl.CULL_FACE)
+	gl.Enable(gl.DEPTH_TEST)
+}
+
+func (a *App) drawSoundsMenu() {
+	a.drawMenuBackground("Music & Sounds")
+	a.updateSoundButtonsState()
+
+	for _, b := range a.soundButtons {
+		b.draw(a.font, a.texWidgets, a.mouseX, a.mouseY)
+	}
+
+	if a.font != nil {
+		baseY := a.uiHeight()/6 + 20
+		a.font.drawCenteredString(a.optionMusicVolumeLabel(), a.uiWidth()/2, baseY+6, 0xFFFFFF)
+		a.font.drawCenteredString(a.optionSoundVolumeLabel(), a.uiWidth()/2, baseY+24+6, 0xFFFFFF)
 	}
 
 	a.drawMenuStatusLine()

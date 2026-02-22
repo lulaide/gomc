@@ -2,7 +2,10 @@
 
 package gui
 
-import "testing"
+import (
+	"path/filepath"
+	"testing"
+)
 
 func TestInitPauseButtonsVanillaLabels(t *testing.T) {
 	a := &App{
@@ -104,5 +107,48 @@ func TestCurrentPauseButtonsTracksVideoAndControlsSubscreens(t *testing.T) {
 	}
 	if controlButtons[len(controlButtons)-1].ID != buttonIDControlDone {
 		t.Fatalf("pause controls done button mismatch: got id=%d want id=%d", controlButtons[len(controlButtons)-1].ID, buttonIDControlDone)
+	}
+
+	a.pauseScreen = pauseScreenSounds
+	soundButtons := a.currentPauseButtons()
+	if len(soundButtons) == 0 {
+		t.Fatal("pause sounds buttons should not be empty")
+	}
+	if soundButtons[len(soundButtons)-1].ID != buttonIDSoundDone {
+		t.Fatalf("pause sounds done button mismatch: got id=%d want id=%d", soundButtons[len(soundButtons)-1].ID, buttonIDSoundDone)
+	}
+}
+
+func TestPauseOptionMusicOpensSoundsAndAdjustsVolume(t *testing.T) {
+	a := &App{
+		guiW:          854,
+		guiH:          480,
+		mainMenu:      false,
+		pauseScreen:   pauseScreenOptions,
+		musicVolume:   1.0,
+		soundVolume:   1.0,
+		optionButtons: []*guiButton{},
+		soundButtons:  []*guiButton{},
+		optionsKV:     make(map[string]string),
+		optionsPath:   filepath.Join(t.TempDir(), "options.txt"),
+	}
+
+	a.handlePauseOptionButton(buttonIDOptionMusic)
+	if a.pauseScreen != pauseScreenSounds {
+		t.Fatalf("pause option music should open sounds screen: got=%d want=%d", a.pauseScreen, pauseScreenSounds)
+	}
+
+	a.handlePauseSoundButton(buttonIDSoundMusicMinus)
+	if a.musicVolume != 0.9 {
+		t.Fatalf("music volume minus mismatch: got=%.2f want=0.90", a.musicVolume)
+	}
+	a.handlePauseSoundButton(buttonIDSoundSoundMinus)
+	if a.soundVolume != 0.9 {
+		t.Fatalf("sound volume minus mismatch: got=%.2f want=0.90", a.soundVolume)
+	}
+
+	a.handlePauseSoundButton(buttonIDSoundDone)
+	if a.pauseScreen != pauseScreenOptions {
+		t.Fatalf("pause sounds done should return to options: got=%d want=%d", a.pauseScreen, pauseScreenOptions)
 	}
 }
