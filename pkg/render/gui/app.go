@@ -4478,39 +4478,48 @@ func (a *App) drawFirstPersonArm(snap netclient.StateSnapshot) {
 	gl.Rotatef((float32(a.pitch)-armPitch)*0.1, 1, 0, 0)
 	gl.Rotatef((float32(a.yaw)-armYaw)*0.1, 0, 1, 0)
 
-	// Translation reference:
+	// Translation references:
 	// - net.minecraft.src.ItemRenderer#renderItemInFirstPerson(float)
-	//   empty-hand branch (else if !player.isInvisible()).
+	//   (item branch / empty-hand branch)
 	swing := a.currentHandSwingProgress(time.Now())
 	sinSwing := float32(math.Sin(float64(swing) * math.Pi))
 	sinSqrtSwing := float32(math.Sin(math.Sqrt(float64(swing)) * math.Pi))
 	equip := float32(1.0)
-	armScale := float32(0.8)
-
-	gl.Translatef(-sinSqrtSwing*0.3, float32(math.Sin(math.Sqrt(float64(swing))*math.Pi*2.0))*0.4, -sinSwing*0.4)
-	gl.Translatef(0.8*armScale, -0.75*armScale-(1.0-equip)*0.6, -0.9*armScale)
-	gl.Rotatef(45.0, 0, 1, 0)
-
 	sinSwing2 := float32(math.Sin(float64(swing*swing) * math.Pi))
 	sinSqrtSwing2 := float32(math.Sin(math.Sqrt(float64(swing)) * math.Pi))
-	gl.Rotatef(sinSqrtSwing2*70.0, 0, 1, 0)
-	gl.Rotatef(-sinSwing2*20.0, 0, 0, 1)
-
-	gl.Translatef(-1.0, 3.6, 3.5)
-	gl.Rotatef(120.0, 0, 0, 1)
-	gl.Rotatef(200.0, 1, 0, 0)
-	gl.Rotatef(-135.0, 0, 1, 0)
-	gl.Translatef(5.6, 0.0, 0.0)
 
 	if snap.HeldItemID > 0 {
-		gl.PushMatrix()
-		gl.Translatef(-0.48, -0.18, -0.08)
-		gl.Rotatef(-15.0, 0, 1, 0)
-		gl.Rotatef(22.0, 1, 0, 0)
+		// Item branch (non-map, non-using-item branch).
+		armScale := float32(0.8)
+		gl.Translatef(-sinSqrtSwing*0.4, float32(math.Sin(math.Sqrt(float64(swing))*math.Pi*2.0))*0.2, -sinSwing*0.2)
+		gl.Translatef(0.7*armScale, -0.65*armScale-(1.0-equip)*0.6, -0.9*armScale)
+		gl.Rotatef(45.0, 0, 1, 0)
+		gl.Rotatef(-sinSwing2*20.0, 0, 1, 0)
+		gl.Rotatef(-sinSqrtSwing2*20.0, 0, 0, 1)
+		gl.Rotatef(-sinSqrtSwing2*80.0, 1, 0, 0)
+		gl.Scalef(0.4, 0.4, 0.4)
+
+		if itemShouldRotateAroundWhenRendering(snap.HeldItemID) {
+			// Translation reference:
+			// - net.minecraft.src.Item#shouldRotateAroundWhenRendering()
+			gl.Rotatef(180.0, 0, 1, 0)
+		}
 		a.drawFirstPersonHeldItem(snap.HeldItemID, snap.HeldDamage)
-		gl.PopMatrix()
+	} else {
+		// Empty-hand branch.
+		armScale := float32(0.8)
+		gl.Translatef(-sinSqrtSwing*0.3, float32(math.Sin(math.Sqrt(float64(swing))*math.Pi*2.0))*0.4, -sinSwing*0.4)
+		gl.Translatef(0.8*armScale, -0.75*armScale-(1.0-equip)*0.6, -0.9*armScale)
+		gl.Rotatef(45.0, 0, 1, 0)
+		gl.Rotatef(sinSqrtSwing2*70.0, 0, 1, 0)
+		gl.Rotatef(-sinSwing2*20.0, 0, 0, 1)
+		gl.Translatef(-1.0, 3.6, 3.5)
+		gl.Rotatef(120.0, 0, 0, 1)
+		gl.Rotatef(200.0, 1, 0, 0)
+		gl.Rotatef(-135.0, 0, 1, 0)
+		gl.Translatef(5.6, 0.0, 0.0)
+		a.drawFirstPersonRightArmRaw(tex)
 	}
-	a.drawFirstPersonRightArmRaw(tex)
 
 	gl.Enable(gl.CULL_FACE)
 	gl.Color4f(1, 1, 1, 1)
@@ -4533,8 +4542,9 @@ func (a *App) drawFirstPersonHeldItem(itemID, itemDamage int16) {
 	gl.PushMatrix()
 	defer gl.PopMatrix()
 
-	if id <= 255 {
-		gl.Scalef(0.38, 0.38, 0.38)
+	if id > 0 && id <= 255 {
+		// Translation reference:
+		// - net.minecraft.src.ItemRenderer#renderItem(...) block render branch
 		if a.drawTexturedBlockMeta(-0.5, -0.5, -0.5, id, int(itemDamage), fullFaces) {
 			return
 		}
@@ -4546,39 +4556,138 @@ func (a *App) drawFirstPersonHeldItem(itemID, itemDamage int16) {
 		gl.Disable(gl.TEXTURE_2D)
 		gl.Color4f(r, g, b, 1)
 		gl.Begin(gl.QUADS)
-		gl.Vertex3f(-0.3, -0.3, 0)
-		gl.Vertex3f(0.3, -0.3, 0)
-		gl.Vertex3f(0.3, 0.3, 0)
-		gl.Vertex3f(-0.3, 0.3, 0)
+		gl.Vertex3f(0, 0, 0)
+		gl.Vertex3f(1, 0, 0)
+		gl.Vertex3f(1, 1, 0)
+		gl.Vertex3f(0, 1, 0)
 		gl.End()
 		gl.Enable(gl.TEXTURE_2D)
 		gl.Color4f(1, 1, 1, 1)
 		return
 	}
 
-	gl.Scalef(0.62, 0.62, 0.62)
+	// Translation references:
+	// - net.minecraft.src.ItemRenderer#renderItem(...)
+	// - net.minecraft.src.ItemRenderer#renderItemIn2D(...)
+	gl.Translatef(0.0, -0.3, 0.0)
+	gl.Scalef(1.5, 1.5, 1.5)
+	gl.Rotatef(50.0, 0, 1, 0)
+	gl.Rotatef(335.0, 0, 0, 1)
+	gl.Translatef(-0.9375, -0.0625, 0.0)
+	drawFirstPersonItemIn2D(tex, 0.0625)
+}
+
+func drawFirstPersonItemIn2D(tex *texture2D, thickness float32) {
+	if tex == nil {
+		return
+	}
+	if thickness <= 0 {
+		thickness = 0.0625
+	}
+
 	tex.bind()
 	gl.Color4f(1, 1, 1, 1)
-	gl.Begin(gl.QUADS)
+
+	const (
+		u0 = float32(0.0)
+		v0 = float32(0.0)
+		u1 = float32(1.0)
+		v1 = float32(1.0)
+	)
+	w := maxInt(tex.Width, 1)
+	h := maxInt(tex.Height, 1)
+	halfU := float32(0.5*(u1-u0)) / float32(w)
+	halfV := float32(0.5*(v1-v0)) / float32(h)
+
 	// Front
-	gl.TexCoord2f(0, 1)
-	gl.Vertex3f(-0.5, -0.5, 0.0)
-	gl.TexCoord2f(1, 1)
-	gl.Vertex3f(0.5, -0.5, 0.0)
-	gl.TexCoord2f(1, 0)
-	gl.Vertex3f(0.5, 0.5, 0.0)
-	gl.TexCoord2f(0, 0)
-	gl.Vertex3f(-0.5, 0.5, 0.0)
-	// Back
-	gl.TexCoord2f(1, 1)
-	gl.Vertex3f(-0.5, -0.5, -0.02)
-	gl.TexCoord2f(0, 1)
-	gl.Vertex3f(0.5, -0.5, -0.02)
-	gl.TexCoord2f(0, 0)
-	gl.Vertex3f(0.5, 0.5, -0.02)
-	gl.TexCoord2f(1, 0)
-	gl.Vertex3f(-0.5, 0.5, -0.02)
+	gl.Begin(gl.QUADS)
+	gl.TexCoord2f(u1, v1)
+	gl.Vertex3f(0, 0, 0)
+	gl.TexCoord2f(u0, v1)
+	gl.Vertex3f(1, 0, 0)
+	gl.TexCoord2f(u0, v0)
+	gl.Vertex3f(1, 1, 0)
+	gl.TexCoord2f(u1, v0)
+	gl.Vertex3f(0, 1, 0)
 	gl.End()
+
+	// Back
+	gl.Begin(gl.QUADS)
+	gl.TexCoord2f(u1, v0)
+	gl.Vertex3f(0, 1, -thickness)
+	gl.TexCoord2f(u0, v0)
+	gl.Vertex3f(1, 1, -thickness)
+	gl.TexCoord2f(u0, v1)
+	gl.Vertex3f(1, 0, -thickness)
+	gl.TexCoord2f(u1, v1)
+	gl.Vertex3f(0, 0, -thickness)
+	gl.End()
+
+	// Left/Right edges (x slices)
+	gl.Begin(gl.QUADS)
+	for i := 0; i < w; i++ {
+		fx := float32(i) / float32(w)
+		u := u1 + (u0-u1)*fx - halfU
+		fx2 := fx + 1.0/float32(w)
+		// Left
+		gl.TexCoord2f(u, v1)
+		gl.Vertex3f(fx, 0, -thickness)
+		gl.TexCoord2f(u, v1)
+		gl.Vertex3f(fx, 0, 0)
+		gl.TexCoord2f(u, v0)
+		gl.Vertex3f(fx, 1, 0)
+		gl.TexCoord2f(u, v0)
+		gl.Vertex3f(fx, 1, -thickness)
+		// Right
+		gl.TexCoord2f(u, v0)
+		gl.Vertex3f(fx2, 1, -thickness)
+		gl.TexCoord2f(u, v0)
+		gl.Vertex3f(fx2, 1, 0)
+		gl.TexCoord2f(u, v1)
+		gl.Vertex3f(fx2, 0, 0)
+		gl.TexCoord2f(u, v1)
+		gl.Vertex3f(fx2, 0, -thickness)
+	}
+	gl.End()
+
+	// Top/Bottom edges (y slices)
+	gl.Begin(gl.QUADS)
+	for i := 0; i < h; i++ {
+		fy := float32(i) / float32(h)
+		v := v1 + (v0-v1)*fy - halfV
+		fy2 := fy + 1.0/float32(h)
+		// Top
+		gl.TexCoord2f(u1, v)
+		gl.Vertex3f(0, fy2, 0)
+		gl.TexCoord2f(u0, v)
+		gl.Vertex3f(1, fy2, 0)
+		gl.TexCoord2f(u0, v)
+		gl.Vertex3f(1, fy2, -thickness)
+		gl.TexCoord2f(u1, v)
+		gl.Vertex3f(0, fy2, -thickness)
+		// Bottom
+		gl.TexCoord2f(u0, v)
+		gl.Vertex3f(1, fy, 0)
+		gl.TexCoord2f(u1, v)
+		gl.Vertex3f(0, fy, 0)
+		gl.TexCoord2f(u1, v)
+		gl.Vertex3f(0, fy, -thickness)
+		gl.TexCoord2f(u0, v)
+		gl.Vertex3f(1, fy, -thickness)
+	}
+	gl.End()
+}
+
+func itemShouldRotateAroundWhenRendering(itemID int16) bool {
+	switch itemID {
+	// Translation references:
+	// - net.minecraft.src.ItemFishingRod#shouldRotateAroundWhenRendering()
+	// - net.minecraft.src.ItemCarrotOnAStick#shouldRotateAroundWhenRendering()
+	case 346, 398:
+		return true
+	default:
+		return false
+	}
 }
 
 func (a *App) drawFirstPersonRightArmRaw(tex *texture2D) {
