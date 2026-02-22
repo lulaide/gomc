@@ -6,6 +6,8 @@ import (
 	"math"
 	"strings"
 	"sync"
+
+	"github.com/lulaide/gomc/pkg/nbt"
 )
 
 type potionDef struct {
@@ -155,6 +157,17 @@ func potionLiquidColorFromDamage(damage int) int {
 }
 
 // Translation references:
+// - net.minecraft.src.ItemPotion#getColorFromDamage(int)
+// - net.minecraft.src.ItemPotion#getEffects(ItemStack)
+func potionLiquidColorFromStack(damage int, itemTag *nbt.CompoundTag) int {
+	// Fast cached path for vanilla damage-only potions.
+	if itemTag == nil || !itemTag.HasKey("CustomPotionEffects") {
+		return potionLiquidColorFromDamage(damage)
+	}
+	return calcPotionLiquidColor(potionEffectsFromItemStack(damage, itemTag, false))
+}
+
+// Translation references:
 // - net.minecraft.src.PotionHelper#calcPotionLiquidColor(Collection)
 func calcPotionLiquidColor(effects []potionEffectEval) int {
 	const defaultPotionColor = 3694022
@@ -234,6 +247,52 @@ func potionEffectsFromDamage(data int, includeUsable bool) []potionEffectEval {
 			potionID:  potionID,
 			duration:  duration,
 			amplifier: amp,
+		})
+	}
+	return out
+}
+
+// Translation references:
+// - net.minecraft.src.ItemPotion#getEffects(ItemStack)
+func potionEffectsFromItemStack(damage int, itemTag *nbt.CompoundTag, includeUsable bool) []potionEffectEval {
+	if itemTag != nil && itemTag.HasKey("CustomPotionEffects") {
+		// ItemPotion checks only hasKey and then reads CustomPotionEffects list.
+		if listTag, ok := itemTag.GetTag("CustomPotionEffects").(*nbt.ListTag); ok && listTag != nil {
+			return customPotionEffectsFromNBTList(listTag)
+		}
+		return nil
+	}
+	return potionEffectsFromDamage(damage, includeUsable)
+}
+
+// Translation references:
+// - net.minecraft.src.PotionEffect#readCustomPotionEffectFromNBT(NBTTagCompound)
+func customPotionEffectsFromNBTList(listTag *nbt.ListTag) []potionEffectEval {
+	if listTag == nil || listTag.TagCount() == 0 {
+		return nil
+	}
+	out := make([]potionEffectEval, 0, listTag.TagCount())
+	for _, raw := range listTag.TagList {
+		effTag, ok := raw.(*nbt.CompoundTag)
+		if !ok || effTag == nil {
+			continue
+		}
+		id, ok := intFromNBTNumericTag(effTag.GetTag("Id"))
+		if !ok {
+			continue
+		}
+		amp, ok := intFromNBTNumericTag(effTag.GetTag("Amplifier"))
+		if !ok {
+			amp = 0
+		}
+		duration, ok := intFromNBTNumericTag(effTag.GetTag("Duration"))
+		if !ok {
+			duration = 0
+		}
+		out = append(out, potionEffectEval{
+			potionID:  id & 0xFF,
+			duration:  duration,
+			amplifier: amp & 0xFF,
 		})
 	}
 	return out

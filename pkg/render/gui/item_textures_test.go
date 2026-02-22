@@ -193,3 +193,24 @@ func TestItemDisplayNamePotionVariants(t *testing.T) {
 		t.Fatalf("splash speed potion name mismatch: got=%q want=%q", got, "Splash Potion of Swiftness")
 	}
 }
+
+func TestItemDisplayNamePotionUsesCustomPotionEffectsNBT(t *testing.T) {
+	custom := nbt.NewListTag("CustomPotionEffects")
+	eff := nbt.NewCompoundTag("")
+	eff.SetByte("Id", 1)        // moveSpeed
+	eff.SetByte("Amplifier", 0) // I
+	eff.SetInteger("Duration", 200)
+	custom.AppendTag(eff)
+	stackTag := nbt.NewCompoundTag("")
+	stackTag.SetTag("CustomPotionEffects", custom)
+
+	a := &App{
+		langEN: map[string]string{
+			"item.potion.name":         "Potion",
+			"potion.moveSpeed.postfix": "Potion of Swiftness",
+		},
+	}
+	if got := a.itemDisplayNameWithTag(373, 1, stackTag); got != "Potion of Swiftness" {
+		t.Fatalf("custom potion display name mismatch: got=%q want=%q", got, "Potion of Swiftness")
+	}
+}

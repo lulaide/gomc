@@ -306,7 +306,7 @@ func itemColorForRenderPassWithTag(itemID, itemDamage, pass int, itemTag *nbt.Co
 		if pass > 0 {
 			return 0xFFFFFF
 		}
-		return potionLiquidColorFromDamage(itemDamage)
+		return potionLiquidColorFromStack(itemDamage, itemTag)
 	default:
 		return 0xFFFFFF
 	}
@@ -461,6 +461,10 @@ func (a *App) drawItemStackIconWithTag(itemID, itemDamage int16, itemTag *nbt.Co
 }
 
 func (a *App) itemDisplayName(itemID, itemDamage int16) string {
+	return a.itemDisplayNameWithTag(itemID, itemDamage, nil)
+}
+
+func (a *App) itemDisplayNameWithTag(itemID, itemDamage int16, itemTag *nbt.CompoundTag) string {
 	id := int(itemID)
 	if id <= 0 {
 		return ""
@@ -484,7 +488,7 @@ func (a *App) itemDisplayName(itemID, itemDamage int16) string {
 			}
 		}
 
-		effects := potionEffectsFromDamage(damage, false)
+		effects := potionEffectsFromItemStack(damage, itemTag, false)
 		if len(effects) > 0 {
 			if key, ok := potionNameLangKeyByID[effects[0].potionID]; ok && key != "" {
 				postfixKey := key + ".postfix"

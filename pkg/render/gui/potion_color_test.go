@@ -2,7 +2,11 @@
 
 package gui
 
-import "testing"
+import (
+	"testing"
+
+	"github.com/lulaide/gomc/pkg/nbt"
+)
 
 func TestPotionLiquidColorFromDamageDefault(t *testing.T) {
 	// Translation reference:
@@ -37,5 +41,20 @@ func TestPotionPrefixIndexFromDamage(t *testing.T) {
 	// func_77908_a(data,5,4,3,2,1): only bit1 set -> 1.
 	if got := potionPrefixIndexFromDamage(1 << 1); got != 1 {
 		t.Fatalf("prefix index for bit1 mismatch: got=%d want=1", got)
+	}
+}
+
+func TestPotionLiquidColorFromStackCustomEffects(t *testing.T) {
+	custom := nbt.NewListTag("CustomPotionEffects")
+	eff := nbt.NewCompoundTag("")
+	eff.SetByte("Id", 1) // moveSpeed
+	eff.SetByte("Amplifier", 0)
+	eff.SetInteger("Duration", 100)
+	custom.AppendTag(eff)
+	stackTag := nbt.NewCompoundTag("")
+	stackTag.SetTag("CustomPotionEffects", custom)
+
+	if got := potionLiquidColorFromStack(0, stackTag); got != 8171462 {
+		t.Fatalf("custom potion color mismatch: got=0x%06x want=0x%06x", got, 8171462)
 	}
 }

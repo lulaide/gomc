@@ -1942,7 +1942,7 @@ func (a *App) inventoryHoverLabel(stack netclient.InventorySlotSnapshot) string 
 	if stack.ItemID <= 0 || stack.StackSize <= 0 {
 		return ""
 	}
-	name := a.itemDisplayName(stack.ItemID, stack.ItemDamage)
+	name := a.itemDisplayNameWithTag(stack.ItemID, stack.ItemDamage, stack.ItemTag)
 	if name == "" {
 		name = fmt.Sprintf("ID %d", stack.ItemID)
 	}
