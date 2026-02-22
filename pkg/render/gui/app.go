@@ -4240,27 +4240,59 @@ func (a *App) drawDroppedItemEntity(ent netclient.EntitySnapshot, animTime float
 	gl.Rotatef(spinDeg, 0, 1, 0)
 	gl.Scalef(0.25, 0.25, 0.25)
 
-	if itemID > 255 {
-		if tex := a.itemTextureForStack(itemID, itemMeta); tex != nil {
-			a.drawDroppedItemSprite(tex)
-			gl.PopMatrix()
-			return
+	copies := droppedItemRenderCopies(ent.DroppedItemCount)
+	for i := 0; i < copies; i++ {
+		gl.PushMatrix()
+		if i > 0 {
+			ox, oy, oz := droppedItemRenderOffset(ent.EntityID, i)
+			gl.Translatef(ox, oy, oz)
 		}
+
+		rendered := false
+		if itemID > 255 {
+			if tex := a.itemTextureForStack(itemID, itemMeta); tex != nil {
+				a.drawDroppedItemSprite(tex)
+				rendered = true
+			}
+		}
+		if !rendered && itemID > 0 && itemID <= 255 {
+			rendered = a.drawTexturedBlockMeta(-0.5, 0.0, -0.5, itemID, itemMeta, fullFaces)
+		}
+		if !rendered {
+			r, g, b := colorForBlock(itemID)
+			gl.Disable(gl.TEXTURE_2D)
+			drawCubeFaces(-0.5, 0.0, -0.5, r, g, b, fullFaces)
+			gl.Enable(gl.TEXTURE_2D)
+		}
+		gl.PopMatrix()
 	}
 
-	if itemID > 0 && itemID <= 255 {
-		if a.drawTexturedBlockMeta(-0.5, 0.0, -0.5, itemID, itemMeta, fullFaces) {
-			gl.PopMatrix()
-			return
-		}
-	}
-
-	r, g, b := colorForBlock(itemID)
-	gl.Disable(gl.TEXTURE_2D)
-	drawCubeFaces(-0.5, 0.0, -0.5, r, g, b, fullFaces)
-	gl.Enable(gl.TEXTURE_2D)
 	gl.Color4f(1, 1, 1, 1)
 	gl.PopMatrix()
+}
+
+// Translation reference:
+// - net.minecraft.src.RenderItem#renderDroppedItem(EntityItem,Icon,int,float,float,float,float)
+func droppedItemRenderCopies(stackCount int8) int {
+	count := int(stackCount)
+	switch {
+	case count > 20:
+		return 4
+	case count > 5:
+		return 3
+	case count > 1:
+		return 2
+	default:
+		return 1
+	}
+}
+
+func droppedItemRenderOffset(entityID int32, copyIndex int) (float32, float32, float32) {
+	seed := float64(entityID)*0.131 + float64(copyIndex)*0.733
+	ox := float32(math.Sin(seed*3.17)) * 0.15
+	oy := float32(math.Cos(seed*2.11)) * 0.12
+	oz := float32(math.Sin(seed*4.07)) * 0.15
+	return ox, oy, oz
 }
 
 func (a *App) drawDroppedItemSprite(tex *texture2D) {
