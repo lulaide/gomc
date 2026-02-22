@@ -4344,6 +4344,7 @@ func (a *App) drawDroppedItemEntity(ent netclient.EntitySnapshot, animTime float
 	gl.Translatef(float32(ent.X), float32(ent.Y)+hover, float32(ent.Z))
 	gl.Rotatef(spinDeg, 0, 1, 0)
 	gl.Scalef(itemScale, itemScale, itemScale)
+	itemPasses := a.itemTexturePasses(int16(itemID), int16(itemMeta))
 
 	rnd := util.NewJavaRandom(187)
 	for i := 0; i < copies; i++ {
@@ -4364,8 +4365,14 @@ func (a *App) drawDroppedItemEntity(ent netclient.EntitySnapshot, animTime float
 
 		rendered := false
 		if renderAsSprite {
-			if tex := a.itemTextureForStack(itemID, itemMeta); tex != nil {
-				a.drawDroppedItemSprite(tex)
+			if len(itemPasses) > 0 {
+				for _, pass := range itemPasses {
+					if pass.tex == nil {
+						continue
+					}
+					gl.Color4f(pass.r, pass.g, pass.b, 1)
+					a.drawDroppedItemSprite(pass.tex)
+				}
 				rendered = true
 			}
 		}
@@ -4432,7 +4439,6 @@ func (a *App) drawDroppedItemSprite(tex *texture2D) {
 		return
 	}
 	gl.Enable(gl.TEXTURE_2D)
-	gl.Color4f(1, 1, 1, 1)
 	tex.bind()
 	const (
 		halfSize = float32(0.5)
@@ -4617,18 +4623,26 @@ func bowTextureNameForDrawTicks(drawTicks int) string {
 	}
 }
 
-func (a *App) firstPersonItemTextureForStack(itemID, itemDamage int16, now time.Time) *texture2D {
+func (a *App) firstPersonItemTexturePassesForStack(itemID, itemDamage int16, now time.Time) []itemTexturePass {
 	id := int(itemID)
 	if id <= 0 {
 		return nil
 	}
+	passes := a.itemTexturePasses(itemID, itemDamage)
 	if id == 261 && a.localUsingItem && a.localUseAction == itemUseActionBow {
 		drawTicks := a.localUseElapsedTicks(now)
 		if tex := a.itemTextureByName(bowTextureNameForDrawTicks(drawTicks)); tex != nil {
-			return tex
+			if len(passes) == 0 {
+				passes = []itemTexturePass{{tex: tex, r: 1, g: 1, b: 1}}
+			} else {
+				passes[0].tex = tex
+				passes[0].r = 1
+				passes[0].g = 1
+				passes[0].b = 1
+			}
 		}
 	}
-	return a.itemTextureForStack(id, int(itemDamage))
+	return passes
 }
 
 // Translation references:
@@ -4805,8 +4819,8 @@ func (a *App) drawFirstPersonHeldItem(itemID, itemDamage int16) {
 		}
 	}
 
-	tex := a.firstPersonItemTextureForStack(itemID, itemDamage, time.Now())
-	if tex == nil {
+	passes := a.firstPersonItemTexturePassesForStack(itemID, itemDamage, time.Now())
+	if len(passes) == 0 {
 		r, g, b := colorForBlock(id)
 		gl.Disable(gl.TEXTURE_2D)
 		gl.Color4f(r, g, b, 1)
@@ -4829,7 +4843,14 @@ func (a *App) drawFirstPersonHeldItem(itemID, itemDamage int16) {
 	gl.Rotatef(50.0, 0, 1, 0)
 	gl.Rotatef(335.0, 0, 0, 1)
 	gl.Translatef(-0.9375, -0.0625, 0.0)
-	drawFirstPersonItemIn2D(tex, 0.0625)
+	for _, pass := range passes {
+		if pass.tex == nil {
+			continue
+		}
+		gl.Color4f(pass.r, pass.g, pass.b, 1)
+		drawFirstPersonItemIn2D(pass.tex, 0.0625)
+	}
+	gl.Color4f(1, 1, 1, 1)
 }
 
 func drawFirstPersonItemIn2D(tex *texture2D, thickness float32) {
@@ -4841,7 +4862,6 @@ func drawFirstPersonItemIn2D(tex *texture2D, thickness float32) {
 	}
 
 	tex.bind()
-	gl.Color4f(1, 1, 1, 1)
 
 	const (
 		u0 = float32(0.0)

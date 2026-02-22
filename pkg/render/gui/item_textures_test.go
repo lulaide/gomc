@@ -72,3 +72,51 @@ func TestBlockLangKeyForID(t *testing.T) {
 		t.Fatalf("blockLangKeyForID(999)=%q want empty", got)
 	}
 }
+
+func TestItemRequiresMultipleRenderPasses(t *testing.T) {
+	if !itemRequiresMultipleRenderPasses(383) {
+		t.Fatal("spawn egg should require multiple render passes")
+	}
+	if !itemRequiresMultipleRenderPasses(298) {
+		t.Fatal("leather helmet should require multiple render passes")
+	}
+	if itemRequiresMultipleRenderPasses(264) {
+		t.Fatal("diamond should not require multiple render passes")
+	}
+}
+
+func TestItemTextureNameForRenderPass(t *testing.T) {
+	tests := []struct {
+		itemID int
+		damage int
+		pass   int
+		want   string
+	}{
+		{itemID: 383, damage: 90, pass: 0, want: "spawn_egg"},
+		{itemID: 383, damage: 90, pass: 1, want: "spawn_egg_overlay"},
+		{itemID: 298, damage: 0, pass: 0, want: "leather_helmet"},
+		{itemID: 298, damage: 0, pass: 1, want: "leather_helmet_overlay"},
+		{itemID: 264, damage: 0, pass: 1, want: ""},
+	}
+	for _, tc := range tests {
+		got := itemTextureNameForRenderPass(tc.itemID, tc.damage, tc.pass)
+		if got != tc.want {
+			t.Fatalf("itemTextureNameForRenderPass(%d,%d,%d)=%q want=%q", tc.itemID, tc.damage, tc.pass, got, tc.want)
+		}
+	}
+}
+
+func TestItemColorForRenderPass(t *testing.T) {
+	if got := itemColorForRenderPass(383, 90, 0); got != 15771042 {
+		t.Fatalf("spawn egg primary mismatch: got=%d want=%d", got, 15771042)
+	}
+	if got := itemColorForRenderPass(383, 90, 1); got != 14377823 {
+		t.Fatalf("spawn egg secondary mismatch: got=%d want=%d", got, 14377823)
+	}
+	if got := itemColorForRenderPass(298, 0, 0); got != 10511680 {
+		t.Fatalf("leather base color mismatch: got=%d want=%d", got, 10511680)
+	}
+	if got := itemColorForRenderPass(298, 0, 1); got != 0xFFFFFF {
+		t.Fatalf("leather overlay color mismatch: got=%d want=%d", got, 0xFFFFFF)
+	}
+}

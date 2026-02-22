@@ -9,6 +9,8 @@ import (
 	"sort"
 	"strings"
 	"unicode"
+
+	"github.com/go-gl/gl/v2.1/gl"
 )
 
 var dyeColorTokens = [16]string{
@@ -47,6 +49,47 @@ var dyeLangTokens = [16]string{
 	"magenta",
 	"orange",
 	"white",
+}
+
+type itemTexturePass struct {
+	tex *texture2D
+	r   float32
+	g   float32
+	b   float32
+}
+
+type spawnEggColorPair struct {
+	primary   int
+	secondary int
+}
+
+var spawnEggColorsByEntityID = map[int]spawnEggColorPair{
+	// Translation reference:
+	// - net.minecraft.src.EntityList static addMapping(..., primary, secondary)
+	50:  {primary: 894731, secondary: 0},         // Creeper
+	51:  {primary: 12698049, secondary: 4802889}, // Skeleton
+	52:  {primary: 3419431, secondary: 11013646}, // Spider
+	54:  {primary: 44975, secondary: 7969893},    // Zombie
+	55:  {primary: 5349438, secondary: 8306542},  // Slime
+	56:  {primary: 16382457, secondary: 12369084},
+	57:  {primary: 15373203, secondary: 5009705},
+	58:  {primary: 1447446, secondary: 0},
+	59:  {primary: 803406, secondary: 11013646},
+	60:  {primary: 7237230, secondary: 3158064},
+	61:  {primary: 16167425, secondary: 16775294},
+	62:  {primary: 3407872, secondary: 16579584},
+	65:  {primary: 4996656, secondary: 986895},    // Bat
+	66:  {primary: 3407872, secondary: 5349438},   // Witch
+	90:  {primary: 15771042, secondary: 14377823}, // Pig
+	91:  {primary: 15198183, secondary: 16758197}, // Sheep
+	92:  {primary: 4470310, secondary: 10592673},  // Cow
+	93:  {primary: 10592673, secondary: 16711680}, // Chicken
+	94:  {primary: 2243405, secondary: 7375001},   // Squid
+	95:  {primary: 14144467, secondary: 13545366}, // Wolf
+	96:  {primary: 10489616, secondary: 12040119}, // Mooshroom
+	98:  {primary: 15720061, secondary: 5653556},  // Ocelot
+	100: {primary: 12623485, secondary: 15656192}, // Horse
+	120: {primary: 5651507, secondary: 12422002},  // Villager
 }
 
 func (a *App) loadItemTextures() error {
@@ -124,6 +167,108 @@ func (a *App) itemTextureByName(name string) *texture2D {
 }
 
 // Translation references:
+// - net.minecraft.src.ItemArmor#requiresMultipleRenderPasses()
+// - net.minecraft.src.ItemMonsterPlacer#requiresMultipleRenderPasses()
+func itemRequiresMultipleRenderPasses(itemID int) bool {
+	switch itemID {
+	case 298, 299, 300, 301, 383:
+		return true
+	default:
+		return false
+	}
+}
+
+func itemTextureNameForRenderPass(itemID, itemDamage, pass int) string {
+	switch itemID {
+	case 298, 299, 300, 301:
+		base := itemTextureNameForID(itemID, itemDamage)
+		if pass == 1 {
+			return base + "_overlay"
+		}
+		return base
+	case 383:
+		if pass == 1 {
+			return "spawn_egg_overlay"
+		}
+		return "spawn_egg"
+	default:
+		if pass == 0 {
+			return itemTextureNameForID(itemID, itemDamage)
+		}
+		return ""
+	}
+}
+
+// Translation references:
+// - net.minecraft.src.ItemArmor#getColorFromItemStack(ItemStack,int)
+// - net.minecraft.src.ItemMonsterPlacer#getColorFromItemStack(ItemStack,int)
+func itemColorForRenderPass(itemID, itemDamage, pass int) int {
+	switch itemID {
+	case 298, 299, 300, 301:
+		if pass > 0 {
+			return 0xFFFFFF
+		}
+		// No NBT path in current client snapshot; vanilla default leather color.
+		return 10511680
+	case 383:
+		pair, ok := spawnEggColorsByEntityID[itemDamage]
+		if !ok {
+			return 0xFFFFFF
+		}
+		if pass == 0 {
+			return pair.primary
+		}
+		return pair.secondary
+	default:
+		return 0xFFFFFF
+	}
+}
+
+func (a *App) itemTexturePasses(itemID, itemDamage int16) []itemTexturePass {
+	id := int(itemID)
+	damage := int(itemDamage)
+	if id <= 0 {
+		return nil
+	}
+
+	if id <= 255 {
+		if tex := a.blockTextureForFaceMeta(id, damage, faceUp); tex != nil {
+			return []itemTexturePass{{tex: tex, r: 1, g: 1, b: 1}}
+		}
+		if tex := a.blockTextureForFaceMeta(id, damage, faceNorth); tex != nil {
+			return []itemTexturePass{{tex: tex, r: 1, g: 1, b: 1}}
+		}
+		return nil
+	}
+
+	if itemRequiresMultipleRenderPasses(id) {
+		out := make([]itemTexturePass, 0, 2)
+		for pass := 0; pass <= 1; pass++ {
+			name := itemTextureNameForRenderPass(id, damage, pass)
+			if name == "" {
+				continue
+			}
+			tex := a.itemTextureByName(name)
+			if tex == nil {
+				continue
+			}
+			r, g, b := rgbIntToFloat(itemColorForRenderPass(id, damage, pass))
+			out = append(out, itemTexturePass{tex: tex, r: r, g: g, b: b})
+		}
+		if len(out) > 0 {
+			return out
+		}
+	}
+
+	if tex := a.itemTextureForStack(id, damage); tex != nil {
+		r, g, b := rgbIntToFloat(itemColorForRenderPass(id, damage, 0))
+		return []itemTexturePass{{tex: tex, r: r, g: g, b: b}}
+	}
+
+	return nil
+}
+
+// Translation references:
 // - net.minecraft.src.Item (setTextureName registrations)
 // - net.minecraft.src.ItemDye (damage -> dye color)
 // - net.minecraft.src.ItemSkull (damage -> skull variant)
@@ -196,9 +341,17 @@ func (a *App) drawItemStackIcon(itemID, itemDamage int16, x, y, size int) bool {
 	if id <= 0 || size <= 0 {
 		return false
 	}
-	tex := a.itemTextureForStack(id, int(itemDamage))
-	if tex != nil {
-		drawTexturedRect(tex, float32(x), float32(y), float32(size), float32(size), 0, 0, tex.Width, tex.Height)
+
+	passes := a.itemTexturePasses(itemID, itemDamage)
+	if len(passes) > 0 {
+		for _, pass := range passes {
+			if pass.tex == nil {
+				continue
+			}
+			gl.Color4f(pass.r, pass.g, pass.b, 1)
+			drawTexturedRect(pass.tex, float32(x), float32(y), float32(size), float32(size), 0, 0, pass.tex.Width, pass.tex.Height)
+		}
+		gl.Color4f(1, 1, 1, 1)
 		return true
 	}
 
