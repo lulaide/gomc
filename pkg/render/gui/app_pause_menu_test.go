@@ -78,3 +78,31 @@ func TestCurrentPauseButtonsTracksPauseScreen(t *testing.T) {
 		t.Fatalf("pause options done button mismatch: got id=%d want id=%d", optionButtons[len(optionButtons)-1].ID, buttonIDOptionDone)
 	}
 }
+
+func TestCurrentPauseButtonsTracksVideoAndControlsSubscreens(t *testing.T) {
+	a := &App{
+		guiW:     854,
+		guiH:     480,
+		mainMenu: false,
+	}
+	a.initPauseButtons()
+	a.initPauseOptionsButtons()
+
+	a.pauseScreen = pauseScreenVideo
+	videoButtons := a.currentPauseButtons()
+	if len(videoButtons) == 0 {
+		t.Fatal("pause video buttons should not be empty")
+	}
+	if videoButtons[len(videoButtons)-1].ID != buttonIDVideoDone {
+		t.Fatalf("pause video done button mismatch: got id=%d want id=%d", videoButtons[len(videoButtons)-1].ID, buttonIDVideoDone)
+	}
+
+	a.pauseScreen = pauseScreenControls
+	controlButtons := a.currentPauseButtons()
+	if len(controlButtons) == 0 {
+		t.Fatal("pause controls buttons should not be empty")
+	}
+	if controlButtons[len(controlButtons)-1].ID != buttonIDControlDone {
+		t.Fatalf("pause controls done button mismatch: got id=%d want id=%d", controlButtons[len(controlButtons)-1].ID, buttonIDControlDone)
+	}
+}

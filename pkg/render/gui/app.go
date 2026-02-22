@@ -73,6 +73,8 @@ type pauseScreen int
 const (
 	pauseScreenMain pauseScreen = iota
 	pauseScreenOptions
+	pauseScreenVideo
+	pauseScreenControls
 )
 
 type Config struct {
@@ -953,6 +955,8 @@ func (a *App) handleInput(deltaSeconds float64) bool {
 		if a.paused {
 			if a.pauseScreen == pauseScreenOptions {
 				a.pauseScreen = pauseScreenMain
+			} else if a.pauseScreen == pauseScreenVideo || a.pauseScreen == pauseScreenControls {
+				a.pauseScreen = pauseScreenOptions
 			} else {
 				a.setPaused(false)
 			}
@@ -1001,6 +1005,10 @@ func (a *App) handleInput(deltaSeconds float64) bool {
 				audio.PlaySoundKey("random.click", 1.0, 1.0)
 				if a.pauseScreen == pauseScreenOptions {
 					a.handlePauseOptionButton(b.ID)
+				} else if a.pauseScreen == pauseScreenVideo {
+					a.handlePauseVideoButton(b.ID)
+				} else if a.pauseScreen == pauseScreenControls {
+					a.handlePauseControlButton(b.ID)
 				} else {
 					if !a.handlePauseMenuButton(b.ID) {
 						return false
@@ -1356,6 +1364,12 @@ func (a *App) currentPauseButtons() []*guiButton {
 	if a.pauseScreen == pauseScreenOptions {
 		return a.pauseOptionButtons
 	}
+	if a.pauseScreen == pauseScreenVideo {
+		return a.videoButtons
+	}
+	if a.pauseScreen == pauseScreenControls {
+		return a.controlButtons
+	}
 	return a.pauseButtons
 }
 
@@ -1367,7 +1381,7 @@ func (a *App) handlePauseMenuButton(id int) bool {
 		a.disconnectToMainMenu("")
 	case buttonIDPauseOptions:
 		a.pauseScreen = pauseScreenOptions
-		a.updateOptionButtonsState()
+		a.updatePauseOptionButtonsState()
 	case buttonIDPauseAchievements:
 		a.menuStatus = "Achievements screen is not implemented yet."
 	case buttonIDPauseStats:
@@ -1387,61 +1401,107 @@ func (a *App) handlePauseOptionButton(id int) {
 	case buttonIDOptionDifficulty:
 		a.optionDifficulty = (a.optionDifficulty + 1) & 3
 		changed = true
-	case buttonIDOptionRDMinus:
+	case buttonIDOptionVideo:
+		a.pauseScreen = pauseScreenVideo
+		a.menuStatus = ""
+	case buttonIDOptionControls:
+		a.pauseScreen = pauseScreenControls
+		a.menuStatus = ""
+	case buttonIDOptionLanguage:
+		a.menuStatus = "Language screen is not implemented yet."
+	case buttonIDOptionMusic:
+		a.menuStatus = "Music & Sounds screen is not implemented yet."
+	case buttonIDOptionSnooper:
+		a.menuStatus = "Snooper Settings are not implemented yet."
+	}
+	a.updatePauseOptionButtonsState()
+	a.updateVideoButtonsState()
+	a.updateControlButtonsState()
+	if changed {
+		a.saveOptionsFile()
+	}
+}
+
+func (a *App) handlePauseVideoButton(id int) {
+	changed := false
+	switch id {
+	case buttonIDVideoDone:
+		a.pauseScreen = pauseScreenOptions
+		a.menuStatus = ""
+	case buttonIDVideoGraphics:
+		a.fancyGraphics = !a.fancyGraphics
+		changed = true
+	case buttonIDVideoClouds:
+		a.cloudsEnabled = !a.cloudsEnabled
+		changed = true
+	case buttonIDVideoRDMinus:
 		if a.renderDistance < 3 {
 			a.renderDistance++
 			changed = true
 		}
-	case buttonIDOptionRDPlus:
+	case buttonIDVideoRDPlus:
 		if a.renderDistance > 0 {
 			a.renderDistance--
 			changed = true
 		}
-	case buttonIDOptionFOVMinus:
+	case buttonIDVideoFOVMinus:
 		a.fovSetting -= 0.05
 		if a.fovSetting < 0.0 {
 			a.fovSetting = 0.0
 		}
 		changed = true
-	case buttonIDOptionFOVPlus:
+	case buttonIDVideoFOVPlus:
 		a.fovSetting += 0.05
 		if a.fovSetting > 1.0 {
 			a.fovSetting = 1.0
 		}
 		changed = true
-	case buttonIDOptionViewBobbing:
-		a.viewBobbing = !a.viewBobbing
-		changed = true
-	case buttonIDOptionVideo:
+	case buttonIDVideoFPS:
 		a.limitFramerateMode = (a.limitFramerateMode + 1) % len(framerateModeNames)
 		changed = true
-	case buttonIDOptionLanguage:
+	case buttonIDVideoGUIScale:
 		a.guiScaleMode = (a.guiScaleMode + 1) % len(guiScaleModeNames)
 		a.updateGUIMetrics()
 		changed = true
-	case buttonIDOptionControls:
-		a.invertMouse = !a.invertMouse
+	case buttonIDVideoViewBobbing:
+		a.viewBobbing = !a.viewBobbing
 		changed = true
-	case buttonIDOptionMusic:
-		a.fancyGraphics = !a.fancyGraphics
-		changed = true
-	case buttonIDOptionSnooper:
-		a.cloudsEnabled = !a.cloudsEnabled
-		changed = true
-	case buttonIDOptionSensMinus:
+	}
+	a.updatePauseOptionButtonsState()
+	a.updateVideoButtonsState()
+	a.updateControlButtonsState()
+	if changed {
+		a.saveOptionsFile()
+	}
+}
+
+func (a *App) handlePauseControlButton(id int) {
+	changed := false
+	switch id {
+	case buttonIDControlDone:
+		a.pauseScreen = pauseScreenOptions
+		a.menuStatus = ""
+	case buttonIDControlSensMinus:
 		a.mouseSens -= 0.02
 		if a.mouseSens < 0.0 {
 			a.mouseSens = 0.0
 		}
 		changed = true
-	case buttonIDOptionSensPlus:
+	case buttonIDControlSensPlus:
 		a.mouseSens += 0.02
 		if a.mouseSens > 1.0 {
 			a.mouseSens = 1.0
 		}
 		changed = true
+	case buttonIDControlInvert:
+		a.invertMouse = !a.invertMouse
+		changed = true
+	case buttonIDControlKeybinds:
+		a.menuStatus = "Key Bindings screen is not implemented yet."
+	case buttonIDControlTouchscreen:
+		a.menuStatus = "Touchscreen mode is not available on desktop."
 	}
-	a.updateOptionButtonsState()
+	a.updateControlButtonsState()
 	if changed {
 		a.saveOptionsFile()
 	}
@@ -1787,7 +1847,19 @@ func (a *App) initPauseButtons() {
 
 func (a *App) initPauseOptionsButtons() {
 	a.initOptionButtons()
+	a.initVideoButtons()
+	a.initControlButtons()
+	a.updatePauseOptionButtonsState()
+	a.updateVideoButtonsState()
+	a.updateControlButtonsState()
+	a.pauseOptionButtons = append(a.pauseOptionButtons[:0], a.optionButtons...)
+}
+
+func (a *App) updatePauseOptionButtonsState() {
+	wasMainMenu := a.mainMenu
+	a.mainMenu = true
 	a.updateOptionButtonsState()
+	a.mainMenu = wasMainMenu
 	a.pauseOptionButtons = append(a.pauseOptionButtons[:0], a.optionButtons...)
 }
 
@@ -4705,6 +4777,10 @@ func (a *App) drawPauseMenu() {
 		title := "Game menu"
 		if a.pauseScreen == pauseScreenOptions {
 			title = "Options"
+		} else if a.pauseScreen == pauseScreenVideo {
+			title = "Video Settings"
+		} else if a.pauseScreen == pauseScreenControls {
+			title = "Controls"
 		}
 		a.font.drawCenteredString(title, uiW/2, 40, 0xFFFFFF)
 	}
@@ -4712,14 +4788,16 @@ func (a *App) drawPauseMenu() {
 	for _, b := range a.currentPauseButtons() {
 		b.draw(a.font, a.texWidgets, a.mouseX, a.mouseY)
 	}
-	if a.pauseScreen == pauseScreenOptions && a.font != nil {
-		baseY := uiH/6 + 12
+	if a.pauseScreen == pauseScreenVideo && a.font != nil {
+		baseY := uiH/6 + 20
 		rd := a.optionRenderDistanceLabel()
 		fov := a.optionFOVLabel()
+		a.font.drawCenteredString(rd, uiW/2, baseY+24+6, 0xFFFFFF)
+		a.font.drawCenteredString(fov, uiW/2, baseY+48+6, 0xFFFFFF)
+	} else if a.pauseScreen == pauseScreenControls && a.font != nil {
+		baseY := uiH/6 + 20
 		sens := fmt.Sprintf("Sensitivity: %d%%", a.sensitivityPercent())
-		a.font.drawCenteredString(rd, uiW/2, baseY+88+6, 0xFFFFFF)
-		a.font.drawCenteredString(fov, uiW/2, baseY+112+6, 0xFFFFFF)
-		a.font.drawCenteredString(sens, uiW/2, baseY+136+6, 0xFFFFFF)
+		a.font.drawCenteredString(sens, uiW/2, baseY+24+6, 0xFFFFFF)
 	}
 	a.drawMenuStatusLine()
 

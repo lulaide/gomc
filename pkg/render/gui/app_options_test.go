@@ -190,86 +190,100 @@ func TestOptionButtonsFOVAndViewBobbingState(t *testing.T) {
 	}
 }
 
-func TestPauseOptionVideoCyclesFramerateMode(t *testing.T) {
+func TestPauseOptionVideoOpensVideoScreenAndCyclesFramerate(t *testing.T) {
 	a := &App{
+		mainMenu:           false,
+		pauseScreen:        pauseScreenOptions,
 		optionButtons:      []*guiButton{},
+		videoButtons:       []*guiButton{},
 		limitFramerateMode: 1,
 		optionsKV:          make(map[string]string),
 		optionsPath:        filepath.Join(t.TempDir(), "options.txt"),
 	}
 	a.handlePauseOptionButton(buttonIDOptionVideo)
+	if a.pauseScreen != pauseScreenVideo {
+		t.Fatalf("pause option video should open video screen: got=%d want=%d", a.pauseScreen, pauseScreenVideo)
+	}
+	a.handlePauseVideoButton(buttonIDVideoFPS)
 	if a.limitFramerateMode != 2 {
 		t.Fatalf("first framerate cycle mismatch: got=%d want=2", a.limitFramerateMode)
 	}
-	a.handlePauseOptionButton(buttonIDOptionVideo)
+	a.handlePauseVideoButton(buttonIDVideoFPS)
 	if a.limitFramerateMode != 0 {
 		t.Fatalf("second framerate cycle mismatch: got=%d want=0", a.limitFramerateMode)
 	}
 }
 
-func TestPauseOptionLanguageCyclesGUIScaleMode(t *testing.T) {
+func TestPauseVideoGUIScaleCycles(t *testing.T) {
 	a := &App{
+		mainMenu:     false,
+		pauseScreen:  pauseScreenVideo,
 		width:        1280,
 		height:       720,
 		guiScaleMode: 0,
+		videoButtons: []*guiButton{},
 		optionsKV:    make(map[string]string),
 		optionsPath:  filepath.Join(t.TempDir(), "options.txt"),
 	}
-	a.handlePauseOptionButton(buttonIDOptionLanguage)
+	a.handlePauseVideoButton(buttonIDVideoGUIScale)
 	if a.guiScaleMode != 1 {
 		t.Fatalf("first gui scale cycle mismatch: got=%d want=1", a.guiScaleMode)
 	}
-	a.handlePauseOptionButton(buttonIDOptionLanguage)
-	a.handlePauseOptionButton(buttonIDOptionLanguage)
-	a.handlePauseOptionButton(buttonIDOptionLanguage)
+	a.handlePauseVideoButton(buttonIDVideoGUIScale)
+	a.handlePauseVideoButton(buttonIDVideoGUIScale)
+	a.handlePauseVideoButton(buttonIDVideoGUIScale)
 	if a.guiScaleMode != 0 {
 		t.Fatalf("gui scale should wrap to auto: got=%d want=0", a.guiScaleMode)
 	}
 }
 
-func TestPauseOptionControlsTogglesInvertMouse(t *testing.T) {
+func TestPauseOptionControlsOpensControlsScreenAndTogglesInvertMouse(t *testing.T) {
 	a := &App{
-		invertMouse: false,
-		optionsKV:   make(map[string]string),
-		optionsPath: filepath.Join(t.TempDir(), "options.txt"),
+		mainMenu:       false,
+		pauseScreen:    pauseScreenOptions,
+		invertMouse:    false,
+		optionButtons:  []*guiButton{},
+		controlButtons: []*guiButton{},
+		optionsKV:      make(map[string]string),
+		optionsPath:    filepath.Join(t.TempDir(), "options.txt"),
 	}
 	a.handlePauseOptionButton(buttonIDOptionControls)
+	if a.pauseScreen != pauseScreenControls {
+		t.Fatalf("pause option controls should open controls screen: got=%d want=%d", a.pauseScreen, pauseScreenControls)
+	}
+	a.handlePauseControlButton(buttonIDControlInvert)
 	if !a.invertMouse {
 		t.Fatal("invert mouse should toggle on")
 	}
-	a.handlePauseOptionButton(buttonIDOptionControls)
+	a.handlePauseControlButton(buttonIDControlInvert)
 	if a.invertMouse {
 		t.Fatal("invert mouse should toggle off")
 	}
 }
 
-func TestPauseOptionMusicTogglesGraphics(t *testing.T) {
+func TestPauseVideoGraphicsAndCloudsToggle(t *testing.T) {
 	a := &App{
+		mainMenu:      false,
+		pauseScreen:   pauseScreenVideo,
 		fancyGraphics: true,
+		cloudsEnabled: true,
+		videoButtons:  []*guiButton{},
 		optionsKV:     make(map[string]string),
 		optionsPath:   filepath.Join(t.TempDir(), "options.txt"),
 	}
-	a.handlePauseOptionButton(buttonIDOptionMusic)
+	a.handlePauseVideoButton(buttonIDVideoGraphics)
 	if a.fancyGraphics {
 		t.Fatal("graphics should toggle to fast")
 	}
-	a.handlePauseOptionButton(buttonIDOptionMusic)
+	a.handlePauseVideoButton(buttonIDVideoGraphics)
 	if !a.fancyGraphics {
 		t.Fatal("graphics should toggle back to fancy")
 	}
-}
-
-func TestPauseOptionSnooperTogglesClouds(t *testing.T) {
-	a := &App{
-		cloudsEnabled: true,
-		optionsKV:     make(map[string]string),
-		optionsPath:   filepath.Join(t.TempDir(), "options.txt"),
-	}
-	a.handlePauseOptionButton(buttonIDOptionSnooper)
+	a.handlePauseVideoButton(buttonIDVideoClouds)
 	if a.cloudsEnabled {
 		t.Fatal("clouds should toggle off")
 	}
-	a.handlePauseOptionButton(buttonIDOptionSnooper)
+	a.handlePauseVideoButton(buttonIDVideoClouds)
 	if !a.cloudsEnabled {
 		t.Fatal("clouds should toggle on")
 	}
