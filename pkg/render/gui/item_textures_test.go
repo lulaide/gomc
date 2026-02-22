@@ -2,7 +2,11 @@
 
 package gui
 
-import "testing"
+import (
+	"testing"
+
+	"github.com/lulaide/gomc/pkg/nbt"
+)
 
 func TestItemTextureNameForIDSpecialCases(t *testing.T) {
 	tests := []struct {
@@ -118,6 +122,20 @@ func TestItemColorForRenderPass(t *testing.T) {
 	}
 	if got := itemColorForRenderPass(298, 0, 1); got != 0xFFFFFF {
 		t.Fatalf("leather overlay color mismatch: got=%d want=%d", got, 0xFFFFFF)
+	}
+}
+
+func TestItemColorForRenderPassWithLeatherNBTColor(t *testing.T) {
+	stackTag := nbt.NewCompoundTag("")
+	displayTag := nbt.NewCompoundTag("display")
+	displayTag.SetInteger("color", 0x112233)
+	stackTag.SetCompoundTag("display", displayTag)
+
+	if got := itemColorForRenderPassWithTag(298, 0, 0, stackTag); got != 0x112233 {
+		t.Fatalf("leather NBT color mismatch: got=0x%06x want=0x112233", got)
+	}
+	if got := itemColorForRenderPassWithTag(298, 0, 1, stackTag); got != 0xFFFFFF {
+		t.Fatalf("leather overlay with NBT color mismatch: got=0x%06x want=0xFFFFFF", got)
 	}
 }
 

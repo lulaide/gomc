@@ -12,6 +12,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/lulaide/gomc/pkg/nbt"
 	"github.com/lulaide/gomc/pkg/network/crypt"
 	"github.com/lulaide/gomc/pkg/network/protocol"
 	"github.com/lulaide/gomc/pkg/world/chunk"
@@ -120,6 +121,7 @@ type HotbarSlotSnapshot struct {
 	ItemID     int16
 	StackSize  int8
 	ItemDamage int16
+	ItemTag    *nbt.CompoundTag
 }
 
 // InventorySlotSnapshot represents one player inventory slot in window 0.
@@ -127,6 +129,7 @@ type InventorySlotSnapshot struct {
 	ItemID     int16
 	StackSize  int8
 	ItemDamage int16
+	ItemTag    *nbt.CompoundTag
 }
 
 // PlayerInfoSnapshot mirrors one tab-list entry from Packet201.
@@ -151,6 +154,7 @@ type StateSnapshot struct {
 	HeldItemID   int16
 	HeldCount    int8
 	HeldDamage   int16
+	HeldItemTag  *nbt.CompoundTag
 	Hotbar       [hotbarCount]HotbarSlotSnapshot
 	GameType     int8
 	CanFly       bool
@@ -414,11 +418,22 @@ func (s *Session) emitEvent(ev Event) {
 	}
 }
 
+func cloneCompoundTag(tag *nbt.CompoundTag) *nbt.CompoundTag {
+	if tag == nil {
+		return nil
+	}
+	if copied, ok := tag.Copy().(*nbt.CompoundTag); ok {
+		return copied
+	}
+	return nil
+}
+
 func cloneItemStack(stack *protocol.ItemStack) *protocol.ItemStack {
 	if stack == nil {
 		return nil
 	}
 	out := *stack
+	out.Tag = cloneCompoundTag(stack.Tag)
 	return &out
 }
 
@@ -885,6 +900,7 @@ func (s *Session) Snapshot() StateSnapshot {
 	var heldItemID int16
 	var heldCount int8
 	var heldDamage int16
+	var heldTag *nbt.CompoundTag
 	var hotbar [hotbarCount]HotbarSlotSnapshot
 	for i := 0; i < hotbarCount; i++ {
 		slot := int(hotbarBaseWindowSlot) + i
@@ -896,6 +912,7 @@ func (s *Session) Snapshot() StateSnapshot {
 				ItemID:     stack.ItemID,
 				StackSize:  stack.StackSize,
 				ItemDamage: stack.ItemDamage,
+				ItemTag:    cloneCompoundTag(stack.Tag),
 			}
 		}
 	}
@@ -904,6 +921,7 @@ func (s *Session) Snapshot() StateSnapshot {
 			heldItemID = stack.ItemID
 			heldCount = stack.StackSize
 			heldDamage = stack.ItemDamage
+			heldTag = cloneCompoundTag(stack.Tag)
 		}
 	}
 
@@ -922,6 +940,7 @@ func (s *Session) Snapshot() StateSnapshot {
 		HeldItemID:   heldItemID,
 		HeldCount:    heldCount,
 		HeldDamage:   heldDamage,
+		HeldItemTag:  heldTag,
 		Hotbar:       hotbar,
 		GameType:     s.gameType,
 		CanFly:       s.canFly,
@@ -962,6 +981,7 @@ func (s *Session) InventorySnapshot() [playerWindowSlotCount]InventorySlotSnapsh
 			ItemID:     stack.ItemID,
 			StackSize:  stack.StackSize,
 			ItemDamage: stack.ItemDamage,
+			ItemTag:    cloneCompoundTag(stack.Tag),
 		}
 	}
 	return out

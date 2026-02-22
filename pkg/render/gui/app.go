@@ -1896,7 +1896,7 @@ func (a *App) drawInventorySlotText(stack netclient.InventorySlotSnapshot, x, y 
 	if stack.ItemID <= 0 || stack.StackSize <= 0 {
 		return
 	}
-	a.drawItemStackIcon(stack.ItemID, stack.ItemDamage, x, y, 16)
+	a.drawItemStackIconWithTag(stack.ItemID, stack.ItemDamage, stack.ItemTag, x, y, 16)
 	if a.font != nil && stack.StackSize > 1 {
 		count := strconv.Itoa(int(stack.StackSize))
 		a.font.drawStringWithShadow(count, x+17-a.font.getStringWidth(count), y+9, 0xFFFFFF)
@@ -4623,12 +4623,12 @@ func bowTextureNameForDrawTicks(drawTicks int) string {
 	}
 }
 
-func (a *App) firstPersonItemTexturePassesForStack(itemID, itemDamage int16, now time.Time) []itemTexturePass {
-	id := int(itemID)
+func (a *App) firstPersonItemTexturePassesForStack(snap netclient.StateSnapshot, now time.Time) []itemTexturePass {
+	id := int(snap.HeldItemID)
 	if id <= 0 {
 		return nil
 	}
-	passes := a.itemTexturePasses(itemID, itemDamage)
+	passes := a.itemTexturePassesWithTag(snap.HeldItemID, snap.HeldDamage, snap.HeldItemTag)
 	if id == 261 && a.localUsingItem && a.localUseAction == itemUseActionBow {
 		drawTicks := a.localUseElapsedTicks(now)
 		if tex := a.itemTextureByName(bowTextureNameForDrawTicks(drawTicks)); tex != nil {
@@ -4773,7 +4773,7 @@ func (a *App) drawFirstPersonArm(snap netclient.StateSnapshot) {
 			// - net.minecraft.src.Item#shouldRotateAroundWhenRendering()
 			gl.Rotatef(180.0, 0, 1, 0)
 		}
-		a.drawFirstPersonHeldItem(snap.HeldItemID, snap.HeldDamage)
+		a.drawFirstPersonHeldItem(snap)
 	} else {
 		// Empty-hand branch.
 		armScale := float32(0.8)
@@ -4802,8 +4802,8 @@ func (a *App) drawFirstPersonArm(snap netclient.StateSnapshot) {
 // Translation reference:
 // - net.minecraft.src.ItemRenderer#renderItemInFirstPerson(float)
 // - net.minecraft.src.RenderBlocks#renderBlockAsItem(...)
-func (a *App) drawFirstPersonHeldItem(itemID, itemDamage int16) {
-	id := int(itemID)
+func (a *App) drawFirstPersonHeldItem(snap netclient.StateSnapshot) {
+	id := int(snap.HeldItemID)
 	if id <= 0 {
 		return
 	}
@@ -4814,12 +4814,12 @@ func (a *App) drawFirstPersonHeldItem(itemID, itemDamage int16) {
 	if id > 0 && id <= 255 {
 		// Translation reference:
 		// - net.minecraft.src.ItemRenderer#renderItem(...) block render branch
-		if a.drawBlockItemModel(id, int(itemDamage), fullFaces) {
+		if a.drawBlockItemModel(id, int(snap.HeldDamage), fullFaces) {
 			return
 		}
 	}
 
-	passes := a.firstPersonItemTexturePassesForStack(itemID, itemDamage, time.Now())
+	passes := a.firstPersonItemTexturePassesForStack(snap, time.Now())
 	if len(passes) == 0 {
 		r, g, b := colorForBlock(id)
 		gl.Disable(gl.TEXTURE_2D)
@@ -5410,7 +5410,7 @@ func (a *App) drawHotbarItemIcons(snap netclient.StateSnapshot) {
 		if slot.ItemID <= 0 || slot.StackSize <= 0 {
 			continue
 		}
-		a.drawItemStackIcon(slot.ItemID, slot.ItemDamage, baseX+i*20+2, baseY, 16)
+		a.drawItemStackIconWithTag(slot.ItemID, slot.ItemDamage, slot.ItemTag, baseX+i*20+2, baseY, 16)
 	}
 }
 

@@ -5,6 +5,7 @@ import (
 	"io"
 	"testing"
 
+	"github.com/lulaide/gomc/pkg/nbt"
 	"github.com/lulaide/gomc/pkg/network/protocol"
 	"github.com/lulaide/gomc/pkg/world/chunk"
 )
@@ -424,6 +425,63 @@ func TestHandleInventoryPacketsAndSnapshotHeldItem(t *testing.T) {
 	snap = s.Snapshot()
 	if snap.HeldItemID != 4 || snap.HeldCount != 7 {
 		t.Fatalf("held item slot update mismatch: id=%d count=%d", snap.HeldItemID, snap.HeldCount)
+	}
+}
+
+func TestSnapshotInventoryIncludesClonedItemNBT(t *testing.T) {
+	s := newUnitTestSession(io.Discard)
+	displayTag := nbt.NewCompoundTag("display")
+	displayTag.SetInteger("color", 0x123456)
+	stackTag := nbt.NewCompoundTag("")
+	stackTag.SetCompoundTag("display", displayTag)
+
+	windowItems := make([]*protocol.ItemStack, 39)
+	windowItems[38] = &protocol.ItemStack{
+		ItemID:     298,
+		StackSize:  1,
+		ItemDamage: 0,
+		Tag:        stackTag,
+	}
+	if err := s.handlePacket(&protocol.Packet16BlockItemSwitch{ID: 2}); err != nil {
+		t.Fatalf("handle Packet16 failed: %v", err)
+	}
+	if err := s.handlePacket(&protocol.Packet104WindowItems{
+		WindowID:   0,
+		ItemStacks: windowItems,
+	}); err != nil {
+		t.Fatalf("handle Packet104 failed: %v", err)
+	}
+
+	snap := s.Snapshot()
+	if snap.HeldItemTag == nil {
+		t.Fatal("held item tag should be present in snapshot")
+	}
+	heldDisplay, ok := snap.HeldItemTag.GetTag("display").(*nbt.CompoundTag)
+	if !ok || heldDisplay == nil {
+		t.Fatal("held display compound should be present in snapshot")
+	}
+	colorTag, ok := heldDisplay.GetTag("color").(*nbt.IntTag)
+	if !ok || colorTag == nil || colorTag.Data != 0x123456 {
+		t.Fatalf("held color tag mismatch: ok=%t value=%v", ok, colorTag)
+	}
+
+	// Ensure snapshot carries a clone and does not mutate session-side storage.
+	heldDisplay.SetInteger("color", 0x654321)
+	inv := s.InventorySnapshot()
+	slot := inv[38]
+	if slot.ItemTag == nil {
+		t.Fatal("inventory slot tag should be present in snapshot")
+	}
+	slotDisplay, ok := slot.ItemTag.GetTag("display").(*nbt.CompoundTag)
+	if !ok || slotDisplay == nil {
+		t.Fatal("inventory slot display compound should be present")
+	}
+	slotColor, ok := slotDisplay.GetTag("color").(*nbt.IntTag)
+	if !ok || slotColor == nil {
+		t.Fatal("inventory slot color tag should be present")
+	}
+	if slotColor.Data != 0x123456 {
+		t.Fatalf("inventory slot color mismatch after held snapshot mutation: got=0x%06x want=0x123456", slotColor.Data)
 	}
 }
 

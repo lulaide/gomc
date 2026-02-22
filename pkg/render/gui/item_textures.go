@@ -11,6 +11,7 @@ import (
 	"unicode"
 
 	"github.com/go-gl/gl/v2.1/gl"
+	"github.com/lulaide/gomc/pkg/nbt"
 )
 
 var dyeColorTokens = [16]string{
@@ -232,13 +233,53 @@ func itemTextureNameForRenderPass(itemID, itemDamage, pass int) string {
 // - net.minecraft.src.ItemArmor#getColorFromItemStack(ItemStack,int)
 // - net.minecraft.src.ItemMonsterPlacer#getColorFromItemStack(ItemStack,int)
 func itemColorForRenderPass(itemID, itemDamage, pass int) int {
+	return itemColorForRenderPassWithTag(itemID, itemDamage, pass, nil)
+}
+
+func intFromNBTNumericTag(tag nbt.Tag) (int, bool) {
+	switch t := tag.(type) {
+	case *nbt.ByteTag:
+		return int(t.Data), true
+	case *nbt.ShortTag:
+		return int(t.Data), true
+	case *nbt.IntTag:
+		return int(t.Data), true
+	case *nbt.LongTag:
+		return int(t.Data), true
+	default:
+		return 0, false
+	}
+}
+
+// Translation references:
+// - net.minecraft.src.ItemArmor#getColor(ItemStack)
+// - net.minecraft.src.NBTTagCompound#getInteger(String)
+func leatherArmorColorFromStackTag(stackTag *nbt.CompoundTag) int {
+	const defaultLeatherColor = 10511680
+	if stackTag == nil {
+		return defaultLeatherColor
+	}
+	displayTag, ok := stackTag.GetTag("display").(*nbt.CompoundTag)
+	if !ok || displayTag == nil {
+		return defaultLeatherColor
+	}
+	colorTag := displayTag.GetTag("color")
+	if colorTag == nil {
+		return defaultLeatherColor
+	}
+	if color, ok := intFromNBTNumericTag(colorTag); ok {
+		return color & 0xFFFFFF
+	}
+	return defaultLeatherColor
+}
+
+func itemColorForRenderPassWithTag(itemID, itemDamage, pass int, itemTag *nbt.CompoundTag) int {
 	switch itemID {
 	case 298, 299, 300, 301:
 		if pass > 0 {
 			return 0xFFFFFF
 		}
-		// No NBT path in current client snapshot; vanilla default leather color.
-		return 10511680
+		return leatherArmorColorFromStackTag(itemTag)
 	case 383:
 		pair, ok := spawnEggColorsByEntityID[itemDamage]
 		if !ok {
@@ -254,6 +295,10 @@ func itemColorForRenderPass(itemID, itemDamage, pass int) int {
 }
 
 func (a *App) itemTexturePasses(itemID, itemDamage int16) []itemTexturePass {
+	return a.itemTexturePassesWithTag(itemID, itemDamage, nil)
+}
+
+func (a *App) itemTexturePassesWithTag(itemID, itemDamage int16, itemTag *nbt.CompoundTag) []itemTexturePass {
 	id := int(itemID)
 	damage := int(itemDamage)
 	if id <= 0 {
@@ -281,7 +326,7 @@ func (a *App) itemTexturePasses(itemID, itemDamage int16) []itemTexturePass {
 			if tex == nil {
 				continue
 			}
-			r, g, b := rgbIntToFloat(itemColorForRenderPass(id, damage, pass))
+			r, g, b := rgbIntToFloat(itemColorForRenderPassWithTag(id, damage, pass, itemTag))
 			out = append(out, itemTexturePass{tex: tex, r: r, g: g, b: b})
 		}
 		if len(out) > 0 {
@@ -290,7 +335,7 @@ func (a *App) itemTexturePasses(itemID, itemDamage int16) []itemTexturePass {
 	}
 
 	if tex := a.itemTextureForStack(id, damage); tex != nil {
-		r, g, b := rgbIntToFloat(itemColorForRenderPass(id, damage, 0))
+		r, g, b := rgbIntToFloat(itemColorForRenderPassWithTag(id, damage, 0, itemTag))
 		return []itemTexturePass{{tex: tex, r: r, g: g, b: b}}
 	}
 
@@ -366,12 +411,16 @@ func (a *App) itemTextureForStack(itemID, itemDamage int) *texture2D {
 }
 
 func (a *App) drawItemStackIcon(itemID, itemDamage int16, x, y, size int) bool {
+	return a.drawItemStackIconWithTag(itemID, itemDamage, nil, x, y, size)
+}
+
+func (a *App) drawItemStackIconWithTag(itemID, itemDamage int16, itemTag *nbt.CompoundTag, x, y, size int) bool {
 	id := int(itemID)
 	if id <= 0 || size <= 0 {
 		return false
 	}
 
-	passes := a.itemTexturePasses(itemID, itemDamage)
+	passes := a.itemTexturePassesWithTag(itemID, itemDamage, itemTag)
 	if len(passes) > 0 {
 		for _, pass := range passes {
 			if pass.tex == nil {
