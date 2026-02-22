@@ -49,3 +49,21 @@ func TestLocalUseRemainingTicks(t *testing.T) {
 		t.Fatalf("remaining mismatch: got=%d want about 22", remaining)
 	}
 }
+
+func TestBowTextureNameForDrawTicks(t *testing.T) {
+	tests := []struct {
+		drawTicks int
+		want      string
+	}{
+		{drawTicks: 0, want: "bow_standby"},
+		{drawTicks: 1, want: "bow_pulling_0"},
+		{drawTicks: 14, want: "bow_pulling_1"},
+		{drawTicks: 18, want: "bow_pulling_2"},
+	}
+	for _, tc := range tests {
+		got := bowTextureNameForDrawTicks(tc.drawTicks)
+		if got != tc.want {
+			t.Fatalf("drawTicks=%d texture mismatch: got=%q want=%q", tc.drawTicks, got, tc.want)
+		}
+	}
+}

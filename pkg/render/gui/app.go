@@ -4602,6 +4602,36 @@ func (a *App) localUseRemainingTicks(now time.Time) int {
 }
 
 // Translation references:
+// - net.minecraft.src.ItemBow#registerIcons(IconRegister)
+// - net.minecraft.src.ItemRenderer#renderItemInFirstPerson(float)
+func bowTextureNameForDrawTicks(drawTicks int) string {
+	switch {
+	case drawTicks >= 18:
+		return "bow_pulling_2"
+	case drawTicks > 13:
+		return "bow_pulling_1"
+	case drawTicks > 0:
+		return "bow_pulling_0"
+	default:
+		return "bow_standby"
+	}
+}
+
+func (a *App) firstPersonItemTextureForStack(itemID, itemDamage int16, now time.Time) *texture2D {
+	id := int(itemID)
+	if id <= 0 {
+		return nil
+	}
+	if id == 261 && a.localUsingItem && a.localUseAction == itemUseActionBow {
+		drawTicks := a.localUseElapsedTicks(now)
+		if tex := a.itemTextureByName(bowTextureNameForDrawTicks(drawTicks)); tex != nil {
+			return tex
+		}
+	}
+	return a.itemTextureForStack(id, int(itemDamage))
+}
+
+// Translation references:
 // - net.minecraft.src.ItemRenderer#renderItemInFirstPerson(float)
 // - net.minecraft.src.RenderPlayer#renderFirstPersonArm(EntityPlayer)
 func (a *App) drawFirstPersonArm(snap netclient.StateSnapshot) {
@@ -4775,7 +4805,7 @@ func (a *App) drawFirstPersonHeldItem(itemID, itemDamage int16) {
 		}
 	}
 
-	tex := a.itemTextureForStack(id, int(itemDamage))
+	tex := a.firstPersonItemTextureForStack(itemID, itemDamage, time.Now())
 	if tex == nil {
 		r, g, b := colorForBlock(id)
 		gl.Disable(gl.TEXTURE_2D)
