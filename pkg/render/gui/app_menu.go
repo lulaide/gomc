@@ -26,6 +26,7 @@ const (
 	menuScreenMultiplayer
 	menuScreenOptions
 	menuScreenVideo
+	menuScreenControls
 	menuScreenCreateWorld
 	menuScreenRenameWorld
 )
@@ -104,6 +105,13 @@ const (
 	buttonIDVideoViewBobbing = 1609
 	buttonIDVideoDone        = 1699
 
+	buttonIDControlSensMinus   = 1701
+	buttonIDControlSensPlus    = 1702
+	buttonIDControlInvert      = 1703
+	buttonIDControlDone        = 1704
+	buttonIDControlKeybinds    = 1705
+	buttonIDControlTouchscreen = 1706
+
 	buttonIDCreateDone          = 1401
 	buttonIDCreateCancel        = 1402
 	buttonIDCreateGameMode      = 1403
@@ -124,6 +132,7 @@ func (a *App) initAllMenuButtons() {
 	a.initMultiButtons()
 	a.initOptionButtons()
 	a.initVideoButtons()
+	a.initControlButtons()
 	a.initCreateButtons()
 	a.initRenameButtons()
 	if len(a.singleWorlds) == 0 {
@@ -132,6 +141,7 @@ func (a *App) initAllMenuButtons() {
 	a.updateSingleButtonsState()
 	a.updateOptionButtonsState()
 	a.updateVideoButtonsState()
+	a.updateControlButtonsState()
 	a.updateCreateButtonsState()
 	a.updateRenameButtonsState()
 }
@@ -210,6 +220,19 @@ func (a *App) initVideoButtons() {
 	}
 }
 
+func (a *App) initControlButtons() {
+	w, h := a.uiWidth(), a.uiHeight()
+	baseY := h/6 + 20
+	a.controlButtons = []*guiButton{
+		newButton(buttonIDControlKeybinds, w/2-155, baseY, 150, 20, "Key Bindings..."),
+		newButton(buttonIDControlTouchscreen, w/2+5, baseY, 150, 20, "Touchscreen Mode"),
+		newButton(buttonIDControlSensMinus, w/2-100, baseY+24, 20, 20, "-"),
+		newButton(buttonIDControlSensPlus, w/2+80, baseY+24, 20, 20, "+"),
+		newButton(buttonIDControlInvert, w/2-75, baseY+48, 150, 20, "Invert Mouse: OFF"),
+		newButton(buttonIDControlDone, w/2-100, baseY+84, 200, 20, "Done"),
+	}
+}
+
 func (a *App) initCreateButtons() {
 	w, h := a.uiWidth(), a.uiHeight()
 	a.createButtons = []*guiButton{
@@ -255,42 +278,104 @@ func (a *App) updateOptionButtonsState() {
 		if b == nil {
 			continue
 		}
+		b.Visible = true
 		switch b.ID {
 		case buttonIDOptionDifficulty:
 			b.Label = "Difficulty: " + difficultyName
-		case buttonIDOptionMusic:
-			b.Label = a.optionGraphicsLabel()
 			b.Enabled = true
+		case buttonIDOptionMusic:
+			if a.mainMenu {
+				b.Label = "Music & Sounds..."
+				b.Enabled = true
+			} else {
+				b.Label = a.optionGraphicsLabel()
+				b.Enabled = true
+			}
 		case buttonIDOptionVideo:
 			if a.mainMenu {
 				b.Label = "Video Settings..."
+				b.Enabled = true
 			} else {
 				b.Label = a.optionFramerateLabel()
+				b.Enabled = true
 			}
-			b.Enabled = true
 		case buttonIDOptionControls:
-			b.Label = a.optionInvertMouseLabel()
-			b.Enabled = true
+			if a.mainMenu {
+				b.Label = "Controls..."
+				b.Enabled = true
+			} else {
+				b.Label = a.optionInvertMouseLabel()
+				b.Enabled = true
+			}
 		case buttonIDOptionLanguage:
-			b.Label = a.optionGUIScaleLabel()
-			b.Enabled = true
+			if a.mainMenu {
+				b.Label = "Language..."
+				b.Enabled = false
+			} else {
+				b.Label = a.optionGUIScaleLabel()
+				b.Enabled = true
+			}
 		case buttonIDOptionViewBobbing:
-			b.Label = viewBobbingLabel
+			if a.mainMenu {
+				b.Visible = false
+				b.Enabled = false
+			} else {
+				b.Label = viewBobbingLabel
+				b.Enabled = true
+			}
 		case buttonIDOptionSnooper:
-			b.Label = a.optionCloudsLabel()
-			b.Enabled = true
+			if a.mainMenu {
+				b.Label = "Snooper Settings..."
+				b.Enabled = false
+			} else {
+				b.Label = a.optionCloudsLabel()
+				b.Enabled = true
+			}
 		case buttonIDOptionRDMinus:
-			b.Enabled = a.renderDistance < 3
+			if a.mainMenu {
+				b.Visible = false
+				b.Enabled = false
+			} else {
+				b.Enabled = a.renderDistance < 3
+			}
 		case buttonIDOptionRDPlus:
-			b.Enabled = a.renderDistance > 0
+			if a.mainMenu {
+				b.Visible = false
+				b.Enabled = false
+			} else {
+				b.Enabled = a.renderDistance > 0
+			}
 		case buttonIDOptionFOVMinus:
-			b.Enabled = a.fovSetting > 0.0
+			if a.mainMenu {
+				b.Visible = false
+				b.Enabled = false
+			} else {
+				b.Enabled = a.fovSetting > 0.0
+			}
 		case buttonIDOptionFOVPlus:
-			b.Enabled = a.fovSetting < 1.0
+			if a.mainMenu {
+				b.Visible = false
+				b.Enabled = false
+			} else {
+				b.Enabled = a.fovSetting < 1.0
+			}
 		case buttonIDOptionSensMinus:
-			b.Enabled = a.mouseSens > 0.0
+			if a.mainMenu {
+				b.Visible = false
+				b.Enabled = false
+			} else {
+				b.Enabled = a.mouseSens > 0.0
+			}
 		case buttonIDOptionSensPlus:
-			b.Enabled = a.mouseSens < 1.0
+			if a.mainMenu {
+				b.Visible = false
+				b.Enabled = false
+			} else {
+				b.Enabled = a.mouseSens < 1.0
+			}
+		case buttonIDOptionDone:
+			b.Enabled = true
+			b.Visible = true
 		}
 	}
 }
@@ -329,6 +414,32 @@ func (a *App) updateVideoButtonsState() {
 		case buttonIDVideoFOVPlus:
 			b.Enabled = a.fovSetting < 1.0
 		case buttonIDVideoDone:
+			b.Enabled = true
+		}
+	}
+}
+
+func (a *App) updateControlButtonsState() {
+	for _, b := range a.controlButtons {
+		if b == nil {
+			continue
+		}
+		b.Visible = true
+		switch b.ID {
+		case buttonIDControlKeybinds:
+			b.Label = "Key Bindings..."
+			b.Enabled = false
+		case buttonIDControlTouchscreen:
+			b.Label = "Touchscreen Mode"
+			b.Enabled = false
+		case buttonIDControlSensMinus:
+			b.Enabled = a.mouseSens > 0.0
+		case buttonIDControlSensPlus:
+			b.Enabled = a.mouseSens < 1.0
+		case buttonIDControlInvert:
+			b.Label = a.optionInvertMouseLabel()
+			b.Enabled = true
+		case buttonIDControlDone:
 			b.Enabled = true
 		}
 	}
@@ -583,6 +694,8 @@ func (a *App) currentMenuButtons() []*guiButton {
 		return a.optionButtons
 	case menuScreenVideo:
 		return a.videoButtons
+	case menuScreenControls:
+		return a.controlButtons
 	case menuScreenCreateWorld:
 		return a.createButtons
 	case menuScreenRenameWorld:
@@ -842,61 +955,89 @@ func (a *App) handleMenuButton(id int) bool {
 			a.optionDifficulty = (a.optionDifficulty + 1) & 3
 			changed = true
 		case buttonIDOptionRDMinus:
-			if a.renderDistance < 3 {
+			if !a.mainMenu && a.renderDistance < 3 {
 				a.renderDistance++
 				changed = true
 			}
 		case buttonIDOptionRDPlus:
-			if a.renderDistance > 0 {
+			if !a.mainMenu && a.renderDistance > 0 {
 				a.renderDistance--
 				changed = true
 			}
 		case buttonIDOptionFOVMinus:
-			a.fovSetting -= 0.05
-			if a.fovSetting < 0.0 {
-				a.fovSetting = 0.0
+			if !a.mainMenu {
+				a.fovSetting -= 0.05
+				if a.fovSetting < 0.0 {
+					a.fovSetting = 0.0
+				}
+				changed = true
 			}
-			changed = true
 		case buttonIDOptionFOVPlus:
-			a.fovSetting += 0.05
-			if a.fovSetting > 1.0 {
-				a.fovSetting = 1.0
+			if !a.mainMenu {
+				a.fovSetting += 0.05
+				if a.fovSetting > 1.0 {
+					a.fovSetting = 1.0
+				}
+				changed = true
 			}
-			changed = true
 		case buttonIDOptionViewBobbing:
-			a.viewBobbing = !a.viewBobbing
-			changed = true
+			if !a.mainMenu {
+				a.viewBobbing = !a.viewBobbing
+				changed = true
+			}
 		case buttonIDOptionVideo:
 			a.menuScreen = menuScreenVideo
 			a.menuStatus = ""
 		case buttonIDOptionLanguage:
-			a.guiScaleMode = (a.guiScaleMode + 1) % len(guiScaleModeNames)
-			a.updateGUIMetrics()
-			changed = true
+			if a.mainMenu {
+				a.menuStatus = "Language screen is not implemented yet."
+			} else {
+				a.guiScaleMode = (a.guiScaleMode + 1) % len(guiScaleModeNames)
+				a.updateGUIMetrics()
+				changed = true
+			}
 		case buttonIDOptionControls:
-			a.invertMouse = !a.invertMouse
-			changed = true
+			if a.mainMenu {
+				a.menuScreen = menuScreenControls
+				a.menuStatus = ""
+			} else {
+				a.invertMouse = !a.invertMouse
+				changed = true
+			}
 		case buttonIDOptionMusic:
-			a.fancyGraphics = !a.fancyGraphics
-			changed = true
+			if a.mainMenu {
+				a.menuStatus = "Music & Sounds screen is not implemented yet."
+			} else {
+				a.fancyGraphics = !a.fancyGraphics
+				changed = true
+			}
 		case buttonIDOptionSnooper:
-			a.cloudsEnabled = !a.cloudsEnabled
-			changed = true
+			if a.mainMenu {
+				a.menuStatus = "Snooper Settings are not implemented yet."
+			} else {
+				a.cloudsEnabled = !a.cloudsEnabled
+				changed = true
+			}
 		case buttonIDOptionSensMinus:
-			a.mouseSens -= 0.02
-			if a.mouseSens < 0.0 {
-				a.mouseSens = 0.0
+			if !a.mainMenu {
+				a.mouseSens -= 0.02
+				if a.mouseSens < 0.0 {
+					a.mouseSens = 0.0
+				}
+				changed = true
 			}
-			changed = true
 		case buttonIDOptionSensPlus:
-			a.mouseSens += 0.02
-			if a.mouseSens > 1.0 {
-				a.mouseSens = 1.0
+			if !a.mainMenu {
+				a.mouseSens += 0.02
+				if a.mouseSens > 1.0 {
+					a.mouseSens = 1.0
+				}
+				changed = true
 			}
-			changed = true
 		}
 		a.updateOptionButtonsState()
 		a.updateVideoButtonsState()
+		a.updateControlButtonsState()
 		if changed {
 			a.saveOptionsFile()
 		}
@@ -947,6 +1088,37 @@ func (a *App) handleMenuButton(id int) bool {
 		}
 		a.updateOptionButtonsState()
 		a.updateVideoButtonsState()
+		a.updateControlButtonsState()
+		if changed {
+			a.saveOptionsFile()
+		}
+	case menuScreenControls:
+		changed := false
+		switch id {
+		case buttonIDControlDone:
+			a.menuScreen = menuScreenOptions
+			a.menuStatus = ""
+		case buttonIDControlSensMinus:
+			a.mouseSens -= 0.02
+			if a.mouseSens < 0.0 {
+				a.mouseSens = 0.0
+			}
+			changed = true
+		case buttonIDControlSensPlus:
+			a.mouseSens += 0.02
+			if a.mouseSens > 1.0 {
+				a.mouseSens = 1.0
+			}
+			changed = true
+		case buttonIDControlInvert:
+			a.invertMouse = !a.invertMouse
+			changed = true
+		case buttonIDControlKeybinds:
+			a.menuStatus = "Key Bindings screen is not implemented yet."
+		case buttonIDControlTouchscreen:
+			a.menuStatus = "Touchscreen mode is not available on desktop."
+		}
+		a.updateControlButtonsState()
 		if changed {
 			a.saveOptionsFile()
 		}
@@ -1668,6 +1840,8 @@ func (a *App) drawMenuScreen() {
 		a.drawOptionsMenu()
 	case menuScreenVideo:
 		a.drawVideoMenu()
+	case menuScreenControls:
+		a.drawControlsMenu()
 	case menuScreenCreateWorld:
 		a.drawCreateWorldMenu()
 	case menuScreenRenameWorld:
@@ -1686,6 +1860,10 @@ func (a *App) handleMenuEscape() bool {
 		a.menuStatus = ""
 		return true
 	case menuScreenVideo:
+		a.menuScreen = menuScreenOptions
+		a.menuStatus = ""
+		return true
+	case menuScreenControls:
 		a.menuScreen = menuScreenOptions
 		a.menuStatus = ""
 		return true
@@ -1944,7 +2122,7 @@ func (a *App) drawOptionsMenu() {
 		b.draw(a.font, a.texWidgets, a.mouseX, a.mouseY)
 	}
 
-	if a.font != nil {
+	if !a.mainMenu && a.font != nil {
 		baseY := a.uiHeight()/6 + 12
 		rd := a.optionRenderDistanceLabel()
 		fov := a.optionFOVLabel()
@@ -1952,6 +2130,26 @@ func (a *App) drawOptionsMenu() {
 		a.font.drawCenteredString(rd, a.uiWidth()/2, baseY+88+6, 0xFFFFFF)
 		a.font.drawCenteredString(fov, a.uiWidth()/2, baseY+112+6, 0xFFFFFF)
 		a.font.drawCenteredString(sens, a.uiWidth()/2, baseY+136+6, 0xFFFFFF)
+	}
+
+	a.drawMenuStatusLine()
+	gl.Disable(gl.BLEND)
+	gl.Enable(gl.CULL_FACE)
+	gl.Enable(gl.DEPTH_TEST)
+}
+
+func (a *App) drawControlsMenu() {
+	a.drawMenuBackground("Controls")
+	a.updateControlButtonsState()
+
+	for _, b := range a.controlButtons {
+		b.draw(a.font, a.texWidgets, a.mouseX, a.mouseY)
+	}
+
+	if a.font != nil {
+		baseY := a.uiHeight()/6 + 20
+		sens := fmt.Sprintf("Sensitivity: %d%%", a.sensitivityPercent())
+		a.font.drawCenteredString(sens, a.uiWidth()/2, baseY+24+6, 0xFFFFFF)
 	}
 
 	a.drawMenuStatusLine()
