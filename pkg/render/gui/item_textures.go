@@ -92,6 +92,35 @@ var spawnEggColorsByEntityID = map[int]spawnEggColorPair{
 	120: {primary: 5651507, secondary: 12422002},  // Villager
 }
 
+var entityStringIDByID = map[int]string{
+	// Translation reference:
+	// - net.minecraft.src.EntityList static addMapping(Class,String,int)
+	50:  "Creeper",
+	51:  "Skeleton",
+	52:  "Spider",
+	54:  "Zombie",
+	55:  "Slime",
+	56:  "Ghast",
+	57:  "PigZombie",
+	58:  "Enderman",
+	59:  "CaveSpider",
+	60:  "Silverfish",
+	61:  "Blaze",
+	62:  "LavaSlime",
+	65:  "Bat",
+	66:  "Witch",
+	90:  "Pig",
+	91:  "Sheep",
+	92:  "Cow",
+	93:  "Chicken",
+	94:  "Squid",
+	95:  "Wolf",
+	96:  "MushroomCow",
+	98:  "Ozelot",
+	100: "EntityHorse",
+	120: "Villager",
+}
+
 func (a *App) loadItemTextures() error {
 	a.itemTextures = make(map[string]*texture2D)
 	root := filepath.Join(a.assetsRoot, "textures", "items")
@@ -368,6 +397,24 @@ func (a *App) itemDisplayName(itemID, itemDamage int16) string {
 	id := int(itemID)
 	if id <= 0 {
 		return ""
+	}
+
+	if id == 383 {
+		base := ""
+		if key := itemLangKeyForStack(id, int(itemDamage)); key != "" {
+			if localized, ok := a.langEN[key]; ok && localized != "" {
+				base = localized
+			}
+		}
+		if base == "" {
+			base = "Spawn Egg"
+		}
+		if entityKey, ok := entityStringIDByID[int(itemDamage)]; ok && entityKey != "" {
+			if localized, ok := a.langEN["entity."+entityKey+".name"]; ok && localized != "" {
+				return strings.TrimSpace(base + " " + localized)
+			}
+		}
+		return base
 	}
 
 	if key := blockLangKeyForID(id); key != "" {

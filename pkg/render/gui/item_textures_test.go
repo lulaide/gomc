@@ -120,3 +120,26 @@ func TestItemColorForRenderPass(t *testing.T) {
 		t.Fatalf("leather overlay color mismatch: got=%d want=%d", got, 0xFFFFFF)
 	}
 }
+
+func TestItemDisplayNameSpawnEggIncludesEntityName(t *testing.T) {
+	a := &App{
+		langEN: map[string]string{
+			"item.monsterPlacer.name": "Spawn",
+			"entity.Pig.name":         "Pig",
+		},
+	}
+	if got := a.itemDisplayName(383, 90); got != "Spawn Pig" {
+		t.Fatalf("spawn egg display name mismatch: got=%q want=%q", got, "Spawn Pig")
+	}
+}
+
+func TestItemDisplayNameSpawnEggFallsBackToBaseName(t *testing.T) {
+	a := &App{
+		langEN: map[string]string{
+			"item.monsterPlacer.name": "Spawn",
+		},
+	}
+	if got := a.itemDisplayName(383, 999); got != "Spawn" {
+		t.Fatalf("spawn egg fallback name mismatch: got=%q want=%q", got, "Spawn")
+	}
+}
