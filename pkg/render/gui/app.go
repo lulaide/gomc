@@ -138,6 +138,8 @@ type App struct {
 	invertMouse    bool
 	fovSetting     float64
 	viewBobbing    bool
+	fancyGraphics  bool
+	cloudsEnabled  bool
 	activeWorld    string
 	playWorldFn    func(worldDir string) (*netclient.Session, error)
 
@@ -372,6 +374,8 @@ func Run(session *netclient.Session, cfg Config) error {
 		invertMouse:        false,
 		fovSetting:         0.0,
 		viewBobbing:        true,
+		fancyGraphics:      true,
+		cloudsEnabled:      true,
 		activeWorld:        cfg.CurrentWorld,
 		playWorldFn:        cfg.PlayWorld,
 		firstMouse:         true,
@@ -1416,6 +1420,12 @@ func (a *App) handlePauseOptionButton(id int) {
 	case buttonIDOptionControls:
 		a.invertMouse = !a.invertMouse
 		changed = true
+	case buttonIDOptionMusic:
+		a.fancyGraphics = !a.fancyGraphics
+		changed = true
+	case buttonIDOptionSnooper:
+		a.cloudsEnabled = !a.cloudsEnabled
+		changed = true
 	case buttonIDOptionSensMinus:
 		a.mouseSens -= 0.02
 		if a.mouseSens < 0.0 {
@@ -1428,8 +1438,6 @@ func (a *App) handlePauseOptionButton(id int) {
 			a.mouseSens = 1.0
 		}
 		changed = true
-	case buttonIDOptionMusic, buttonIDOptionSnooper:
-		a.menuStatus = "This options page is not implemented yet."
 	}
 	a.updateOptionButtonsState()
 	if changed {
@@ -1905,7 +1913,9 @@ func (a *App) render(snap netclient.StateSnapshot, target blockTarget) {
 	gl.Rotatef(float32(a.pitch), 1, 0, 0)
 	gl.Rotatef(float32(a.yaw+180.0), 0, 1, 0)
 	a.drawSky(snap, partial)
-	a.drawCloudLayer(snap, partial)
+	if a.shouldRenderClouds() {
+		a.drawCloudLayer(snap, partial)
+	}
 	camX, camY, camZ := a.interpolatedRenderPlayer(alpha, snap)
 	gl.Translatef(float32(-camX), float32(-(camY + playerEyeHeight)), float32(-camZ))
 	a.drawWorld(snap)
@@ -2202,8 +2212,22 @@ func (a *App) drawSkyGradientDome(worldTime int64, partial float32) {
 }
 
 // Translation reference:
-// - net.minecraft.src.RenderGlobal.renderCloudsFancy(...)
+// - net.minecraft.src.GameSettings.shouldRenderClouds()
+func (a *App) shouldRenderClouds() bool {
+	return a.cloudsEnabled && a.renderDistance < 2
+}
+
 func (a *App) drawCloudLayer(snap netclient.StateSnapshot, partial float32) {
+	if a.fancyGraphics {
+		a.drawCloudLayerFancy(snap, partial)
+		return
+	}
+	a.drawCloudLayerFast(snap, partial)
+}
+
+// Translation reference:
+// - net.minecraft.src.RenderGlobal.renderCloudsFancy(...)
+func (a *App) drawCloudLayerFancy(snap netclient.StateSnapshot, partial float32) {
 	if a.texClouds == nil {
 		return
 	}
@@ -2360,6 +2384,65 @@ func (a *App) drawCloudLayer(snap netclient.StateSnapshot, partial float32) {
 
 	gl.ColorMask(true, true, true, true)
 	gl.PopMatrix()
+	gl.Color4f(1.0, 1.0, 1.0, 1.0)
+	gl.Disable(gl.BLEND)
+	gl.Enable(gl.CULL_FACE)
+}
+
+// Translation reference:
+// - net.minecraft.src.RenderGlobal.renderClouds(...)
+func (a *App) drawCloudLayerFast(snap netclient.StateSnapshot, partial float32) {
+	if a.texClouds == nil {
+		return
+	}
+	camX, camY, camZ := a.interpolatedRenderPlayer(float64(partial), snap)
+	cloudR, cloudG, cloudB := cloudColor(snap.WorldTime, partial)
+	const (
+		tileSize     = 32
+		radius       = 256
+		uvScale      = float32(4.8828125e-4) // 1/2048
+		scrollFactor = 0.029999999329447746
+	)
+	cloudAnim := float64(snap.WorldAge) + float64(partial)
+	px := camX + cloudAnim*scrollFactor
+	pz := camZ
+	sectionX := math.Floor(px / 2048.0)
+	sectionZ := math.Floor(pz / 2048.0)
+	px -= sectionX * 2048.0
+	pz -= sectionZ * 2048.0
+	cloudY := float32(128.0-camY) + 0.33
+
+	uBase := float32(px) * uvScale
+	vBase := float32(pz) * uvScale
+
+	gl.Disable(gl.CULL_FACE)
+	gl.Enable(gl.TEXTURE_2D)
+	gl.Enable(gl.BLEND)
+	gl.BlendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA)
+	a.texClouds.bind()
+	gl.Color4f(cloudR, cloudG, cloudB, 0.8)
+	gl.Begin(gl.QUADS)
+	for x := -radius; x < radius; x += tileSize {
+		for z := -radius; z < radius; z += tileSize {
+			x0 := float32(x)
+			z0 := float32(z)
+			x1 := x0 + tileSize
+			z1 := z0 + tileSize
+			u0 := x0*uvScale + uBase
+			v0 := z0*uvScale + vBase
+			u1 := x1*uvScale + uBase
+			v1 := z1*uvScale + vBase
+			gl.TexCoord2f(u0, v1)
+			gl.Vertex3f(x0, cloudY, z1)
+			gl.TexCoord2f(u1, v1)
+			gl.Vertex3f(x1, cloudY, z1)
+			gl.TexCoord2f(u1, v0)
+			gl.Vertex3f(x1, cloudY, z0)
+			gl.TexCoord2f(u0, v0)
+			gl.Vertex3f(x0, cloudY, z0)
+		}
+	}
+	gl.End()
 	gl.Color4f(1.0, 1.0, 1.0, 1.0)
 	gl.Disable(gl.BLEND)
 	gl.Enable(gl.CULL_FACE)
@@ -2619,6 +2702,20 @@ func (a *App) optionInvertMouseLabel() string {
 		return "Invert Mouse: ON"
 	}
 	return "Invert Mouse: OFF"
+}
+
+func (a *App) optionGraphicsLabel() string {
+	if a.fancyGraphics {
+		return "Graphics: Fancy"
+	}
+	return "Graphics: Fast"
+}
+
+func (a *App) optionCloudsLabel() string {
+	if a.cloudsEnabled {
+		return "Clouds: ON"
+	}
+	return "Clouds: OFF"
 }
 
 func (a *App) drawWorld(snap netclient.StateSnapshot) {
@@ -5722,6 +5819,14 @@ func (a *App) loadOptionsFile() {
 			if v, parseErr := strconv.Atoi(value); parseErr == nil {
 				a.optionDifficulty = v & 3
 			}
+		case "fancyGraphics":
+			if v, parseErr := strconv.ParseBool(value); parseErr == nil {
+				a.fancyGraphics = v
+			}
+		case "clouds":
+			if v, parseErr := strconv.ParseBool(value); parseErr == nil {
+				a.cloudsEnabled = v
+			}
 		}
 	}
 	if err := scanner.Err(); err != nil {
@@ -5746,6 +5851,8 @@ func (a *App) saveOptionsFile() {
 	a.optionsKV["mouseSensitivity"] = strconv.FormatFloat(clampFloat64(a.mouseSens, 0.0, 1.0), 'f', 6, 64)
 	a.optionsKV["fpsLimit"] = strconv.Itoa(clampInt(a.limitFramerateMode, 0, 2))
 	a.optionsKV["difficulty"] = strconv.Itoa(a.optionDifficulty & 3)
+	a.optionsKV["fancyGraphics"] = strconv.FormatBool(a.fancyGraphics)
+	a.optionsKV["clouds"] = strconv.FormatBool(a.cloudsEnabled)
 
 	keys := make([]string, 0, len(a.optionsKV))
 	for k := range a.optionsKV {

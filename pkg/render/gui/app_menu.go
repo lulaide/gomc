@@ -174,9 +174,9 @@ func (a *App) initOptionButtons() {
 		newButton(buttonIDOptionFOVPlus, w/2+80, baseY+106, 20, 20, "+"),
 		newButton(buttonIDOptionSensMinus, w/2-100, baseY+130, 20, 20, "-"),
 		newButton(buttonIDOptionSensPlus, w/2+80, baseY+130, 20, 20, "+"),
-		newButton(buttonIDOptionDone, w/2-100, baseY+164, 200, 20, "Done"),
+		newButton(buttonIDOptionSnooper, w/2-100, baseY+164, 98, 20, "Clouds: ON"),
+		newButton(buttonIDOptionDone, w/2+2, baseY+164, 98, 20, "Done"),
 	}
-	a.optionButtons[0].Enabled = false
 }
 
 func (a *App) initCreateButtons() {
@@ -227,6 +227,9 @@ func (a *App) updateOptionButtonsState() {
 		switch b.ID {
 		case buttonIDOptionDifficulty:
 			b.Label = "Difficulty: " + difficultyName
+		case buttonIDOptionMusic:
+			b.Label = a.optionGraphicsLabel()
+			b.Enabled = true
 		case buttonIDOptionVideo:
 			b.Label = a.optionFramerateLabel()
 			b.Enabled = true
@@ -238,6 +241,9 @@ func (a *App) updateOptionButtonsState() {
 			b.Enabled = true
 		case buttonIDOptionViewBobbing:
 			b.Label = viewBobbingLabel
+		case buttonIDOptionSnooper:
+			b.Label = a.optionCloudsLabel()
+			b.Enabled = true
 		case buttonIDOptionRDMinus:
 			b.Enabled = a.renderDistance < 3
 		case buttonIDOptionRDPlus:
@@ -794,6 +800,12 @@ func (a *App) handleMenuButton(id int) bool {
 		case buttonIDOptionControls:
 			a.invertMouse = !a.invertMouse
 			changed = true
+		case buttonIDOptionMusic:
+			a.fancyGraphics = !a.fancyGraphics
+			changed = true
+		case buttonIDOptionSnooper:
+			a.cloudsEnabled = !a.cloudsEnabled
+			changed = true
 		case buttonIDOptionSensMinus:
 			a.mouseSens -= 0.02
 			if a.mouseSens < 0.0 {
@@ -806,8 +818,6 @@ func (a *App) handleMenuButton(id int) bool {
 				a.mouseSens = 1.0
 			}
 			changed = true
-		case buttonIDOptionMusic, buttonIDOptionSnooper:
-			a.menuStatus = "This options page is not implemented yet."
 		}
 		a.updateOptionButtonsState()
 		if changed {

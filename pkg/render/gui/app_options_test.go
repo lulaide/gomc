@@ -46,6 +46,8 @@ func TestOptionButtonsFOVAndViewBobbingState(t *testing.T) {
 		fovSetting:         0.0,
 		invertMouse:        false,
 		viewBobbing:        true,
+		fancyGraphics:      true,
+		cloudsEnabled:      true,
 		guiScaleMode:       0,
 		limitFramerateMode: 1,
 	}
@@ -86,6 +88,24 @@ func TestOptionButtonsFOVAndViewBobbingState(t *testing.T) {
 		}
 		t.Fatalf("invert mouse button mismatch: got label=%q enabled=%t", got, enabled)
 	}
+	if b := findOptionButton(a.optionButtons, buttonIDOptionMusic); b == nil || !b.Enabled || b.Label != "Graphics: Fancy" {
+		got := "<nil>"
+		enabled := false
+		if b != nil {
+			got = b.Label
+			enabled = b.Enabled
+		}
+		t.Fatalf("graphics button mismatch: got label=%q enabled=%t", got, enabled)
+	}
+	if b := findOptionButton(a.optionButtons, buttonIDOptionSnooper); b == nil || !b.Enabled || b.Label != "Clouds: ON" {
+		got := "<nil>"
+		enabled := false
+		if b != nil {
+			got = b.Label
+			enabled = b.Enabled
+		}
+		t.Fatalf("clouds button mismatch: got label=%q enabled=%t", got, enabled)
+	}
 	if b := findOptionButton(a.optionButtons, buttonIDOptionRDMinus); b == nil || !b.Enabled {
 		t.Fatal("render distance minus should be enabled at far")
 	}
@@ -110,6 +130,8 @@ func TestOptionButtonsFOVAndViewBobbingState(t *testing.T) {
 	a.fovSetting = 1.0
 	a.invertMouse = true
 	a.viewBobbing = false
+	a.fancyGraphics = false
+	a.cloudsEnabled = false
 	a.guiScaleMode = 3
 	a.updateOptionButtonsState()
 
@@ -133,6 +155,20 @@ func TestOptionButtonsFOVAndViewBobbingState(t *testing.T) {
 			got = b.Label
 		}
 		t.Fatalf("invert mouse label mismatch at on: got=%q want=%q", got, "Invert Mouse: ON")
+	}
+	if b := findOptionButton(a.optionButtons, buttonIDOptionMusic); b == nil || b.Label != "Graphics: Fast" {
+		got := "<nil>"
+		if b != nil {
+			got = b.Label
+		}
+		t.Fatalf("graphics label mismatch at fast: got=%q want=%q", got, "Graphics: Fast")
+	}
+	if b := findOptionButton(a.optionButtons, buttonIDOptionSnooper); b == nil || b.Label != "Clouds: OFF" {
+		got := "<nil>"
+		if b != nil {
+			got = b.Label
+		}
+		t.Fatalf("clouds label mismatch at off: got=%q want=%q", got, "Clouds: OFF")
 	}
 	if b := findOptionButton(a.optionButtons, buttonIDOptionRDPlus); b == nil || !b.Enabled {
 		t.Fatal("render distance plus should be enabled at tiny")
@@ -207,6 +243,58 @@ func TestPauseOptionControlsTogglesInvertMouse(t *testing.T) {
 	}
 }
 
+func TestPauseOptionMusicTogglesGraphics(t *testing.T) {
+	a := &App{
+		fancyGraphics: true,
+		optionsKV:     make(map[string]string),
+		optionsPath:   filepath.Join(t.TempDir(), "options.txt"),
+	}
+	a.handlePauseOptionButton(buttonIDOptionMusic)
+	if a.fancyGraphics {
+		t.Fatal("graphics should toggle to fast")
+	}
+	a.handlePauseOptionButton(buttonIDOptionMusic)
+	if !a.fancyGraphics {
+		t.Fatal("graphics should toggle back to fancy")
+	}
+}
+
+func TestPauseOptionSnooperTogglesClouds(t *testing.T) {
+	a := &App{
+		cloudsEnabled: true,
+		optionsKV:     make(map[string]string),
+		optionsPath:   filepath.Join(t.TempDir(), "options.txt"),
+	}
+	a.handlePauseOptionButton(buttonIDOptionSnooper)
+	if a.cloudsEnabled {
+		t.Fatal("clouds should toggle off")
+	}
+	a.handlePauseOptionButton(buttonIDOptionSnooper)
+	if !a.cloudsEnabled {
+		t.Fatal("clouds should toggle on")
+	}
+}
+
+func TestShouldRenderCloudsRespectsDistanceAndToggle(t *testing.T) {
+	a := &App{renderDistance: 0, cloudsEnabled: true}
+	if !a.shouldRenderClouds() {
+		t.Fatal("clouds should render at far when enabled")
+	}
+	a.renderDistance = 1
+	if !a.shouldRenderClouds() {
+		t.Fatal("clouds should render at normal when enabled")
+	}
+	a.renderDistance = 2
+	if a.shouldRenderClouds() {
+		t.Fatal("clouds should not render at short distance")
+	}
+	a.renderDistance = 0
+	a.cloudsEnabled = false
+	if a.shouldRenderClouds() {
+		t.Fatal("clouds should not render when disabled")
+	}
+}
+
 func TestRenderDistanceModeMappings(t *testing.T) {
 	if got := renderDistanceModeToChunks(0); got != 16 {
 		t.Fatalf("mode far chunks mismatch: got=%d want=16", got)
@@ -240,6 +328,8 @@ func TestOptionsFileLoadAndSave(t *testing.T) {
 		"mouseSensitivity:0.30",
 		"fpsLimit:2",
 		"difficulty:3",
+		"fancyGraphics:false",
+		"clouds:false",
 		"customKey:customValue",
 	}, "\n") + "\n"
 	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
@@ -253,6 +343,8 @@ func TestOptionsFileLoadAndSave(t *testing.T) {
 		renderDistance:     1,
 		invertMouse:        false,
 		viewBobbing:        true,
+		fancyGraphics:      true,
+		cloudsEnabled:      true,
 		guiScaleMode:       0,
 		limitFramerateMode: 1,
 		optionDifficulty:   1,
@@ -282,6 +374,12 @@ func TestOptionsFileLoadAndSave(t *testing.T) {
 	if a.optionDifficulty != 3 {
 		t.Fatalf("loaded difficulty mismatch: got=%d want=3", a.optionDifficulty)
 	}
+	if a.fancyGraphics {
+		t.Fatal("loaded fancyGraphics should be false")
+	}
+	if a.cloudsEnabled {
+		t.Fatal("loaded clouds should be false")
+	}
 
 	a.fovSetting = 1.0
 	a.renderDistance = 0
@@ -291,6 +389,8 @@ func TestOptionsFileLoadAndSave(t *testing.T) {
 	a.mouseSens = 0.5
 	a.limitFramerateMode = 0
 	a.optionDifficulty = 0
+	a.fancyGraphics = true
+	a.cloudsEnabled = true
 	a.saveOptionsFile()
 
 	updatedBytes, err := os.ReadFile(path)
@@ -307,6 +407,8 @@ func TestOptionsFileLoadAndSave(t *testing.T) {
 		"mouseSensitivity:0.500000",
 		"fpsLimit:0",
 		"difficulty:0",
+		"fancyGraphics:true",
+		"clouds:true",
 		"customKey:customValue",
 	}
 	for _, want := range checks {

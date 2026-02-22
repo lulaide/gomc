@@ -26,3 +26,6 @@ New World (6)/
 
 # Optional local assets copy (large, not source)
 assets/
+
+# Local client options
+options.txt
