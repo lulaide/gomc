@@ -1269,9 +1269,13 @@ func (a *App) handleInput(deltaSeconds float64) bool {
 
 	if usePressed && !a.prevUseInput {
 		snapNow := a.session.Snapshot()
-		target := a.pickBlockTarget(snapNow, interactReach)
-		if target.Hit {
-			_ = a.session.PlaceHeldBlock(int32(target.X), int32(target.Y), int32(target.Z), target.Face)
+		blockHit := a.pickBlockTarget(snapNow, interactReach)
+		entityHit := a.pickEntityTarget(snapNow, interactReach)
+		blockDist := a.blockTargetDistance(snapNow, blockHit)
+		if entityHit.Hit && (!blockHit.Hit || entityHit.Dist <= blockDist) {
+			_ = a.session.UseEntity(entityHit.EntityID, false)
+		} else if blockHit.Hit {
+			_ = a.session.PlaceHeldBlock(int32(blockHit.X), int32(blockHit.Y), int32(blockHit.Z), blockHit.Face)
 			audio.PlayPlaceHeldItem(int(snapNow.HeldItemID))
 		} else {
 			_ = a.session.UseHeldItemInAir()
