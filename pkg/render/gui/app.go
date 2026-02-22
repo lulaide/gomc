@@ -2992,12 +2992,12 @@ func (a *App) appendTexturedBlockBatches(
 		return a.appendCrossedPlantBatches(x, y, z, blockX, blockY, blockZ, blockID, blockMeta, solidBatches)
 	}
 
-	top := a.blockTextureForFace(blockID, faceUp)
-	bottom := a.blockTextureForFace(blockID, faceDown)
-	north := a.blockTextureForFace(blockID, faceNorth)
-	south := a.blockTextureForFace(blockID, faceSouth)
-	west := a.blockTextureForFace(blockID, faceWest)
-	east := a.blockTextureForFace(blockID, faceEast)
+	top := a.blockTextureForFaceMeta(blockID, blockMeta, faceUp)
+	bottom := a.blockTextureForFaceMeta(blockID, blockMeta, faceDown)
+	north := a.blockTextureForFaceMeta(blockID, blockMeta, faceNorth)
+	south := a.blockTextureForFaceMeta(blockID, blockMeta, faceSouth)
+	west := a.blockTextureForFaceMeta(blockID, blockMeta, faceWest)
+	east := a.blockTextureForFaceMeta(blockID, blockMeta, faceEast)
 
 	if (faces.Up && top == nil) ||
 		(faces.Down && bottom == nil) ||

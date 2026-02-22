@@ -177,6 +177,21 @@ func (a *App) loadBlockTextures() error {
 			}
 		}
 	}
+	// Translation reference:
+	// - net.minecraft.src.BlockLeaves#setGraphicsLevel(boolean)
+	// Both fancy and opaque leaves variants are used depending on graphics setting.
+	for _, n := range [...]string{
+		"leaves_oak.png",
+		"leaves_spruce.png",
+		"leaves_birch.png",
+		"leaves_jungle.png",
+		"leaves_oak_opaque.png",
+		"leaves_spruce_opaque.png",
+		"leaves_birch_opaque.png",
+		"leaves_jungle_opaque.png",
+	} {
+		needed[n] = struct{}{}
+	}
 
 	if len(needed) == 0 {
 		return nil
@@ -269,30 +284,56 @@ func loadColorMapPNG(path string) ([]uint32, error) {
 }
 
 func (a *App) blockTextureForFace(blockID int, face int) *texture2D {
+	return a.blockTextureForFaceMeta(blockID, 0, face)
+}
+
+func (a *App) blockTextureForFaceMeta(blockID, blockMeta, face int) *texture2D {
+	if name := a.blockTextureNameForFace(blockID, blockMeta, face); name != "" {
+		return a.blockTextures[name]
+	}
+	return nil
+}
+
+func (a *App) blockTextureNameForFace(blockID, blockMeta, face int) string {
 	def, ok := a.blockTextureDefs[blockID]
 	if !ok {
-		return nil
+		return ""
 	}
 
-	name := ""
+	// Translation reference:
+	// - net.minecraft.src.BlockLeaves / BlockLeavesBase#setGraphicsLevel(boolean)
+	// - metadata variants: oak/spruce/birch/jungle.
+	if blockID == 18 {
+		base := "leaves_oak"
+		switch blockMeta & 3 {
+		case 1:
+			base = "leaves_spruce"
+		case 2:
+			base = "leaves_birch"
+		case 3:
+			base = "leaves_jungle"
+		}
+		if !a.fancyGraphics {
+			base += "_opaque"
+		}
+		return base + ".png"
+	}
+
 	switch face {
 	case faceDown:
-		name = def.Down
+		return def.Down
 	case faceUp:
-		name = def.Up
+		return def.Up
 	case faceNorth:
-		name = def.North
+		return def.North
 	case faceSouth:
-		name = def.South
+		return def.South
 	case faceWest:
-		name = def.West
+		return def.West
 	case faceEast:
-		name = def.East
+		return def.East
 	}
-	if name == "" {
-		return nil
-	}
-	return a.blockTextures[name]
+	return ""
 }
 
 func (a *App) blockSideOverlayTexture(blockID int) *texture2D {
