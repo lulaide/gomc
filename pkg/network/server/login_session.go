@@ -225,12 +225,15 @@ type loginSession struct {
 	seenBy             map[*loginSession]struct{}
 
 	chatSpamThresholdCount int
-	clientRenderDistance   int8
-	clientLocale           string
-	heldItemSlot           int16
-	gameType               int8
-	inventory              [playerWindowSlots]*protocol.ItemStack
-	cursorItem             *protocol.ItemStack
+	// Translation reference:
+	// - net.minecraft.src.NetServerHandler.creativeItemCreationSpamThresholdTally
+	creativeItemCreationSpamThresholdTally int
+	clientRenderDistance                   int8
+	clientLocale                           string
+	heldItemSlot                           int16
+	gameType                               int8
+	inventory                              [playerWindowSlots]*protocol.ItemStack
+	cursorItem                             *protocol.ItemStack
 
 	entityID        int32
 	lastEntityPosX  int32
@@ -944,6 +947,9 @@ func (s *loginSession) playLoop() {
 			s.stateMu.Lock()
 			if s.chatSpamThresholdCount > 0 {
 				s.chatSpamThresholdCount--
+			}
+			if s.creativeItemCreationSpamThresholdTally > 0 {
+				s.creativeItemCreationSpamThresholdTally--
 			}
 			if s.hurtTime > 0 {
 				s.hurtTime--
@@ -1959,8 +1965,30 @@ func (s *loginSession) handleCreativeSetSlot(packet *protocol.Packet107CreativeS
 		return
 	}
 
+	var stack *protocol.ItemStack
+	if packet.ItemStack != nil {
+		stack = cloneItemStack(packet.ItemStack)
+	}
+
 	if packet.Slot < 0 {
-		// Translation target: creative drop path (slot=-1) is pending entity item spawn support.
+		// Translation references:
+		// - net.minecraft.src.NetServerHandler#handleCreativeSetSlot(Packet107CreativeSetSlot)
+		//   creative drop path (slot < 0) with spam throttle and creative despawn age.
+		if stack == nil || stack.ItemID <= 0 || stack.ItemDamage < 0 || stack.StackSize <= 0 || stack.StackSize > 64 {
+			return
+		}
+
+		allowDrop := false
+		s.stateMu.Lock()
+		if s.creativeItemCreationSpamThresholdTally < 200 {
+			s.creativeItemCreationSpamThresholdTally += 20
+			allowDrop = true
+		}
+		s.stateMu.Unlock()
+		if !allowDrop {
+			return
+		}
+		s.server.spawnDroppedItemFromPlayer(s, stack, false, true)
 		return
 	}
 	slot := int(packet.Slot)
@@ -1968,9 +1996,7 @@ func (s *loginSession) handleCreativeSetSlot(packet *protocol.Packet107CreativeS
 		return
 	}
 
-	var stack *protocol.ItemStack
-	if packet.ItemStack != nil {
-		stack = cloneItemStack(packet.ItemStack)
+	if stack != nil {
 		if stack.StackSize < 1 {
 			stack = nil
 		} else if stack.StackSize > 64 {
@@ -2084,9 +2110,12 @@ func (s *loginSession) handleBlockDig(packet *protocol.Packet14BlockDig) bool {
 		// Translation reference:
 		// - net.minecraft.src.NetServerHandler.handleBlockDig(Packet14BlockDig)
 		//   status 4 -> dropOneItem(false), status 3 -> dropOneItem(true)
-		slot, changed := s.dropHeldItemStack(packet.Status == 3)
+		slot, dropped, changed := s.dropHeldItemStack(packet.Status == 3)
 		if changed {
 			_ = s.sendInventorySetSlot(slot)
+		}
+		if dropped != nil {
+			s.server.spawnDroppedItemFromPlayer(s, dropped, false, false)
 		}
 		return true
 	}
@@ -2119,14 +2148,14 @@ func (s *loginSession) handleBlockDig(packet *protocol.Packet14BlockDig) bool {
 	return s.sendBlockChange(packet.XPosition, packet.YPosition, packet.ZPosition)
 }
 
-func (s *loginSession) dropHeldItemStack(dropAll bool) (windowSlot int, changed bool) {
+func (s *loginSession) dropHeldItemStack(dropAll bool) (windowSlot int, dropped *protocol.ItemStack, changed bool) {
 	s.stateMu.Lock()
 	defer s.stateMu.Unlock()
 
 	windowSlot = s.heldWindowSlotLocked()
 	stack := s.inventory[windowSlot]
 	if stack == nil || stack.StackSize <= 0 {
-		return windowSlot, false
+		return windowSlot, nil, false
 	}
 
 	remove := int8(1)
@@ -2137,16 +2166,15 @@ func (s *loginSession) dropHeldItemStack(dropAll bool) (windowSlot int, changed 
 		remove = 1
 	}
 
+	dropped = cloneItemStack(stack)
+	dropped.StackSize = remove
+
 	if stack.StackSize <= remove {
 		s.inventory[windowSlot] = nil
 	} else {
 		stack.StackSize -= remove
 	}
-
-	// Translation target:
-	// - EntityPlayer.dropPlayerItemWithRandomChoice() item-entity spawn path
-	// Item entity spawning is pending in this rewrite; inventory mutation parity lands first.
-	return windowSlot, true
+	return windowSlot, dropped, true
 }
 
 func (s *loginSession) handlePlace(packet *protocol.Packet15Place) bool {

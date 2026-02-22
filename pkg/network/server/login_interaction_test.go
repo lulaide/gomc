@@ -90,6 +90,155 @@ func TestHandleBlockDigStatus3DropsWholeHeldStack(t *testing.T) {
 	}
 }
 
+func TestHandleBlockDigStatus4SpawnsDroppedItemPacketsToWatcher(t *testing.T) {
+	srv := NewStatusServer(StatusConfig{})
+
+	actor := newInteractionTestSession(srv, io.Discard)
+	actor.entityID = 300
+	actor.playerRegistered = true
+	actor.inventory[36] = &protocol.ItemStack{
+		ItemID:     1,
+		StackSize:  2,
+		ItemDamage: 0,
+	}
+
+	var watcherBuf bytes.Buffer
+	watcher := newInteractionTestSession(srv, &watcherBuf)
+	watcher.entityID = 301
+	watcher.playerRegistered = true
+
+	srv.activeMu.Lock()
+	srv.activePlayers[actor] = "actor"
+	srv.activePlayers[watcher] = "watcher"
+	srv.activeOrder = []*loginSession{actor, watcher}
+	srv.activeMu.Unlock()
+
+	if !actor.handleBlockDig(&protocol.Packet14BlockDig{Status: 4}) {
+		t.Fatal("handleBlockDig returned false")
+	}
+	if actor.inventory[36] == nil || actor.inventory[36].StackSize != 1 {
+		t.Fatalf("drop-one stack mismatch: %#v", actor.inventory[36])
+	}
+
+	first, err := protocol.ReadPacket(&watcherBuf, protocol.DirectionClientbound)
+	if err != nil {
+		t.Fatalf("failed to read watcher spawn packet: %v", err)
+	}
+	spawn, ok := first.(*protocol.Packet23VehicleSpawn)
+	if !ok {
+		t.Fatalf("expected Packet23VehicleSpawn, got %T", first)
+	}
+	if spawn.Type != entityTypeDroppedItem {
+		t.Fatalf("spawn entity type mismatch: got=%d want=%d", spawn.Type, entityTypeDroppedItem)
+	}
+
+	second, err := protocol.ReadPacket(&watcherBuf, protocol.DirectionClientbound)
+	if err != nil {
+		t.Fatalf("failed to read watcher metadata packet: %v", err)
+	}
+	meta, ok := second.(*protocol.Packet40EntityMetadata)
+	if !ok {
+		t.Fatalf("expected Packet40EntityMetadata, got %T", second)
+	}
+	if len(meta.Metadata) != 1 {
+		t.Fatalf("metadata entry count mismatch: %#v", meta.Metadata)
+	}
+	stack, ok := meta.Metadata[0].Value.(*protocol.ItemStack)
+	if !ok || stack == nil {
+		t.Fatalf("metadata stack type mismatch: %#v", meta.Metadata[0].Value)
+	}
+	if stack.ItemID != 1 || stack.StackSize != 1 || stack.ItemDamage != 0 {
+		t.Fatalf("dropped item metadata mismatch: %#v", stack)
+	}
+}
+
+func TestTickDroppedItemsPickupBroadcastsCollectAndDestroy(t *testing.T) {
+	srv := NewStatusServer(StatusConfig{})
+
+	dropper := newInteractionTestSession(srv, io.Discard)
+	dropper.entityID = 320
+	dropper.playerRegistered = true
+
+	var pickerBuf bytes.Buffer
+	picker := newInteractionTestSession(srv, &pickerBuf)
+	picker.entityID = 321
+	picker.playerRegistered = true
+	picker.playerHealth = 20
+
+	var watcherBuf bytes.Buffer
+	watcher := newInteractionTestSession(srv, &watcherBuf)
+	watcher.entityID = 322
+	watcher.playerRegistered = true
+	watcher.playerHealth = 20
+
+	srv.activeMu.Lock()
+	srv.activePlayers[dropper] = "dropper"
+	srv.activePlayers[picker] = "picker"
+	srv.activePlayers[watcher] = "watcher"
+	srv.activeOrder = []*loginSession{dropper, picker, watcher}
+	srv.activeMu.Unlock()
+
+	item := srv.spawnDroppedItemFromPlayer(dropper, &protocol.ItemStack{
+		ItemID:     4,
+		StackSize:  1,
+		ItemDamage: 0,
+	}, false, false)
+	if item == nil {
+		t.Fatal("spawnDroppedItemFromPlayer returned nil")
+	}
+
+	// Force immediate pickup range to make this deterministic.
+	srv.droppedItemMu.Lock()
+	item.DelayBeforeCanPick = 0
+	item.X = picker.playerX
+	item.Y = picker.playerY
+	item.Z = picker.playerZ
+	item.MotionX = 0
+	item.MotionY = 0
+	item.MotionZ = 0
+	srv.droppedItemMu.Unlock()
+
+	pickerBuf.Reset()
+	watcherBuf.Reset()
+
+	srv.TickDroppedItems()
+
+	srv.droppedItemMu.Lock()
+	_, exists := srv.droppedItems[item.EntityID]
+	srv.droppedItemMu.Unlock()
+	if exists {
+		t.Fatal("expected dropped item to be removed after pickup")
+	}
+	if picker.inventory[36] == nil || picker.inventory[36].ItemID != 4 || picker.inventory[36].StackSize != 1 {
+		t.Fatalf("picker inventory mismatch after pickup: %#v", picker.inventory[36])
+	}
+
+	sawCollect := false
+	sawDestroy := false
+	for {
+		packet, err := protocol.ReadPacket(&watcherBuf, protocol.DirectionClientbound)
+		if err != nil {
+			break
+		}
+		switch p := packet.(type) {
+		case *protocol.Packet22Collect:
+			if p.CollectedEntityID == item.EntityID && p.CollectorEntityID == picker.entityID {
+				sawCollect = true
+			}
+		case *protocol.Packet29DestroyEntity:
+			if len(p.EntityIDs) == 1 && p.EntityIDs[0] == item.EntityID {
+				sawDestroy = true
+			}
+		}
+	}
+	if !sawCollect {
+		t.Fatal("expected watcher to receive Packet22Collect")
+	}
+	if !sawDestroy {
+		t.Fatal("expected watcher to receive Packet29DestroyEntity for picked item")
+	}
+}
+
 func TestHandlePlacePlacesBlockFromPacketItem(t *testing.T) {
 	srv := NewStatusServer(StatusConfig{})
 	session := newInteractionTestSession(srv, io.Discard)
@@ -776,6 +925,56 @@ func TestHandleCreativeSetSlotIgnoredInSurvival(t *testing.T) {
 	}
 	if _, err := protocol.ReadPacket(&buf, protocol.DirectionClientbound); err == nil {
 		t.Fatal("unexpected packet emitted for survival creative-set-slot")
+	}
+}
+
+func TestHandleCreativeSetSlotNegativeDropsAndRespectsSpamThrottle(t *testing.T) {
+	srv := NewStatusServer(StatusConfig{})
+	session := newInteractionTestSession(srv, io.Discard)
+	session.gameType = 1
+	session.entityID = 330
+	session.playerRegistered = true
+
+	srv.activeMu.Lock()
+	srv.activePlayers[session] = "creative"
+	srv.activeOrder = []*loginSession{session}
+	srv.activeMu.Unlock()
+
+	dropPacket := &protocol.Packet107CreativeSetSlot{
+		Slot: -1,
+		ItemStack: &protocol.ItemStack{
+			ItemID:     1,
+			StackSize:  1,
+			ItemDamage: 0,
+		},
+	}
+
+	for i := 0; i < 21; i++ {
+		session.handleCreativeSetSlot(dropPacket)
+	}
+
+	if session.creativeItemCreationSpamThresholdTally != 200 {
+		t.Fatalf("creative spam tally mismatch: got=%d want=200", session.creativeItemCreationSpamThresholdTally)
+	}
+
+	srv.droppedItemMu.Lock()
+	count := len(srv.droppedItems)
+	var sampled *trackedDroppedItem
+	for _, item := range srv.droppedItems {
+		sampled = item
+		break
+	}
+	srv.droppedItemMu.Unlock()
+
+	// First 10 calls are accepted (20 -> 200), later calls are throttled.
+	if count != 10 {
+		t.Fatalf("creative drop count mismatch: got=%d want=10", count)
+	}
+	if sampled == nil {
+		t.Fatal("expected at least one dropped item")
+	}
+	if sampled.AgeTicks != droppedItemCreativeAgeTicks {
+		t.Fatalf("creative dropped-item age mismatch: got=%d want=%d", sampled.AgeTicks, droppedItemCreativeAgeTicks)
 	}
 }
 

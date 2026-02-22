@@ -98,6 +98,7 @@ func (s *integratedOfflineServer) tickLoop() {
 			s.status.TickChunkInhabitedTime()
 			s.status.TickMobSpawning()
 			s.status.TickProjectiles()
+			s.status.TickDroppedItems()
 			s.status.TickPlayerInfo()
 
 			if s.persistWorld && s.autosaveTicks > 0 && tickCount%s.autosaveTicks == 0 {

@@ -54,6 +54,7 @@ func main() {
 			status.TickChunkInhabitedTime()
 			status.TickMobSpawning()
 			status.TickProjectiles()
+			status.TickDroppedItems()
 			status.TickPlayerInfo()
 			if *persistWorld && *autosaveTicks > 0 && count%*autosaveTicks == 0 {
 				if err := status.SaveWorldDirty(); err != nil {

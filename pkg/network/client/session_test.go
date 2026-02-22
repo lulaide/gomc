@@ -298,6 +298,88 @@ func TestHandleVehicleSpawnAndVelocityPackets(t *testing.T) {
 	}
 }
 
+func TestHandlePacket40EntityMetadataUpdatesDroppedItemFields(t *testing.T) {
+	s := newUnitTestSession(io.Discard)
+
+	if err := s.handlePacket(&protocol.Packet23VehicleSpawn{
+		EntityID:        99,
+		Type:            2,
+		XPosition:       0,
+		YPosition:       0,
+		ZPosition:       0,
+		ThrowerEntityID: 1,
+	}); err != nil {
+		t.Fatalf("spawn handle failed: %v", err)
+	}
+	if err := s.handlePacket(&protocol.Packet40EntityMetadata{
+		EntityID: 99,
+		Metadata: []protocol.WatchableObject{
+			{
+				ObjectType:  5,
+				DataValueID: 10,
+				Value: &protocol.ItemStack{
+					ItemID:     4,
+					StackSize:  3,
+					ItemDamage: 2,
+				},
+			},
+		},
+	}); err != nil {
+		t.Fatalf("metadata handle failed: %v", err)
+	}
+
+	out := s.EntitiesSnapshot()
+	if len(out) != 1 {
+		t.Fatalf("expected 1 entity snapshot, got %d", len(out))
+	}
+	if out[0].Type != 2 {
+		t.Fatalf("entity type mismatch: got=%d want=2", out[0].Type)
+	}
+	if out[0].DroppedItemID != 4 || out[0].DroppedItemCount != 3 || out[0].DroppedItemDamage != 2 {
+		t.Fatalf("dropped item metadata mismatch: %#v", out[0])
+	}
+}
+
+func TestHandlePacket22CollectRemovesEntityAndEmitsSoundEvent(t *testing.T) {
+	s := newUnitTestSession(io.Discard)
+
+	if err := s.handlePacket(&protocol.Packet23VehicleSpawn{
+		EntityID:        123,
+		Type:            2,
+		XPosition:       0,
+		YPosition:       0,
+		ZPosition:       0,
+		ThrowerEntityID: 1,
+	}); err != nil {
+		t.Fatalf("spawn handle failed: %v", err)
+	}
+	if err := s.handlePacket(&protocol.Packet22Collect{
+		CollectedEntityID: 123,
+		CollectorEntityID: 1,
+	}); err != nil {
+		t.Fatalf("collect handle failed: %v", err)
+	}
+
+	s.stateMu.RLock()
+	_, ok := s.entities[123]
+	s.stateMu.RUnlock()
+	if ok {
+		t.Fatal("expected collected entity to be removed")
+	}
+
+	select {
+	case ev := <-s.events:
+		if ev.Type != EventSound {
+			t.Fatalf("event type mismatch: got=%s want=%s", ev.Type, EventSound)
+		}
+		if ev.SoundName != "random.pop" {
+			t.Fatalf("sound mismatch: got=%q want=%q", ev.SoundName, "random.pop")
+		}
+	default:
+		t.Fatal("expected collect sound event")
+	}
+}
+
 func TestDecodeChunkPacketDataShortBuffer(t *testing.T) {
 	_, err := decodeChunkPacketData(0, 0, 1, 0, []byte{1, 2, 3}, true, true)
 	if err == nil {

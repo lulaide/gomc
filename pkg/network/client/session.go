@@ -75,6 +75,10 @@ type trackedEntity struct {
 	ZombieChild     bool
 	ZombieVillager  bool
 	SwingStartNanos int64
+
+	DroppedItemID     int16
+	DroppedItemCount  int8
+	DroppedItemDamage int16
 }
 
 // EntitySnapshot is a read-only view of a currently tracked remote entity.
@@ -105,6 +109,10 @@ type EntitySnapshot struct {
 	ZombieChild    bool
 	ZombieVillager bool
 	SwingProgress  float32
+
+	DroppedItemID     int16
+	DroppedItemCount  int8
+	DroppedItemDamage int16
 }
 
 // HotbarSlotSnapshot represents one player hotbar slot (0..8).
@@ -425,11 +433,35 @@ func watchableByte(m protocol.WatchableObject) (int8, bool) {
 	return v, true
 }
 
+func watchableItemStack(m protocol.WatchableObject) (*protocol.ItemStack, bool) {
+	if m.ObjectType != 5 {
+		return nil, false
+	}
+	v, ok := m.Value.(*protocol.ItemStack)
+	if !ok {
+		return nil, false
+	}
+	return v, true
+}
+
 func applyEntityMetadata(ent *trackedEntity, metadata []protocol.WatchableObject) {
 	if ent == nil {
 		return
 	}
 	for _, m := range metadata {
+		if ent.Type == 2 && m.DataValueID == 10 {
+			if stack, ok := watchableItemStack(m); ok && stack != nil {
+				ent.DroppedItemID = stack.ItemID
+				ent.DroppedItemCount = stack.StackSize
+				ent.DroppedItemDamage = stack.ItemDamage
+			} else if m.ObjectType == 5 {
+				ent.DroppedItemID = 0
+				ent.DroppedItemCount = 0
+				ent.DroppedItemDamage = 0
+			}
+			continue
+		}
+
 		value, ok := watchableByte(m)
 		if !ok {
 			continue
@@ -709,6 +741,16 @@ func (s *Session) handlePacket(packet protocol.Packet) error {
 			applyEntityMetadata(ent, p.Metadata)
 		}
 		s.stateMu.Unlock()
+	case *protocol.Packet22Collect:
+		s.stateMu.Lock()
+		delete(s.entities, p.CollectedEntityID)
+		s.stateMu.Unlock()
+		s.emitEvent(Event{
+			Type:        EventSound,
+			SoundName:   "random.pop",
+			SoundVolume: 0.2,
+			SoundPitch:  1.0,
+		})
 	case *protocol.Packet43Experience:
 		s.stateMu.Lock()
 		s.expBar = p.Experience
@@ -984,6 +1026,10 @@ func (s *Session) EntitiesSnapshot() []EntitySnapshot {
 			ZombieChild:    ent.ZombieChild,
 			ZombieVillager: ent.ZombieVillager,
 			SwingProgress:  swingProgressFromStart(ent.SwingStartNanos, nowNanos),
+
+			DroppedItemID:     ent.DroppedItemID,
+			DroppedItemCount:  ent.DroppedItemCount,
+			DroppedItemDamage: ent.DroppedItemDamage,
 		})
 	}
 	return out

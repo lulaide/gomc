@@ -54,6 +54,9 @@ type StatusServer struct {
 	projectileMu sync.Mutex
 	projectiles  map[int32]*trackedProjectile
 
+	droppedItemMu sync.Mutex
+	droppedItems  map[int32]*trackedDroppedItem
+
 	mobMu   sync.Mutex
 	mobs    map[int32]*trackedMob
 	mobRand *util.JavaRandom
@@ -102,6 +105,7 @@ func NewStatusServer(cfg StatusConfig) *StatusServer {
 		activePlayers: make(map[*loginSession]string),
 		activeOrder:   make([]*loginSession, 0, cfg.MaxPlayers),
 		projectiles:   make(map[int32]*trackedProjectile),
+		droppedItems:  make(map[int32]*trackedDroppedItem),
 		mobs:          make(map[int32]*trackedMob),
 		now:           time.Now,
 	}
