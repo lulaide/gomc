@@ -30,6 +30,26 @@ func TestMainMenuOptionsHideDirectSliders(t *testing.T) {
 	}
 }
 
+func TestMainMenuOptionsExposeExtraEntryButtons(t *testing.T) {
+	a := &App{
+		guiW:     854,
+		guiH:     480,
+		mainMenu: true,
+	}
+	a.initOptionButtons()
+	a.updateOptionButtonsState()
+
+	if b := findOptionButton(a.optionButtons, buttonIDOptionMultiplayer); b == nil || !b.Visible || !b.Enabled {
+		t.Fatal("main menu options should expose enabled multiplayer settings entry")
+	}
+	if b := findOptionButton(a.optionButtons, buttonIDOptionResource); b == nil || !b.Visible || !b.Enabled {
+		t.Fatal("main menu options should expose enabled resource packs entry")
+	}
+	if b := findOptionButton(a.optionButtons, buttonIDOptionLanguage); b == nil || !b.Enabled {
+		t.Fatal("main menu options language entry should be enabled (placeholder screen)")
+	}
+}
+
 func TestMainMenuOptionControlsOpensControlsScreen(t *testing.T) {
 	a := &App{
 		guiW:       854,

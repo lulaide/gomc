@@ -85,6 +85,8 @@ const (
 	buttonIDOptionLanguage    = 1304
 	buttonIDOptionDifficulty  = 1305
 	buttonIDOptionSnooper     = 1306
+	buttonIDOptionMultiplayer = 1307
+	buttonIDOptionResource    = 1308
 	buttonIDOptionRDMinus     = 1310
 	buttonIDOptionRDPlus      = 1311
 	buttonIDOptionSensMinus   = 1312
@@ -199,6 +201,8 @@ func (a *App) initOptionButtons() {
 		newButton(buttonIDOptionSensMinus, w/2-100, baseY+130, 20, 20, "-"),
 		newButton(buttonIDOptionSensPlus, w/2+80, baseY+130, 20, 20, "+"),
 		newButton(buttonIDOptionSnooper, w/2-100, baseY+164, 98, 20, "Clouds: ON"),
+		newButton(buttonIDOptionMultiplayer, w/2-155, baseY+188, 150, 20, "Multiplayer Settings..."),
+		newButton(buttonIDOptionResource, w/2+5, baseY+188, 150, 20, "Resource Packs..."),
 		newButton(buttonIDOptionDone, w/2+2, baseY+164, 98, 20, "Done"),
 	}
 }
@@ -310,7 +314,7 @@ func (a *App) updateOptionButtonsState() {
 		case buttonIDOptionLanguage:
 			if a.mainMenu {
 				b.Label = "Language..."
-				b.Enabled = false
+				b.Enabled = true
 			} else {
 				b.Label = a.optionGUIScaleLabel()
 				b.Enabled = true
@@ -326,11 +330,17 @@ func (a *App) updateOptionButtonsState() {
 		case buttonIDOptionSnooper:
 			if a.mainMenu {
 				b.Label = "Snooper Settings..."
-				b.Enabled = false
+				b.Enabled = true
 			} else {
 				b.Label = a.optionCloudsLabel()
 				b.Enabled = true
 			}
+		case buttonIDOptionMultiplayer:
+			b.Label = "Multiplayer Settings..."
+			b.Enabled = true
+		case buttonIDOptionResource:
+			b.Label = "Resource Packs..."
+			b.Enabled = true
 		case buttonIDOptionRDMinus:
 			if a.mainMenu {
 				b.Visible = false
@@ -1034,6 +1044,10 @@ func (a *App) handleMenuButton(id int) bool {
 				}
 				changed = true
 			}
+		case buttonIDOptionMultiplayer:
+			a.menuStatus = "Multiplayer Settings screen is not implemented yet."
+		case buttonIDOptionResource:
+			a.menuStatus = "Resource Packs screen is not implemented yet."
 		}
 		a.updateOptionButtonsState()
 		a.updateVideoButtonsState()
