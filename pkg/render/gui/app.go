@@ -21,6 +21,7 @@ import (
 	"github.com/go-gl/glfw/v3.3/glfw"
 	"github.com/lulaide/gomc/pkg/audio"
 	netclient "github.com/lulaide/gomc/pkg/network/client"
+	"github.com/lulaide/gomc/pkg/util"
 	"github.com/lulaide/gomc/pkg/world/block"
 	"github.com/lulaide/gomc/pkg/world/chunk"
 )
@@ -4231,25 +4232,46 @@ func (a *App) drawDroppedItemEntity(ent netclient.EntitySnapshot, animTime float
 		itemID = 1
 	}
 	itemMeta := int(ent.DroppedItemDamage)
-
-	spinDeg := float32(math.Mod(animTime*57.2957795+float64(ent.EntityID)*19.0, 360.0))
-	hover := float32(math.Sin(animTime*2.0+float64(ent.EntityID)*0.37))*0.10 + 0.10
+	ageTicks := float32(animTime*20.0 + float64(int(ent.EntityID)&1023))
+	hoverStart := float32(float64(ent.EntityID&31) * 0.17)
+	hover := float32(math.Sin(float64(ageTicks/10.0+hoverStart)))*0.10 + 0.10
+	spinDeg := (ageTicks/20.0 + hoverStart) * (180.0 / float32(math.Pi))
+	renderAsSprite := itemID > 255
+	copies := droppedItemRenderCopies(ent.DroppedItemCount)
+	if renderAsSprite && a.fancyGraphics {
+		copies = droppedItemRenderFancySpriteCopies(ent.DroppedItemCount)
+	}
+	itemScale := float32(0.25)
+	if renderAsSprite {
+		// Translation reference:
+		// - net.minecraft.src.RenderItem#doRenderItem(EntityItem,...) non-frame branch
+		itemScale = 0.5
+	}
 
 	gl.PushMatrix()
 	gl.Translatef(float32(ent.X), float32(ent.Y)+hover, float32(ent.Z))
 	gl.Rotatef(spinDeg, 0, 1, 0)
-	gl.Scalef(0.25, 0.25, 0.25)
+	gl.Scalef(itemScale, itemScale, itemScale)
 
-	copies := droppedItemRenderCopies(ent.DroppedItemCount)
+	rnd := util.NewJavaRandom(187)
 	for i := 0; i < copies; i++ {
 		gl.PushMatrix()
-		if i > 0 {
-			ox, oy, oz := droppedItemRenderOffset(ent.EntityID, i)
-			gl.Translatef(ox, oy, oz)
+		if renderAsSprite && a.fancyGraphics {
+			step := float32(0.0625 + 0.021875)
+			gl.Translatef(0, 0, step*float32(i)-step*float32(copies-1)/2.0)
+		} else if i > 0 {
+			{
+				amp := float32(0.3)
+				if !renderAsSprite && itemScale > 0 {
+					amp = 0.2 / itemScale
+				}
+				ox, oy, oz := droppedItemRenderRandomOffset(rnd, amp)
+				gl.Translatef(ox, oy, oz)
+			}
 		}
 
 		rendered := false
-		if itemID > 255 {
+		if renderAsSprite {
 			if tex := a.itemTextureForStack(itemID, itemMeta); tex != nil {
 				a.drawDroppedItemSprite(tex)
 				rendered = true
@@ -4276,6 +4298,8 @@ func (a *App) drawDroppedItemEntity(ent netclient.EntitySnapshot, animTime float
 func droppedItemRenderCopies(stackCount int8) int {
 	count := int(stackCount)
 	switch {
+	case count > 40:
+		return 5
 	case count > 20:
 		return 4
 	case count > 5:
@@ -4287,11 +4311,27 @@ func droppedItemRenderCopies(stackCount int8) int {
 	}
 }
 
-func droppedItemRenderOffset(entityID int32, copyIndex int) (float32, float32, float32) {
-	seed := float64(entityID)*0.131 + float64(copyIndex)*0.733
-	ox := float32(math.Sin(seed*3.17)) * 0.15
-	oy := float32(math.Cos(seed*2.11)) * 0.12
-	oz := float32(math.Sin(seed*4.07)) * 0.15
+func droppedItemRenderFancySpriteCopies(stackCount int8) int {
+	count := int(stackCount)
+	switch {
+	case count < 2:
+		return 1
+	case count < 16:
+		return 2
+	case count < 32:
+		return 3
+	default:
+		return 4
+	}
+}
+
+func droppedItemRenderRandomOffset(rnd *util.JavaRandom, amplitude float32) (float32, float32, float32) {
+	if rnd == nil || amplitude <= 0 {
+		return 0, 0, 0
+	}
+	ox := (rnd.NextFloat()*2.0 - 1.0) * amplitude
+	oy := (rnd.NextFloat()*2.0 - 1.0) * amplitude
+	oz := (rnd.NextFloat()*2.0 - 1.0) * amplitude
 	return ox, oy, oz
 }
 
