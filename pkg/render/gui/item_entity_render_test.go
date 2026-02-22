@@ -67,8 +67,8 @@ func TestDroppedBlockItemIsLarge(t *testing.T) {
 		want    bool
 	}{
 		{blockID: 31, want: true},  // tall grass (crossed)
-		{blockID: 50, want: true},  // torch (render type 2)
-		{blockID: 69, want: true},  // lever (render type 12)
+		{blockID: 50, want: false}, // torch rendered as flat sprite
+		{blockID: 69, want: false}, // lever rendered as flat sprite
 		{blockID: 104, want: true}, // pumpkin stem (render type 19)
 		{blockID: 1, want: false},  // stone
 	}
@@ -92,5 +92,23 @@ func TestDroppedBlockItemRenderFaces(t *testing.T) {
 	cubeFaces := droppedBlockItemRenderFaces(1)
 	if cubeFaces != fullFaces {
 		t.Fatalf("cube faces mismatch: got=%+v want=%+v", cubeFaces, fullFaces)
+	}
+}
+
+func TestBlockItemUsesFlatSprite(t *testing.T) {
+	tests := []struct {
+		blockID int
+		want    bool
+	}{
+		{blockID: 50, want: true},  // torch
+		{blockID: 66, want: true},  // rail
+		{blockID: 31, want: false}, // crossed plant path
+		{blockID: 1, want: false},  // normal cube
+	}
+	for _, tc := range tests {
+		got := blockItemUsesFlatSprite(tc.blockID)
+		if got != tc.want {
+			t.Fatalf("blockItemUsesFlatSprite(%d)=%t want=%t", tc.blockID, got, tc.want)
+		}
 	}
 }

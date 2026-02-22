@@ -4699,6 +4699,9 @@ func droppedBlockItemIsLarge(blockID int) bool {
 	if isCrossedPlantRenderBlock(blockID) {
 		return true
 	}
+	if blockItemUsesFlatSprite(blockID) {
+		return false
+	}
 	switch blockID {
 	// Translation reference:
 	// - net.minecraft.src.RenderItem#doRenderItem(EntityItem,...)
@@ -4722,7 +4725,14 @@ func (a *App) drawBlockItemModel(blockID, blockMeta int, faces visibleFaces) boo
 	if isCrossedPlantRenderBlock(blockID) {
 		return a.drawCrossedBlockItemModel(blockID, blockMeta)
 	}
+	if blockItemUsesFlatSprite(blockID) {
+		return a.drawFlatBlockItemSprite(blockID, blockMeta)
+	}
 	return a.drawTexturedBlockMeta(-0.5, -0.5, -0.5, blockID, blockMeta, faces)
+}
+
+func blockItemUsesFlatSprite(blockID int) bool {
+	return !isNormalCubeRenderBlock(blockID) && !isCrossedPlantRenderBlock(blockID)
 }
 
 // Translation references:
@@ -4787,6 +4797,42 @@ func (a *App) drawCrossedBlockItemModel(blockID, blockMeta int) bool {
 	gl.Vertex3f(x0, y0, z1)
 	gl.TexCoord2f(1, 1)
 	gl.Vertex3f(x0, y1, z1)
+	gl.End()
+	gl.Color4f(1, 1, 1, 1)
+	return true
+}
+
+func (a *App) drawFlatBlockItemSprite(blockID, blockMeta int) bool {
+	tex := a.blockTextureForFaceMeta(blockID, blockMeta, faceNorth)
+	if tex == nil {
+		tex = a.blockTextureForFaceMeta(blockID, blockMeta, faceUp)
+	}
+	if tex == nil {
+		return false
+	}
+
+	tintR, tintG, tintB := a.blockFaceTint(blockID, faceNorth)
+	const depth = float32(0.0625)
+	tex.bind()
+	gl.Color4f(tintR, tintG, tintB, 1)
+	gl.Begin(gl.QUADS)
+	gl.TexCoord2f(0, 1)
+	gl.Vertex3f(-0.5, -0.5, 0)
+	gl.TexCoord2f(1, 1)
+	gl.Vertex3f(0.5, -0.5, 0)
+	gl.TexCoord2f(1, 0)
+	gl.Vertex3f(0.5, 0.5, 0)
+	gl.TexCoord2f(0, 0)
+	gl.Vertex3f(-0.5, 0.5, 0)
+
+	gl.TexCoord2f(1, 1)
+	gl.Vertex3f(-0.5, -0.5, -depth)
+	gl.TexCoord2f(0, 1)
+	gl.Vertex3f(0.5, -0.5, -depth)
+	gl.TexCoord2f(0, 0)
+	gl.Vertex3f(0.5, 0.5, -depth)
+	gl.TexCoord2f(1, 0)
+	gl.Vertex3f(-0.5, 0.5, -depth)
 	gl.End()
 	gl.Color4f(1, 1, 1, 1)
 	return true
