@@ -6645,6 +6645,10 @@ func (a *App) drainSessionEvents() {
 				a.addChatLine("[system] "+ev.Message, 0xA0A0A0)
 			case netclient.EventSound:
 				if ev.SoundName != "" {
+					if ev.SoundName == "random.burp" {
+						// Keep local first-person use state aligned with server-side item-use finish.
+						a.stopLocalItemUse(false)
+					}
 					vol := float64(ev.SoundVolume)
 					if vol <= 0 {
 						vol = 1.0
