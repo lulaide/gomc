@@ -15,6 +15,7 @@ func newUnitTestSession(writer io.Writer) *Session {
 		hasSkyLight: true,
 		world:       newWorldCache(),
 		entities:    make(map[int32]*trackedEntity),
+		playerInfo:  make(map[string]int16),
 		events:      make(chan Event, 8),
 		done:        make(chan struct{}),
 	}
@@ -365,6 +366,64 @@ func TestSelectHotbarWritesPacket16(t *testing.T) {
 	}
 }
 
+func TestDropHeldItemWritesPacket14Status(t *testing.T) {
+	var out bytes.Buffer
+	s := newUnitTestSession(&out)
+
+	if err := s.DropHeldItem(false); err != nil {
+		t.Fatalf("DropHeldItem(single) failed: %v", err)
+	}
+	packet, err := protocol.ReadPacket(&out, protocol.DirectionServerbound)
+	if err != nil {
+		t.Fatalf("failed to read Packet14(single): %v", err)
+	}
+	dig, ok := packet.(*protocol.Packet14BlockDig)
+	if !ok {
+		t.Fatalf("expected Packet14BlockDig, got %T", packet)
+	}
+	if dig.Status != 4 {
+		t.Fatalf("drop single status mismatch: got=%d want=4", dig.Status)
+	}
+
+	if err := s.DropHeldItem(true); err != nil {
+		t.Fatalf("DropHeldItem(full) failed: %v", err)
+	}
+	packet, err = protocol.ReadPacket(&out, protocol.DirectionServerbound)
+	if err != nil {
+		t.Fatalf("failed to read Packet14(full): %v", err)
+	}
+	dig, ok = packet.(*protocol.Packet14BlockDig)
+	if !ok {
+		t.Fatalf("expected Packet14BlockDig, got %T", packet)
+	}
+	if dig.Status != 3 {
+		t.Fatalf("drop full status mismatch: got=%d want=3", dig.Status)
+	}
+}
+
+func TestSetCreativeHotbarSlotWritesPacket107(t *testing.T) {
+	var out bytes.Buffer
+	s := newUnitTestSession(&out)
+
+	if err := s.SetCreativeHotbarSlot(2, 1, 5, 1); err != nil {
+		t.Fatalf("SetCreativeHotbarSlot failed: %v", err)
+	}
+	packet, err := protocol.ReadPacket(&out, protocol.DirectionServerbound)
+	if err != nil {
+		t.Fatalf("failed to read Packet107: %v", err)
+	}
+	setSlot, ok := packet.(*protocol.Packet107CreativeSetSlot)
+	if !ok {
+		t.Fatalf("expected Packet107CreativeSetSlot, got %T", packet)
+	}
+	if setSlot.Slot != 38 {
+		t.Fatalf("creative slot mismatch: got=%d want=38", setSlot.Slot)
+	}
+	if setSlot.ItemStack == nil || setSlot.ItemStack.ItemID != 1 || setSlot.ItemStack.ItemDamage != 5 || setSlot.ItemStack.StackSize != 1 {
+		t.Fatalf("creative stack mismatch: %#v", setSlot.ItemStack)
+	}
+}
+
 func TestClickWindowSlotWritesPacket102(t *testing.T) {
 	var out bytes.Buffer
 	s := newUnitTestSession(&out)
@@ -538,6 +597,44 @@ func TestEntitiesSnapshotContainsTrackedEntities(t *testing.T) {
 	}
 	if !out[0].Sneaking || out[0].Sprinting || !out[0].UsingItem {
 		t.Fatalf("snapshot movement-state mismatch: %#v", out[0])
+	}
+}
+
+func TestPlayerListSnapshotTracksPacket201(t *testing.T) {
+	s := newUnitTestSession(io.Discard)
+	s.username = "Steve"
+
+	if err := s.handlePacket(&protocol.Packet201PlayerInfo{
+		PlayerName:  "Alex",
+		IsConnected: true,
+		Ping:        42,
+	}); err != nil {
+		t.Fatalf("handle Packet201 connect failed: %v", err)
+	}
+	if err := s.handlePacket(&protocol.Packet201PlayerInfo{
+		PlayerName:  "Alex",
+		IsConnected: false,
+		Ping:        0,
+	}); err != nil {
+		t.Fatalf("handle Packet201 disconnect failed: %v", err)
+	}
+	if err := s.handlePacket(&protocol.Packet201PlayerInfo{
+		PlayerName:  "Bob",
+		IsConnected: true,
+		Ping:        7,
+	}); err != nil {
+		t.Fatalf("handle Packet201 connect Bob failed: %v", err)
+	}
+
+	list := s.PlayerListSnapshot()
+	if len(list) != 2 {
+		t.Fatalf("player list size mismatch: got=%d want=2", len(list))
+	}
+	if list[0].Name != "Bob" || list[0].Ping != 7 {
+		t.Fatalf("player list first mismatch: %#v", list[0])
+	}
+	if list[1].Name != "Steve" {
+		t.Fatalf("self player should be present: %#v", list)
 	}
 }
 

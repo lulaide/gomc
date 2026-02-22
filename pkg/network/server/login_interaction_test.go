@@ -54,6 +54,42 @@ func TestHandleBlockDigStatus2RemovesBlock(t *testing.T) {
 	}
 }
 
+func TestHandleBlockDigStatus4DropsOneFromHeldStack(t *testing.T) {
+	srv := NewStatusServer(StatusConfig{})
+	session := newInteractionTestSession(srv, io.Discard)
+	session.inventory[36] = &protocol.ItemStack{
+		ItemID:     1,
+		StackSize:  5,
+		ItemDamage: 0,
+	}
+
+	ok := session.handleBlockDig(&protocol.Packet14BlockDig{Status: 4})
+	if !ok {
+		t.Fatal("handleBlockDig returned false")
+	}
+	if session.inventory[36] == nil || session.inventory[36].StackSize != 4 {
+		t.Fatalf("drop-one stack mismatch: %#v", session.inventory[36])
+	}
+}
+
+func TestHandleBlockDigStatus3DropsWholeHeldStack(t *testing.T) {
+	srv := NewStatusServer(StatusConfig{})
+	session := newInteractionTestSession(srv, io.Discard)
+	session.inventory[36] = &protocol.ItemStack{
+		ItemID:     1,
+		StackSize:  5,
+		ItemDamage: 0,
+	}
+
+	ok := session.handleBlockDig(&protocol.Packet14BlockDig{Status: 3})
+	if !ok {
+		t.Fatal("handleBlockDig returned false")
+	}
+	if session.inventory[36] != nil {
+		t.Fatalf("drop-all should clear held stack: %#v", session.inventory[36])
+	}
+}
+
 func TestHandlePlacePlacesBlockFromPacketItem(t *testing.T) {
 	srv := NewStatusServer(StatusConfig{})
 	session := newInteractionTestSession(srv, io.Discard)

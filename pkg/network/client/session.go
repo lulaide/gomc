@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"net"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -120,6 +121,12 @@ type InventorySlotSnapshot struct {
 	ItemDamage int16
 }
 
+// PlayerInfoSnapshot mirrors one tab-list entry from Packet201.
+type PlayerInfoSnapshot struct {
+	Name string
+	Ping int16
+}
+
 // StateSnapshot mirrors live client session state for external rendering/UI loops.
 type StateSnapshot struct {
 	Username string
@@ -204,6 +211,7 @@ type Session struct {
 
 	world      *worldCache
 	entities   map[int32]*trackedEntity
+	playerInfo map[string]int16
 	inventory  [playerWindowSlotCount]*protocol.ItemStack
 	nextAction int16
 
@@ -334,6 +342,7 @@ func DialAndLogin(addr, username string) (*Session, error) {
 		hasSkyLight: true,
 		world:       newWorldCache(),
 		entities:    make(map[int32]*trackedEntity),
+		playerInfo:  make(map[string]int16),
 		events:      make(chan Event, 256),
 		done:        make(chan struct{}),
 	}
@@ -753,6 +762,18 @@ func (s *Session) handlePacket(packet protocol.Packet) error {
 			SoundPitch:  p.PitchFloat(),
 		})
 	case *protocol.Packet201PlayerInfo:
+		s.stateMu.Lock()
+		if s.playerInfo == nil {
+			s.playerInfo = make(map[string]int16)
+		}
+		if p.PlayerName != "" {
+			if p.IsConnected {
+				s.playerInfo[p.PlayerName] = p.Ping
+			} else {
+				delete(s.playerInfo, p.PlayerName)
+			}
+		}
+		s.stateMu.Unlock()
 		if p.PlayerName != "" {
 			state := "joined"
 			if !p.IsConnected {
@@ -892,6 +913,39 @@ func (s *Session) InventorySnapshot() [playerWindowSlotCount]InventorySlotSnapsh
 			ItemDamage: stack.ItemDamage,
 		}
 	}
+	return out
+}
+
+// PlayerListSnapshot returns the current tab-list state sorted by case-insensitive name.
+func (s *Session) PlayerListSnapshot() []PlayerInfoSnapshot {
+	s.stateMu.RLock()
+	out := make([]PlayerInfoSnapshot, 0, len(s.playerInfo)+1)
+	for name, ping := range s.playerInfo {
+		if strings.TrimSpace(name) == "" {
+			continue
+		}
+		out = append(out, PlayerInfoSnapshot{Name: name, Ping: ping})
+	}
+	seenSelf := false
+	for i := range out {
+		if out[i].Name == s.username {
+			seenSelf = true
+			break
+		}
+	}
+	if !seenSelf && strings.TrimSpace(s.username) != "" {
+		out = append(out, PlayerInfoSnapshot{Name: s.username, Ping: 0})
+	}
+	s.stateMu.RUnlock()
+
+	sort.Slice(out, func(i, j int) bool {
+		li := strings.ToLower(out[i].Name)
+		lj := strings.ToLower(out[j].Name)
+		if li == lj {
+			return out[i].Name < out[j].Name
+		}
+		return li < lj
+	})
 	return out
 }
 
@@ -1069,6 +1123,47 @@ func (s *Session) DigBlock(x, y, z, face int32) error {
 		YPosition: y,
 		ZPosition: z,
 		Face:      face,
+	})
+}
+
+// DropHeldItem sends Packet14 status 4(single) or 3(full stack) like EntityClientPlayerMP.dropOneItem.
+func (s *Session) DropHeldItem(fullStack bool) error {
+	status := int32(4)
+	if fullStack {
+		status = 3
+	}
+	return s.sendPacket(&protocol.Packet14BlockDig{
+		Status:    status,
+		XPosition: 0,
+		YPosition: 0,
+		ZPosition: 0,
+		Face:      0,
+	})
+}
+
+// SetCreativeHotbarSlot writes Packet107 for one hotbar slot and updates local cache immediately.
+func (s *Session) SetCreativeHotbarSlot(slot int16, itemID, itemDamage int16, count int8) error {
+	if slot < 0 || slot >= hotbarCount {
+		return fmt.Errorf("hotbar slot out of range: %d", slot)
+	}
+	windowSlot := int16(hotbarBaseWindowSlot + slot)
+
+	var stack *protocol.ItemStack
+	if itemID > 0 && count > 0 {
+		stack = &protocol.ItemStack{
+			ItemID:     itemID,
+			StackSize:  count,
+			ItemDamage: itemDamage,
+		}
+	}
+
+	s.stateMu.Lock()
+	s.inventory[int(windowSlot)] = cloneItemStack(stack)
+	s.stateMu.Unlock()
+
+	return s.sendPacket(&protocol.Packet107CreativeSetSlot{
+		Slot:      windowSlot,
+		ItemStack: cloneItemStack(stack),
 	})
 }
 

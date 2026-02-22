@@ -11,21 +11,12 @@
 
 # Local generated worlds
 world-offline/
-New World/
-New World (1)/
-New World (2)/
-New World (3)/
-New World (4)/
-New World (5)/
-New World (6)/
+New World*/
 
 # IDE / editor
 .vscode/
 .idea/
 *.swp
-
-# Optional local assets copy (large, not source)
-assets/
 
 # Local client options
 options.txt

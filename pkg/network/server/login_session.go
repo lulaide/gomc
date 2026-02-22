@@ -2080,6 +2080,17 @@ func (s *loginSession) handleBlockDig(packet *protocol.Packet14BlockDig) bool {
 		return true
 	}
 
+	if packet.Status == 4 || packet.Status == 3 {
+		// Translation reference:
+		// - net.minecraft.src.NetServerHandler.handleBlockDig(Packet14BlockDig)
+		//   status 4 -> dropOneItem(false), status 3 -> dropOneItem(true)
+		slot, changed := s.dropHeldItemStack(packet.Status == 3)
+		if changed {
+			_ = s.sendInventorySetSlot(slot)
+		}
+		return true
+	}
+
 	if packet.Status == 5 {
 		s.stopUsingHeldItem(true)
 		return true
@@ -2106,6 +2117,36 @@ func (s *loginSession) handleBlockDig(packet *protocol.Packet14BlockDig) bool {
 	}
 
 	return s.sendBlockChange(packet.XPosition, packet.YPosition, packet.ZPosition)
+}
+
+func (s *loginSession) dropHeldItemStack(dropAll bool) (windowSlot int, changed bool) {
+	s.stateMu.Lock()
+	defer s.stateMu.Unlock()
+
+	windowSlot = s.heldWindowSlotLocked()
+	stack := s.inventory[windowSlot]
+	if stack == nil || stack.StackSize <= 0 {
+		return windowSlot, false
+	}
+
+	remove := int8(1)
+	if dropAll {
+		remove = stack.StackSize
+	}
+	if remove <= 0 {
+		remove = 1
+	}
+
+	if stack.StackSize <= remove {
+		s.inventory[windowSlot] = nil
+	} else {
+		stack.StackSize -= remove
+	}
+
+	// Translation target:
+	// - EntityPlayer.dropPlayerItemWithRandomChoice() item-entity spawn path
+	// Item entity spawning is pending in this rewrite; inventory mutation parity lands first.
+	return windowSlot, true
 }
 
 func (s *loginSession) handlePlace(packet *protocol.Packet15Place) bool {

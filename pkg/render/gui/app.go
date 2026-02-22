@@ -183,21 +183,24 @@ type App struct {
 	prevSneakKey    bool
 	prevAttackInput bool
 	prevUseInput    bool
+	prevDropInput   bool
+	prevPickInput   bool
 	prevDigit       [9]bool
 	prevForwardKey  bool
 
-	hudHidden     bool
-	showDebug     bool
-	paused        bool
-	pauseScreen   pauseScreen
-	mainMenu      bool
-	menuScreen    menuScreen
-	inventoryOpen bool
-	chatInputOpen bool
-	chatInput     string
-	chatDraft     string
-	chatHistory   []string
-	chatHistPos   int
+	hudHidden      bool
+	showDebug      bool
+	showPlayerList bool
+	paused         bool
+	pauseScreen    pauseScreen
+	mainMenu       bool
+	menuScreen     menuScreen
+	inventoryOpen  bool
+	chatInputOpen  bool
+	chatInput      string
+	chatDraft      string
+	chatHistory    []string
+	chatHistPos    int
 
 	pauseButtons       []*guiButton
 	pauseOptionButtons []*guiButton
@@ -943,6 +946,9 @@ func (a *App) handleInput(deltaSeconds float64) bool {
 	sneakPressed := a.isKeyBindingDown(keyDescSneak)
 	attackPressed := a.isKeyBindingDown(keyDescAttack)
 	usePressed := a.isKeyBindingDown(keyDescUse)
+	dropPressed := a.isKeyBindingDown(keyDescDrop)
+	pickPressed := a.isKeyBindingDown(keyDescPick)
+	playerListPressed := a.isKeyBindingDown(keyDescPlayer)
 	sprintPressed := a.window.GetKey(glfw.KeyLeftControl) == glfw.Press || a.window.GetKey(glfw.KeyRightControl) == glfw.Press
 
 	defer func() {
@@ -959,7 +965,10 @@ func (a *App) handleInput(deltaSeconds float64) bool {
 		a.prevDown = downPressed
 		a.prevAttackInput = attackPressed
 		a.prevUseInput = usePressed
+		a.prevDropInput = dropPressed
+		a.prevPickInput = pickPressed
 	}()
+	a.showPlayerList = false
 
 	if !a.isCapturingKeyBinding() {
 		a.clearKeyPressQueue()
@@ -1125,6 +1134,7 @@ func (a *App) handleInput(deltaSeconds float64) bool {
 		}
 		return true
 	}
+	a.showPlayerList = playerListPressed
 
 	if (chatKeyPressed && !a.prevT) || (enterPressed && !a.prevEnter) {
 		a.openChatInput("")
@@ -1133,6 +1143,12 @@ func (a *App) handleInput(deltaSeconds float64) bool {
 	if commandKeyPressed && !a.prevSlash {
 		a.openChatInput("/")
 		return true
+	}
+	if dropPressed && !a.prevDropInput {
+		_ = a.session.DropHeldItem(sprintPressed)
+	}
+	if pickPressed && !a.prevPickInput {
+		a.handlePickBlockAction()
 	}
 
 	snapMove := a.session.Snapshot()
@@ -1647,6 +1663,7 @@ func (a *App) disconnectToMainMenu(status string) {
 	a.pauseScreen = pauseScreenMain
 	a.menuScreen = menuScreenMain
 	a.inventoryOpen = false
+	a.showPlayerList = false
 	a.chatInputOpen = false
 	a.chatInput = ""
 	a.chatDraft = ""
@@ -2061,6 +2078,8 @@ func (a *App) replaceSession(next *netclient.Session) {
 	a.prevSneakKey = false
 	a.prevAttackInput = false
 	a.prevUseInput = false
+	a.prevDropInput = false
+	a.prevPickInput = false
 	a.prevForwardKey = false
 	a.sprintTimer = 0
 	a.localSprinting = false
@@ -2082,6 +2101,7 @@ func (a *App) replaceSession(next *netclient.Session) {
 	a.pauseScreen = pauseScreenMain
 	a.inventoryOpen = false
 	a.chatInputOpen = false
+	a.showPlayerList = false
 	a.chatInput = ""
 	a.chatDraft = ""
 	a.chatHistPos = len(a.chatHistory)
@@ -4477,6 +4497,7 @@ func (a *App) drawHUD(snap netclient.StateSnapshot) {
 		a.drawExperienceBar(snap)
 		a.drawHotbarStackCounts(snap)
 		a.drawDebugOverlay(snap)
+		a.drawPlayerListOverlay(snap)
 	}
 	a.drawChatOverlay()
 	a.drawChatInput()
@@ -4621,6 +4642,56 @@ func (a *App) drawDebugOverlay(snap netclient.StateSnapshot) {
 	y := 2
 	for _, line := range lines {
 		a.font.drawStringWithShadow(line, 2, y, 0xFFFFFF)
+		y += 10
+	}
+}
+
+func (a *App) drawPlayerListOverlay(snap netclient.StateSnapshot) {
+	if !a.showPlayerList || a.session == nil || a.font == nil {
+		return
+	}
+
+	players := a.session.PlayerListSnapshot()
+	if len(players) == 0 && strings.TrimSpace(snap.Username) != "" {
+		players = append(players, netclient.PlayerInfoSnapshot{Name: snap.Username, Ping: 0})
+	}
+	if len(players) == 0 {
+		return
+	}
+
+	uiW := a.uiWidth()
+	title := fmt.Sprintf("Players online: %d", len(players))
+	maxW := a.font.getStringWidth(title)
+	names := make([]string, 0, len(players))
+	for i := range players {
+		name := strings.TrimSpace(players[i].Name)
+		if name == "" {
+			continue
+		}
+		names = append(names, name)
+		if w := a.font.getStringWidth(name); w > maxW {
+			maxW = w
+		}
+	}
+	if len(names) == 0 {
+		return
+	}
+
+	panelW := maxW + 16
+	panelH := 20 + len(names)*10 + 6
+	x1 := uiW/2 - panelW/2
+	y1 := 18
+	x2 := x1 + panelW
+	y2 := y1 + panelH
+
+	drawSolidRect(x1, y1, x2, y2, 0x90000000)
+	drawSolidRect(x1, y1, x2, y1+1, 0x50FFFFFF)
+	drawSolidRect(x1, y2-1, x2, y2, 0x70000000)
+	a.font.drawCenteredString(title, uiW/2, y1+6, 0xFFFFFF)
+
+	y := y1 + 20
+	for _, name := range names {
+		a.font.drawCenteredString(name, uiW/2, y, 0xFFFFFF)
 		y += 10
 	}
 }
