@@ -2956,7 +2956,7 @@ func (a *App) shouldRenderFace(currentID, nx, ny, nz int) bool {
 		// - net.minecraft.src.BlockLeavesBase.shouldSideBeRendered(...)
 		// Fancy leaves render inner shared faces for denser canopy look.
 		if currentID == 18 {
-			return true
+			return a.fancyGraphics
 		}
 		return false
 	}
