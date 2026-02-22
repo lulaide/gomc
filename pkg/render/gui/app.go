@@ -4338,7 +4338,7 @@ func (a *App) currentHandSwingProgress(now time.Time) float32 {
 // Translation references:
 // - net.minecraft.src.ItemRenderer#renderItemInFirstPerson(float)
 // - net.minecraft.src.RenderPlayer#renderFirstPersonArm(EntityPlayer)
-func (a *App) drawFirstPersonArm(_ netclient.StateSnapshot) {
+func (a *App) drawFirstPersonArm(snap netclient.StateSnapshot) {
 	if a.mainMenu || a.session == nil || a.hudHidden {
 		return
 	}
@@ -4398,6 +4398,14 @@ func (a *App) drawFirstPersonArm(_ netclient.StateSnapshot) {
 	gl.Rotatef(-135.0, 0, 1, 0)
 	gl.Translatef(5.6, 0.0, 0.0)
 
+	if snap.HeldItemID > 0 {
+		gl.PushMatrix()
+		gl.Translatef(-0.48, -0.18, -0.08)
+		gl.Rotatef(-15.0, 0, 1, 0)
+		gl.Rotatef(22.0, 1, 0, 0)
+		a.drawFirstPersonHeldItem(snap.HeldItemID, snap.HeldDamage)
+		gl.PopMatrix()
+	}
 	a.drawFirstPersonRightArmRaw(tex)
 
 	gl.Enable(gl.CULL_FACE)
@@ -4407,6 +4415,66 @@ func (a *App) drawFirstPersonArm(_ netclient.StateSnapshot) {
 	gl.MatrixMode(gl.PROJECTION)
 	gl.PopMatrix()
 	gl.MatrixMode(gl.MODELVIEW)
+}
+
+// Translation reference:
+// - net.minecraft.src.ItemRenderer#renderItemInFirstPerson(float)
+// - net.minecraft.src.RenderBlocks#renderBlockAsItem(...)
+func (a *App) drawFirstPersonHeldItem(itemID, itemDamage int16) {
+	id := int(itemID)
+	if id <= 0 {
+		return
+	}
+
+	gl.PushMatrix()
+	defer gl.PopMatrix()
+
+	if id <= 255 {
+		gl.Scalef(0.38, 0.38, 0.38)
+		if a.drawTexturedBlockMeta(-0.5, -0.5, -0.5, id, int(itemDamage), fullFaces) {
+			return
+		}
+	}
+
+	tex := a.itemTextureForStack(id, int(itemDamage))
+	if tex == nil {
+		r, g, b := colorForBlock(id)
+		gl.Disable(gl.TEXTURE_2D)
+		gl.Color4f(r, g, b, 1)
+		gl.Begin(gl.QUADS)
+		gl.Vertex3f(-0.3, -0.3, 0)
+		gl.Vertex3f(0.3, -0.3, 0)
+		gl.Vertex3f(0.3, 0.3, 0)
+		gl.Vertex3f(-0.3, 0.3, 0)
+		gl.End()
+		gl.Enable(gl.TEXTURE_2D)
+		gl.Color4f(1, 1, 1, 1)
+		return
+	}
+
+	gl.Scalef(0.62, 0.62, 0.62)
+	tex.bind()
+	gl.Color4f(1, 1, 1, 1)
+	gl.Begin(gl.QUADS)
+	// Front
+	gl.TexCoord2f(0, 1)
+	gl.Vertex3f(-0.5, -0.5, 0.0)
+	gl.TexCoord2f(1, 1)
+	gl.Vertex3f(0.5, -0.5, 0.0)
+	gl.TexCoord2f(1, 0)
+	gl.Vertex3f(0.5, 0.5, 0.0)
+	gl.TexCoord2f(0, 0)
+	gl.Vertex3f(-0.5, 0.5, 0.0)
+	// Back
+	gl.TexCoord2f(1, 1)
+	gl.Vertex3f(-0.5, -0.5, -0.02)
+	gl.TexCoord2f(0, 1)
+	gl.Vertex3f(0.5, -0.5, -0.02)
+	gl.TexCoord2f(0, 0)
+	gl.Vertex3f(0.5, 0.5, -0.02)
+	gl.TexCoord2f(1, 0)
+	gl.Vertex3f(-0.5, 0.5, -0.02)
+	gl.End()
 }
 
 func (a *App) drawFirstPersonRightArmRaw(tex *texture2D) {
