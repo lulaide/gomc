@@ -27,6 +27,7 @@ const (
 	menuScreenOptions
 	menuScreenVideo
 	menuScreenControls
+	menuScreenKeyBindings
 	menuScreenSounds
 	menuScreenCreateWorld
 	menuScreenRenameWorld
@@ -120,6 +121,8 @@ const (
 	buttonIDSoundSoundMinus = 1803
 	buttonIDSoundSoundPlus  = 1804
 	buttonIDSoundDone       = 1805
+	buttonIDKeybindBase     = 1900
+	buttonIDKeybindDone     = 1999
 
 	buttonIDCreateDone          = 1401
 	buttonIDCreateCancel        = 1402
@@ -142,6 +145,7 @@ func (a *App) initAllMenuButtons() {
 	a.initOptionButtons()
 	a.initVideoButtons()
 	a.initControlButtons()
+	a.initKeyBindingButtons()
 	a.initSoundButtons()
 	a.initCreateButtons()
 	a.initRenameButtons()
@@ -152,6 +156,7 @@ func (a *App) initAllMenuButtons() {
 	a.updateOptionButtonsState()
 	a.updateVideoButtonsState()
 	a.updateControlButtonsState()
+	a.updateKeyBindingButtonsState()
 	a.updateSoundButtonsState()
 	a.updateCreateButtonsState()
 	a.updateRenameButtonsState()
@@ -244,6 +249,22 @@ func (a *App) initControlButtons() {
 		newButton(buttonIDControlInvert, w/2-75, baseY+48, 150, 20, "Invert Mouse: OFF"),
 		newButton(buttonIDControlDone, w/2-100, baseY+84, 200, 20, "Done"),
 	}
+}
+
+func (a *App) initKeyBindingButtons() {
+	if len(a.keyBindings) == 0 {
+		a.initDefaultKeyBindings()
+	}
+	w, h := a.uiWidth(), a.uiHeight()
+	left := w/2 - 155
+	buttons := make([]*guiButton, 0, len(a.keyBindings)+1)
+	for i := range a.keyBindings {
+		x := left + (i%2)*160
+		y := h/6 + 24*(i>>1)
+		buttons = append(buttons, newButton(buttonIDKeybindBase+i, x, y, 70, 20, a.keyBindingButtonLabel(i)))
+	}
+	buttons = append(buttons, newButton(buttonIDKeybindDone, w/2-100, h/6+168, 200, 20, "Done"))
+	a.keyBindButtons = buttons
 }
 
 func (a *App) initSoundButtons() {
@@ -459,7 +480,7 @@ func (a *App) updateControlButtonsState() {
 		switch b.ID {
 		case buttonIDControlKeybinds:
 			b.Label = "Key Bindings..."
-			b.Enabled = false
+			b.Enabled = true
 		case buttonIDControlTouchscreen:
 			b.Label = "Touchscreen Mode"
 			b.Enabled = false
@@ -473,6 +494,30 @@ func (a *App) updateControlButtonsState() {
 		case buttonIDControlDone:
 			b.Enabled = true
 		}
+	}
+}
+
+func (a *App) updateKeyBindingButtonsState() {
+	if len(a.keyBindings) == 0 {
+		a.initDefaultKeyBindings()
+	}
+	if len(a.keyBindButtons) != len(a.keyBindings)+1 {
+		a.initKeyBindingButtons()
+	}
+	for i := range a.keyBindings {
+		b := a.keyBindButtons[i]
+		if b == nil {
+			continue
+		}
+		b.Visible = true
+		b.Enabled = true
+		b.Label = a.keyBindingButtonLabel(i)
+	}
+	if len(a.keyBindButtons) > 0 {
+		done := a.keyBindButtons[len(a.keyBindButtons)-1]
+		done.Visible = true
+		done.Enabled = true
+		done.Label = "Done"
 	}
 }
 
@@ -748,6 +793,8 @@ func (a *App) currentMenuButtons() []*guiButton {
 		return a.videoButtons
 	case menuScreenControls:
 		return a.controlButtons
+	case menuScreenKeyBindings:
+		return a.keyBindButtons
 	case menuScreenSounds:
 		return a.soundButtons
 	case menuScreenCreateWorld:
@@ -759,8 +806,18 @@ func (a *App) currentMenuButtons() []*guiButton {
 	}
 }
 
-func (a *App) handleMainMenuInput(leftMouse, enterPressed bool) bool {
+func (a *App) handleMainMenuInput(leftMouse, rightMouse, middleMouse, enterPressed bool) bool {
 	a.processMenuTextInput(enterPressed)
+
+	if a.menuScreen == menuScreenKeyBindings {
+		if a.tryCaptureKeyBindingFromMouse(
+			leftMouse && !a.prevLeftMouse,
+			rightMouse && !a.prevRightMouse,
+			middleMouse && !a.prevMiddleMouse,
+		) {
+			return true
+		}
+	}
 
 	if leftMouse && !a.prevLeftMouse {
 		switch a.menuScreen {
@@ -1043,6 +1100,7 @@ func (a *App) handleMenuButton(id int) bool {
 			}
 		case buttonIDOptionVideo:
 			a.menuScreen = menuScreenVideo
+			a.keyBindCapture = -1
 			a.menuStatus = ""
 		case buttonIDOptionLanguage:
 			if a.mainMenu {
@@ -1055,6 +1113,7 @@ func (a *App) handleMenuButton(id int) bool {
 		case buttonIDOptionControls:
 			if a.mainMenu {
 				a.menuScreen = menuScreenControls
+				a.keyBindCapture = -1
 				a.menuStatus = ""
 			} else {
 				a.invertMouse = !a.invertMouse
@@ -1063,6 +1122,7 @@ func (a *App) handleMenuButton(id int) bool {
 		case buttonIDOptionMusic:
 			if a.mainMenu {
 				a.menuScreen = menuScreenSounds
+				a.keyBindCapture = -1
 				a.menuStatus = ""
 			} else {
 				a.fancyGraphics = !a.fancyGraphics
@@ -1099,6 +1159,7 @@ func (a *App) handleMenuButton(id int) bool {
 		a.updateOptionButtonsState()
 		a.updateVideoButtonsState()
 		a.updateControlButtonsState()
+		a.updateKeyBindingButtonsState()
 		a.updateSoundButtonsState()
 		if changed {
 			a.saveOptionsFile()
@@ -1151,6 +1212,7 @@ func (a *App) handleMenuButton(id int) bool {
 		a.updateOptionButtonsState()
 		a.updateVideoButtonsState()
 		a.updateControlButtonsState()
+		a.updateKeyBindingButtonsState()
 		a.updateSoundButtonsState()
 		if changed {
 			a.saveOptionsFile()
@@ -1160,6 +1222,7 @@ func (a *App) handleMenuButton(id int) bool {
 		switch id {
 		case buttonIDControlDone:
 			a.menuScreen = menuScreenOptions
+			a.keyBindCapture = -1
 			a.menuStatus = ""
 		case buttonIDControlSensMinus:
 			a.mouseSens -= 0.02
@@ -1177,15 +1240,35 @@ func (a *App) handleMenuButton(id int) bool {
 			a.invertMouse = !a.invertMouse
 			changed = true
 		case buttonIDControlKeybinds:
-			a.menuStatus = "Key Bindings screen is not implemented yet."
+			a.menuScreen = menuScreenKeyBindings
+			a.keyBindCapture = -1
+			a.clearKeyPressQueue()
+			a.menuStatus = ""
 		case buttonIDControlTouchscreen:
 			a.menuStatus = "Touchscreen mode is not available on desktop."
 		}
 		a.updateControlButtonsState()
+		a.updateKeyBindingButtonsState()
 		a.updateSoundButtonsState()
 		if changed {
 			a.saveOptionsFile()
 		}
+	case menuScreenKeyBindings:
+		switch {
+		case id == buttonIDKeybindDone:
+			a.menuScreen = menuScreenControls
+			a.keyBindCapture = -1
+			a.clearKeyPressQueue()
+			a.menuStatus = ""
+		case id >= buttonIDKeybindBase:
+			idx := id - buttonIDKeybindBase
+			if idx >= 0 && idx < len(a.keyBindings) {
+				a.keyBindCapture = idx
+				a.clearKeyPressQueue()
+				a.menuStatus = ""
+			}
+		}
+		a.updateKeyBindingButtonsState()
 	case menuScreenSounds:
 		changed := false
 		switch id {
@@ -1937,6 +2020,8 @@ func (a *App) drawMenuScreen() {
 		a.drawVideoMenu()
 	case menuScreenControls:
 		a.drawControlsMenu()
+	case menuScreenKeyBindings:
+		a.drawKeyBindingsMenu()
 	case menuScreenSounds:
 		a.drawSoundsMenu()
 	case menuScreenCreateWorld:
@@ -1962,10 +2047,18 @@ func (a *App) handleMenuEscape() bool {
 		return true
 	case menuScreenControls:
 		a.menuScreen = menuScreenOptions
+		a.keyBindCapture = -1
+		a.menuStatus = ""
+		return true
+	case menuScreenKeyBindings:
+		a.menuScreen = menuScreenControls
+		a.keyBindCapture = -1
+		a.clearKeyPressQueue()
 		a.menuStatus = ""
 		return true
 	case menuScreenSounds:
 		a.menuScreen = menuScreenOptions
+		a.keyBindCapture = -1
 		a.menuStatus = ""
 		return true
 	case menuScreenMain:
@@ -2294,6 +2387,37 @@ func (a *App) drawSoundsMenu() {
 		a.font.drawCenteredString(a.optionMusicVolumeLabel(), a.uiWidth()/2, baseY+6, 0xFFFFFF)
 		a.font.drawCenteredString(a.optionSoundVolumeLabel(), a.uiWidth()/2, baseY+24+6, 0xFFFFFF)
 	}
+
+	a.drawMenuStatusLine()
+	gl.Disable(gl.BLEND)
+	gl.Enable(gl.CULL_FACE)
+	gl.Enable(gl.DEPTH_TEST)
+}
+
+func (a *App) drawKeyBindingLabels() {
+	if a.font == nil {
+		return
+	}
+	for i := range a.keyBindings {
+		if i >= len(a.keyBindButtons) {
+			break
+		}
+		b := a.keyBindButtons[i]
+		if b == nil || !b.Visible {
+			continue
+		}
+		a.font.drawString(a.keyBindings[i].Label, b.X+b.Width+6, b.Y+7, 0xFFFFFF)
+	}
+}
+
+func (a *App) drawKeyBindingsMenu() {
+	a.drawMenuBackground("Controls")
+	a.updateKeyBindingButtonsState()
+
+	for _, b := range a.keyBindButtons {
+		b.draw(a.font, a.texWidgets, a.mouseX, a.mouseY)
+	}
+	a.drawKeyBindingLabels()
 
 	a.drawMenuStatusLine()
 	gl.Disable(gl.BLEND)

@@ -109,6 +109,15 @@ func TestCurrentPauseButtonsTracksVideoAndControlsSubscreens(t *testing.T) {
 		t.Fatalf("pause controls done button mismatch: got id=%d want id=%d", controlButtons[len(controlButtons)-1].ID, buttonIDControlDone)
 	}
 
+	a.pauseScreen = pauseScreenKeyBindings
+	keybindButtons := a.currentPauseButtons()
+	if len(keybindButtons) == 0 {
+		t.Fatal("pause key binding buttons should not be empty")
+	}
+	if keybindButtons[len(keybindButtons)-1].ID != buttonIDKeybindDone {
+		t.Fatalf("pause key binding done button mismatch: got id=%d want id=%d", keybindButtons[len(keybindButtons)-1].ID, buttonIDKeybindDone)
+	}
+
 	a.pauseScreen = pauseScreenSounds
 	soundButtons := a.currentPauseButtons()
 	if len(soundButtons) == 0 {

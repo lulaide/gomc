@@ -346,6 +346,7 @@ func TestOptionsFileLoadAndSave(t *testing.T) {
 		"difficulty:3",
 		"fancyGraphics:false",
 		"clouds:false",
+		"key_key.forward:44",
 		"customKey:customValue",
 	}, "\n") + "\n"
 	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
@@ -404,6 +405,9 @@ func TestOptionsFileLoadAndSave(t *testing.T) {
 	if a.cloudsEnabled {
 		t.Fatal("loaded clouds should be false")
 	}
+	if a.keyBindingCode(keyDescForward) != 44 {
+		t.Fatalf("loaded key_key.forward mismatch: got=%d want=44", a.keyBindingCode(keyDescForward))
+	}
 
 	a.musicVolume = 0.35
 	a.soundVolume = 0.65
@@ -417,6 +421,7 @@ func TestOptionsFileLoadAndSave(t *testing.T) {
 	a.optionDifficulty = 0
 	a.fancyGraphics = true
 	a.cloudsEnabled = true
+	a.setKeyBindingByIndex(a.keyBindingIndexByDescription(keyDescForward), 17)
 	a.saveOptionsFile()
 
 	updatedBytes, err := os.ReadFile(path)
@@ -437,6 +442,7 @@ func TestOptionsFileLoadAndSave(t *testing.T) {
 		"difficulty:0",
 		"fancyGraphics:true",
 		"clouds:true",
+		"key_key.forward:17",
 		"customKey:customValue",
 	}
 	for _, want := range checks {

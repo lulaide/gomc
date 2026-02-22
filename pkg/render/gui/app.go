@@ -75,6 +75,7 @@ const (
 	pauseScreenOptions
 	pauseScreenVideo
 	pauseScreenControls
+	pauseScreenKeyBindings
 	pauseScreenSounds
 )
 
@@ -165,22 +166,25 @@ type App struct {
 	mouseX     int
 	mouseY     int
 
-	prevLeftMouse  bool
-	prevRightMouse bool
-	prevF1         bool
-	prevF3         bool
-	prevEsc        bool
-	prevEnter      bool
-	prevSpace      bool
-	prevBackspace  bool
-	prevE          bool
-	prevT          bool
-	prevSlash      bool
-	prevUp         bool
-	prevDown       bool
-	prevSneakKey   bool
-	prevDigit      [9]bool
-	prevForwardKey bool
+	prevLeftMouse   bool
+	prevRightMouse  bool
+	prevMiddleMouse bool
+	prevF1          bool
+	prevF3          bool
+	prevEsc         bool
+	prevEnter       bool
+	prevSpace       bool
+	prevBackspace   bool
+	prevE           bool
+	prevT           bool
+	prevSlash       bool
+	prevUp          bool
+	prevDown        bool
+	prevSneakKey    bool
+	prevAttackInput bool
+	prevUseInput    bool
+	prevDigit       [9]bool
+	prevForwardKey  bool
 
 	hudHidden     bool
 	showDebug     bool
@@ -203,6 +207,7 @@ type App struct {
 	optionButtons      []*guiButton
 	videoButtons       []*guiButton
 	controlButtons     []*guiButton
+	keyBindButtons     []*guiButton
 	soundButtons       []*guiButton
 	createButtons      []*guiButton
 	renameButtons      []*guiButton
@@ -227,6 +232,7 @@ type App struct {
 	renameWorldName    string
 	activeTextField    menuTextField
 	typedRuneQueue     []rune
+	keyPressQueue      []glfw.Key
 
 	eventsCh   <-chan netclient.Event
 	chatMu     sync.Mutex
@@ -236,6 +242,8 @@ type App struct {
 	assetsRoot     string
 	optionsPath    string
 	optionsKV      map[string]string
+	keyBindings    []keyBindingConfig
+	keyBindCapture int
 	texWidgets     *texture2D
 	texIcons       *texture2D
 	texOptionsBG   *texture2D
@@ -397,6 +405,7 @@ func Run(session *netclient.Session, cfg Config) error {
 		mainMenu:           cfg.StartInMainMenu,
 		pauseScreen:        pauseScreenMain,
 		menuScreen:         menuScreenMain,
+		keyBindCapture:     -1,
 		selectedWorld:      -1,
 		singleWorldMeta:    make(map[string]singleWorldMeta),
 		optionDifficulty:   1,
@@ -405,6 +414,7 @@ func Run(session *netclient.Session, cfg Config) error {
 		chunkRenderCache:   make(map[chunk.CoordIntPair]*chunkRenderEntry),
 		limitFramerateMode: cfg.FPSLimitMode,
 	}
+	app.initDefaultKeyBindings()
 	app.optionsPath = discoverOptionsPath(app.assetsRoot)
 	app.loadOptionsFile()
 	audio.InitWithAssets(app.assetsRoot)
@@ -456,6 +466,11 @@ func Run(session *netclient.Session, cfg Config) error {
 	})
 	window.SetCharCallback(func(_ *glfw.Window, char rune) {
 		app.enqueueTypedRune(char)
+	})
+	window.SetKeyCallback(func(_ *glfw.Window, key glfw.Key, _ int, action glfw.Action, _ glfw.ModifierKey) {
+		if action == glfw.Press {
+			app.enqueueKeyPress(key)
+		}
 	})
 	gl.Viewport(0, 0, int32(app.width), int32(app.height))
 
@@ -916,29 +931,52 @@ func (a *App) handleInput(deltaSeconds float64) bool {
 	enterPressed := a.window.GetKey(glfw.KeyEnter) == glfw.Press || a.window.GetKey(glfw.KeyKPEnter) == glfw.Press
 	escPressed := a.window.GetKey(glfw.KeyEscape) == glfw.Press
 	backspacePressed := a.window.GetKey(glfw.KeyBackspace) == glfw.Press
-	ePressed := a.window.GetKey(glfw.KeyE) == glfw.Press
-	tPressed := a.window.GetKey(glfw.KeyT) == glfw.Press
-	slashPressed := a.window.GetKey(glfw.KeySlash) == glfw.Press
+	inventoryPressed := a.isKeyBindingDown(keyDescInventory)
+	chatKeyPressed := a.isKeyBindingDown(keyDescChat)
+	commandKeyPressed := a.isKeyBindingDown(keyDescCommand)
 	upPressed := a.window.GetKey(glfw.KeyUp) == glfw.Press
 	downPressed := a.window.GetKey(glfw.KeyDown) == glfw.Press
 	leftMouse := a.window.GetMouseButton(glfw.MouseButtonLeft) == glfw.Press
 	rightMouse := a.window.GetMouseButton(glfw.MouseButtonRight) == glfw.Press
-	spacePressed := a.window.GetKey(glfw.KeySpace) == glfw.Press
-	sneakPressed := a.window.GetKey(glfw.KeyLeftShift) == glfw.Press || a.window.GetKey(glfw.KeyRightShift) == glfw.Press
+	middleMouse := a.window.GetMouseButton(glfw.MouseButtonMiddle) == glfw.Press
+	jumpPressed := a.isKeyBindingDown(keyDescJump)
+	sneakPressed := a.isKeyBindingDown(keyDescSneak)
+	attackPressed := a.isKeyBindingDown(keyDescAttack)
+	usePressed := a.isKeyBindingDown(keyDescUse)
 	sprintPressed := a.window.GetKey(glfw.KeyLeftControl) == glfw.Press || a.window.GetKey(glfw.KeyRightControl) == glfw.Press
 
 	defer func() {
 		a.prevLeftMouse = leftMouse
 		a.prevRightMouse = rightMouse
+		a.prevMiddleMouse = middleMouse
 		a.prevEnter = enterPressed
-		a.prevSpace = spacePressed
+		a.prevSpace = jumpPressed
 		a.prevBackspace = backspacePressed
-		a.prevE = ePressed
-		a.prevT = tPressed
-		a.prevSlash = slashPressed
+		a.prevE = inventoryPressed
+		a.prevT = chatKeyPressed
+		a.prevSlash = commandKeyPressed
 		a.prevUp = upPressed
 		a.prevDown = downPressed
+		a.prevAttackInput = attackPressed
+		a.prevUseInput = usePressed
 	}()
+
+	if !a.isCapturingKeyBinding() {
+		a.clearKeyPressQueue()
+	}
+	if a.isCapturingKeyBinding() {
+		if escPressed && !a.prevEsc {
+			a.setKeyBindingByIndex(a.keyBindCapture, 1)
+			a.keyBindCapture = -1
+			a.updateKeyBindingButtonsState()
+			a.saveOptionsFile()
+			a.prevEsc = escPressed
+			return true
+		}
+		if a.tryCaptureKeyBindingFromKeyQueue() {
+			return true
+		}
+	}
 
 	if escPressed && !a.prevEsc && a.mainMenu {
 		a.prevEsc = escPressed
@@ -961,6 +999,8 @@ func (a *App) handleInput(deltaSeconds float64) bool {
 		if a.paused {
 			if a.pauseScreen == pauseScreenOptions {
 				a.pauseScreen = pauseScreenMain
+			} else if a.pauseScreen == pauseScreenKeyBindings {
+				a.pauseScreen = pauseScreenControls
 			} else if a.pauseScreen == pauseScreenVideo || a.pauseScreen == pauseScreenControls || a.pauseScreen == pauseScreenSounds {
 				a.pauseScreen = pauseScreenOptions
 			} else {
@@ -988,7 +1028,7 @@ func (a *App) handleInput(deltaSeconds float64) bool {
 
 	if a.mainMenu {
 		a.moveTickAccum = 0
-		return a.handleMainMenuInput(leftMouse, enterPressed)
+		return a.handleMainMenuInput(leftMouse, rightMouse, middleMouse, enterPressed)
 	}
 	if a.session == nil {
 		a.moveTickAccum = 0
@@ -1003,6 +1043,15 @@ func (a *App) handleInput(deltaSeconds float64) bool {
 
 	if a.paused {
 		a.moveTickAccum = 0
+		if a.pauseScreen == pauseScreenKeyBindings {
+			if a.tryCaptureKeyBindingFromMouse(
+				leftMouse && !a.prevLeftMouse,
+				rightMouse && !a.prevRightMouse,
+				middleMouse && !a.prevMiddleMouse,
+			) {
+				return true
+			}
+		}
 		if leftMouse && !a.prevLeftMouse {
 			for _, b := range a.currentPauseButtons() {
 				if b == nil || !b.Enabled || !b.contains(a.mouseX, a.mouseY) {
@@ -1017,6 +1066,8 @@ func (a *App) handleInput(deltaSeconds float64) bool {
 					a.handlePauseVideoButton(b.ID)
 				} else if a.pauseScreen == pauseScreenControls {
 					a.handlePauseControlButton(b.ID)
+				} else if a.pauseScreen == pauseScreenKeyBindings {
+					a.handlePauseKeybindButton(b.ID)
 				} else if a.pauseScreen == pauseScreenSounds {
 					a.handlePauseSoundButton(b.ID)
 				} else {
@@ -1056,7 +1107,7 @@ func (a *App) handleInput(deltaSeconds float64) bool {
 		return true
 	}
 
-	if ePressed && !a.prevE {
+	if inventoryPressed && !a.prevE {
 		if a.inventoryOpen {
 			a.closeInventoryScreen()
 		} else {
@@ -1075,11 +1126,11 @@ func (a *App) handleInput(deltaSeconds float64) bool {
 		return true
 	}
 
-	if (tPressed && !a.prevT) || (enterPressed && !a.prevEnter) {
+	if (chatKeyPressed && !a.prevT) || (enterPressed && !a.prevEnter) {
 		a.openChatInput("")
 		return true
 	}
-	if slashPressed && !a.prevSlash {
+	if commandKeyPressed && !a.prevSlash {
 		a.openChatInput("/")
 		return true
 	}
@@ -1087,7 +1138,7 @@ func (a *App) handleInput(deltaSeconds float64) bool {
 	snapMove := a.session.Snapshot()
 	allowFlight := snapMove.CanFly || snapMove.IsCreative
 	flyingNow := snapMove.IsFlying
-	if allowFlight && spacePressed && !a.prevSpace {
+	if allowFlight && jumpPressed && !a.prevSpace {
 		if !a.lastSpaceTap.IsZero() && time.Since(a.lastSpaceTap) <= 250*time.Millisecond {
 			flyingNow = !flyingNow
 			_ = a.session.SetFlying(flyingNow)
@@ -1126,7 +1177,7 @@ func (a *App) handleInput(deltaSeconds float64) bool {
 		_ = a.session.Look(float32(a.yaw), float32(a.pitch))
 	}
 
-	if leftMouse && !a.prevLeftMouse {
+	if attackPressed && !a.prevAttackInput {
 		a.startHandSwing()
 		_ = a.session.SwingArm()
 		snapNow := a.session.Snapshot()
@@ -1145,7 +1196,7 @@ func (a *App) handleInput(deltaSeconds float64) bool {
 		}
 	}
 
-	if rightMouse && !a.prevRightMouse {
+	if usePressed && !a.prevUseInput {
 		snapNow := a.session.Snapshot()
 		target := a.pickBlockTarget(snapNow, interactReach)
 		if target.Hit {
@@ -1170,16 +1221,16 @@ func (a *App) handleInput(deltaSeconds float64) bool {
 
 	forward := 0.0
 	strafe := 0.0
-	if a.window.GetKey(glfw.KeyW) == glfw.Press {
+	if a.isKeyBindingDown(keyDescForward) {
 		forward += 1.0
 	}
-	if a.window.GetKey(glfw.KeyS) == glfw.Press {
+	if a.isKeyBindingDown(keyDescBack) {
 		forward -= 1.0
 	}
-	if a.window.GetKey(glfw.KeyA) == glfw.Press {
+	if a.isKeyBindingDown(keyDescLeft) {
 		strafe += 1.0
 	}
-	if a.window.GetKey(glfw.KeyD) == glfw.Press {
+	if a.isKeyBindingDown(keyDescRight) {
 		strafe -= 1.0
 	}
 	a.moveTickAccum += deltaSeconds
@@ -1192,7 +1243,7 @@ func (a *App) handleInput(deltaSeconds float64) bool {
 			moveTickSeconds,
 			forward,
 			strafe,
-			spacePressed,
+			jumpPressed,
 			sneakPressed,
 			sprintPressed,
 			allowFlight,
@@ -1206,7 +1257,7 @@ func (a *App) handleInput(deltaSeconds float64) bool {
 func (a *App) applyMovementTick(
 	stepSeconds float64,
 	forward, strafe float64,
-	spacePressed, sneakPressed, sprintPressed bool,
+	jumpPressed, sneakPressed, sprintPressed bool,
 	allowFlight, flyingNow bool,
 ) {
 	if a.session == nil {
@@ -1230,7 +1281,7 @@ func (a *App) applyMovementTick(
 
 	if allowFlight && flyingNow {
 		a.velY = 0
-		if spacePressed {
+		if jumpPressed {
 			dyDesired += speed
 		}
 		if sneakPressed {
@@ -1242,7 +1293,7 @@ func (a *App) applyMovementTick(
 			// Translation reference:
 			// - net.minecraft.src.MovementInputFromOptions.jump (hold-to-jump behavior)
 			// - net.minecraft.src.EntityLivingBase.moveEntityWithHeading()
-			if spacePressed {
+			if jumpPressed {
 				a.velY = jumpVelocity
 			} else if a.velY < 0 {
 				a.velY = 0
@@ -1360,6 +1411,8 @@ func (a *App) setPaused(paused bool) {
 	a.paused = paused
 	a.moveTickAccum = 0
 	a.firstMouse = true
+	a.keyBindCapture = -1
+	a.clearKeyPressQueue()
 	if paused {
 		a.pauseScreen = pauseScreenMain
 		a.initPauseButtons()
@@ -1379,6 +1432,9 @@ func (a *App) currentPauseButtons() []*guiButton {
 	}
 	if a.pauseScreen == pauseScreenControls {
 		return a.controlButtons
+	}
+	if a.pauseScreen == pauseScreenKeyBindings {
+		return a.keyBindButtons
 	}
 	if a.pauseScreen == pauseScreenSounds {
 		return a.soundButtons
@@ -1419,11 +1475,13 @@ func (a *App) handlePauseOptionButton(id int) {
 		a.menuStatus = ""
 	case buttonIDOptionControls:
 		a.pauseScreen = pauseScreenControls
+		a.keyBindCapture = -1
 		a.menuStatus = ""
 	case buttonIDOptionLanguage:
 		a.menuStatus = "Language screen is not implemented yet."
 	case buttonIDOptionMusic:
 		a.pauseScreen = pauseScreenSounds
+		a.keyBindCapture = -1
 		a.menuStatus = ""
 	case buttonIDOptionSnooper:
 		a.menuStatus = "Snooper Settings are not implemented yet."
@@ -1496,6 +1554,7 @@ func (a *App) handlePauseControlButton(id int) {
 	switch id {
 	case buttonIDControlDone:
 		a.pauseScreen = pauseScreenOptions
+		a.keyBindCapture = -1
 		a.menuStatus = ""
 	case buttonIDControlSensMinus:
 		a.mouseSens -= 0.02
@@ -1513,14 +1572,36 @@ func (a *App) handlePauseControlButton(id int) {
 		a.invertMouse = !a.invertMouse
 		changed = true
 	case buttonIDControlKeybinds:
-		a.menuStatus = "Key Bindings screen is not implemented yet."
+		a.pauseScreen = pauseScreenKeyBindings
+		a.keyBindCapture = -1
+		a.clearKeyPressQueue()
+		a.menuStatus = ""
 	case buttonIDControlTouchscreen:
 		a.menuStatus = "Touchscreen mode is not available on desktop."
 	}
 	a.updateControlButtonsState()
+	a.updateKeyBindingButtonsState()
 	a.updateSoundButtonsState()
 	if changed {
 		a.saveOptionsFile()
+	}
+}
+
+func (a *App) handlePauseKeybindButton(id int) {
+	if id == buttonIDKeybindDone {
+		a.pauseScreen = pauseScreenControls
+		a.keyBindCapture = -1
+		a.clearKeyPressQueue()
+		a.menuStatus = ""
+		return
+	}
+	if id >= buttonIDKeybindBase {
+		idx := id - buttonIDKeybindBase
+		if idx >= 0 && idx < len(a.keyBindings) {
+			a.keyBindCapture = idx
+			a.clearKeyPressQueue()
+			a.updateKeyBindingButtonsState()
+		}
 	}
 }
 
@@ -1569,6 +1650,8 @@ func (a *App) disconnectToMainMenu(status string) {
 	a.chatInputOpen = false
 	a.chatInput = ""
 	a.chatDraft = ""
+	a.keyBindCapture = -1
+	a.clearKeyPressQueue()
 	if status != "" {
 		a.menuStatus = status
 	} else {
@@ -1899,10 +1982,12 @@ func (a *App) initPauseOptionsButtons() {
 	a.initOptionButtons()
 	a.initVideoButtons()
 	a.initControlButtons()
+	a.initKeyBindingButtons()
 	a.initSoundButtons()
 	a.updatePauseOptionButtonsState()
 	a.updateVideoButtonsState()
 	a.updateControlButtonsState()
+	a.updateKeyBindingButtonsState()
 	a.updateSoundButtonsState()
 	a.pauseOptionButtons = append(a.pauseOptionButtons[:0], a.optionButtons...)
 }
@@ -1964,6 +2049,7 @@ func (a *App) replaceSession(next *netclient.Session) {
 	a.velY = 0
 	a.prevLeftMouse = false
 	a.prevRightMouse = false
+	a.prevMiddleMouse = false
 	a.prevEnter = false
 	a.prevSpace = false
 	a.prevBackspace = false
@@ -1973,6 +2059,8 @@ func (a *App) replaceSession(next *netclient.Session) {
 	a.prevUp = false
 	a.prevDown = false
 	a.prevSneakKey = false
+	a.prevAttackInput = false
+	a.prevUseInput = false
 	a.prevForwardKey = false
 	a.sprintTimer = 0
 	a.localSprinting = false
@@ -1998,6 +2086,8 @@ func (a *App) replaceSession(next *netclient.Session) {
 	a.chatDraft = ""
 	a.chatHistPos = len(a.chatHistory)
 	a.typedRuneQueue = a.typedRuneQueue[:0]
+	a.keyPressQueue = a.keyPressQueue[:0]
+	a.keyBindCapture = -1
 	a.applyCursorMode()
 
 	if old != nil && old != next {
@@ -4860,6 +4950,8 @@ func (a *App) drawPauseMenu() {
 			title = "Video Settings"
 		} else if a.pauseScreen == pauseScreenControls {
 			title = "Controls"
+		} else if a.pauseScreen == pauseScreenKeyBindings {
+			title = "Controls"
 		} else if a.pauseScreen == pauseScreenSounds {
 			title = "Music & Sounds"
 		}
@@ -4883,6 +4975,8 @@ func (a *App) drawPauseMenu() {
 		baseY := uiH/6 + 20
 		a.font.drawCenteredString(a.optionMusicVolumeLabel(), uiW/2, baseY+6, 0xFFFFFF)
 		a.font.drawCenteredString(a.optionSoundVolumeLabel(), uiW/2, baseY+24+6, 0xFFFFFF)
+	} else if a.pauseScreen == pauseScreenKeyBindings && a.font != nil {
+		a.drawKeyBindingLabels()
 	}
 	a.drawMenuStatusLine()
 
@@ -6049,6 +6143,9 @@ func (a *App) loadOptionsFile() {
 	if a.optionsPath == "" {
 		return
 	}
+	if len(a.keyBindings) == 0 {
+		a.initDefaultKeyBindings()
+	}
 	f, err := os.Open(a.optionsPath)
 	if err != nil {
 		if !errors.Is(err, os.ErrNotExist) {
@@ -6124,6 +6221,14 @@ func (a *App) loadOptionsFile() {
 				a.cloudsEnabled = v
 			}
 		}
+		if strings.HasPrefix(key, "key_") {
+			desc := strings.TrimPrefix(key, "key_")
+			if idx := a.keyBindingIndexByDescription(desc); idx >= 0 {
+				if v, parseErr := strconv.Atoi(value); parseErr == nil {
+					a.keyBindings[idx].Code = v
+				}
+			}
+		}
 	}
 	if err := scanner.Err(); err != nil {
 		fmt.Printf("gui options warning: read %s failed: %v\n", a.optionsPath, err)
@@ -6135,6 +6240,9 @@ func (a *App) loadOptionsFile() {
 func (a *App) saveOptionsFile() {
 	if a.optionsPath == "" {
 		return
+	}
+	if len(a.keyBindings) == 0 {
+		a.initDefaultKeyBindings()
 	}
 	if a.optionsKV == nil {
 		a.optionsKV = make(map[string]string)
@@ -6151,6 +6259,9 @@ func (a *App) saveOptionsFile() {
 	a.optionsKV["difficulty"] = strconv.Itoa(a.optionDifficulty & 3)
 	a.optionsKV["fancyGraphics"] = strconv.FormatBool(a.fancyGraphics)
 	a.optionsKV["clouds"] = strconv.FormatBool(a.cloudsEnabled)
+	for i := range a.keyBindings {
+		a.optionsKV["key_"+a.keyBindings[i].Description] = strconv.Itoa(a.keyBindings[i].Code)
+	}
 
 	keys := make([]string, 0, len(a.optionsKV))
 	for k := range a.optionsKV {
