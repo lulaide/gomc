@@ -173,3 +173,23 @@ func TestItemDisplayNameSpawnEggFallsBackToBaseName(t *testing.T) {
 		t.Fatalf("spawn egg fallback name mismatch: got=%q want=%q", got, "Spawn")
 	}
 }
+
+func TestItemDisplayNamePotionVariants(t *testing.T) {
+	a := &App{
+		langEN: map[string]string{
+			"item.emptyPotion.name":       "Water Bottle",
+			"item.potion.name":            "Potion",
+			"potion.prefix.grenade":       "Splash",
+			"potion.moveSpeed.postfix":    "Potion of Swiftness",
+			"potion.prefix.uninteresting": "Uninteresting",
+		},
+	}
+	if got := a.itemDisplayName(373, 0); got != "Water Bottle" {
+		t.Fatalf("water bottle name mismatch: got=%q want=%q", got, "Water Bottle")
+	}
+
+	// Bits 1 and 6 satisfy move speed requirement; splash bit adds "Splash " prefix.
+	if got := a.itemDisplayName(373, 16384|66); got != "Splash Potion of Swiftness" {
+		t.Fatalf("splash speed potion name mismatch: got=%q want=%q", got, "Splash Potion of Swiftness")
+	}
+}

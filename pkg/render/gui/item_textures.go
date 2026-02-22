@@ -466,6 +466,56 @@ func (a *App) itemDisplayName(itemID, itemDamage int16) string {
 		return ""
 	}
 
+	if id == 373 {
+		damage := int(itemDamage)
+		// Translation reference:
+		// - net.minecraft.src.ItemPotion#getItemDisplayName(ItemStack)
+		if damage == 0 {
+			if localized, ok := a.langEN["item.emptyPotion.name"]; ok && strings.TrimSpace(localized) != "" {
+				return strings.TrimSpace(localized)
+			}
+			return "Water Bottle"
+		}
+
+		splashPrefix := ""
+		if (damage & 16384) != 0 {
+			if localized, ok := a.langEN["potion.prefix.grenade"]; ok && strings.TrimSpace(localized) != "" {
+				splashPrefix = strings.TrimSpace(localized) + " "
+			}
+		}
+
+		effects := potionEffectsFromDamage(damage, false)
+		if len(effects) > 0 {
+			if key, ok := potionNameLangKeyByID[effects[0].potionID]; ok && key != "" {
+				postfixKey := key + ".postfix"
+				if localized, ok := a.langEN[postfixKey]; ok && strings.TrimSpace(localized) != "" {
+					return strings.TrimSpace(splashPrefix + strings.TrimSpace(localized))
+				}
+			}
+		}
+
+		prefix := ""
+		if prefixKey := potionPrefixLangKeyFromDamage(damage); prefixKey != "" {
+			if localized, ok := a.langEN[prefixKey]; ok && strings.TrimSpace(localized) != "" {
+				prefix = strings.TrimSpace(localized)
+			}
+		}
+
+		base := ""
+		if key := itemLangKeyForStack(id, damage); key != "" {
+			if localized, ok := a.langEN[key]; ok && strings.TrimSpace(localized) != "" {
+				base = strings.TrimSpace(localized)
+			}
+		}
+		if base == "" {
+			base = "Potion"
+		}
+		if prefix != "" {
+			return strings.TrimSpace(prefix + " " + base)
+		}
+		return base
+	}
+
 	if id == 383 {
 		base := ""
 		if key := itemLangKeyForStack(id, int(itemDamage)); key != "" {

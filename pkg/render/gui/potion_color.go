@@ -68,6 +68,68 @@ var potionAmplifiersByID = map[int]string{
 	19: "5", // poison
 }
 
+var potionNameLangKeyByID = map[int]string{
+	// Translation reference:
+	// - net.minecraft.src.Potion static setPotionName(...)
+	1:  "potion.moveSpeed",
+	2:  "potion.moveSlowdown",
+	3:  "potion.digSpeed",
+	4:  "potion.digSlowDown",
+	5:  "potion.damageBoost",
+	6:  "potion.heal",
+	7:  "potion.harm",
+	8:  "potion.jump",
+	9:  "potion.confusion",
+	10: "potion.regeneration",
+	11: "potion.resistance",
+	12: "potion.fireResistance",
+	13: "potion.waterBreathing",
+	14: "potion.invisibility",
+	15: "potion.blindness",
+	16: "potion.nightVision",
+	17: "potion.hunger",
+	18: "potion.weakness",
+	19: "potion.poison",
+	20: "potion.wither",
+}
+
+var potionPrefixLangKeys = [32]string{
+	// Translation reference:
+	// - net.minecraft.src.PotionHelper.potionPrefixes
+	"potion.prefix.mundane",
+	"potion.prefix.uninteresting",
+	"potion.prefix.bland",
+	"potion.prefix.clear",
+	"potion.prefix.milky",
+	"potion.prefix.diffuse",
+	"potion.prefix.artless",
+	"potion.prefix.thin",
+	"potion.prefix.awkward",
+	"potion.prefix.flat",
+	"potion.prefix.bulky",
+	"potion.prefix.bungling",
+	"potion.prefix.buttered",
+	"potion.prefix.smooth",
+	"potion.prefix.suave",
+	"potion.prefix.debonair",
+	"potion.prefix.thick",
+	"potion.prefix.elegant",
+	"potion.prefix.fancy",
+	"potion.prefix.charming",
+	"potion.prefix.dashing",
+	"potion.prefix.refined",
+	"potion.prefix.cordial",
+	"potion.prefix.sparkling",
+	"potion.prefix.potent",
+	"potion.prefix.foul",
+	"potion.prefix.odorless",
+	"potion.prefix.rank",
+	"potion.prefix.harsh",
+	"potion.prefix.acrid",
+	"potion.prefix.gross",
+	"potion.prefix.stinky",
+}
+
 var (
 	potionColorCacheMu sync.RWMutex
 	potionColorCache   = make(map[int]int)
@@ -193,6 +255,41 @@ func potionIsFlagUnset(value, bit int) int {
 		return 0
 	}
 	return 1
+}
+
+// Translation references:
+// - net.minecraft.src.PotionHelper#func_77909_a(int)
+// - net.minecraft.src.PotionHelper#func_77908_a(int,int,int,int,int,int)
+func potionPrefixIndexFromDamage(data int) int {
+	return potionPrefixBitsToIndex(data, 5, 4, 3, 2, 1)
+}
+
+func potionPrefixBitsToIndex(data, bitA, bitB, bitC, bitD, bitE int) int {
+	prefix := 0
+	if potionCheckFlag(data, bitA) {
+		prefix |= 16
+	}
+	if potionCheckFlag(data, bitB) {
+		prefix |= 8
+	}
+	if potionCheckFlag(data, bitC) {
+		prefix |= 4
+	}
+	if potionCheckFlag(data, bitD) {
+		prefix |= 2
+	}
+	if potionCheckFlag(data, bitE) {
+		prefix |= 1
+	}
+	return prefix
+}
+
+func potionPrefixLangKeyFromDamage(data int) string {
+	idx := potionPrefixIndexFromDamage(data)
+	if idx < 0 || idx >= len(potionPrefixLangKeys) {
+		return ""
+	}
+	return potionPrefixLangKeys[idx]
 }
 
 func potionCountSetFlags(value int) int {

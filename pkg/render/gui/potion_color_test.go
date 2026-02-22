@@ -29,3 +29,13 @@ func TestParsePotionEffectExprBasic(t *testing.T) {
 		t.Fatalf("parse regen requirement should fail when bit1 set: got=%d", got)
 	}
 }
+
+func TestPotionPrefixIndexFromDamage(t *testing.T) {
+	if got := potionPrefixIndexFromDamage(0); got != 0 {
+		t.Fatalf("prefix index for 0 mismatch: got=%d want=0", got)
+	}
+	// func_77908_a(data,5,4,3,2,1): only bit1 set -> 1.
+	if got := potionPrefixIndexFromDamage(1 << 1); got != 1 {
+		t.Fatalf("prefix index for bit1 mismatch: got=%d want=1", got)
+	}
+}
