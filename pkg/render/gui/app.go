@@ -1848,12 +1848,44 @@ func (a *App) drawInventorySlotText(stack netclient.InventorySlotSnapshot, x, y 
 		return
 	}
 	a.drawItemStackIcon(stack.ItemID, stack.ItemDamage, x, y, 16)
-	if a.font == nil {
-		return
-	}
-	if stack.StackSize > 1 {
+	if a.font != nil && stack.StackSize > 1 {
 		count := strconv.Itoa(int(stack.StackSize))
 		a.font.drawStringWithShadow(count, x+17-a.font.getStringWidth(count), y+9, 0xFFFFFF)
+	}
+	a.drawItemDurabilityBar(stack.ItemID, stack.ItemDamage, x, y)
+}
+
+// Translation reference:
+// - net.minecraft.src.RenderItem#renderItemOverlayIntoGUI(FontRenderer,TextureManager,ItemStack,int,int,String)
+func (a *App) drawItemDurabilityBar(itemID, itemDamage int16, x, y int) {
+	if itemID <= 0 || itemDamage <= 0 {
+		return
+	}
+	maxDamage, ok := itemMaxDurability(itemID)
+	if !ok || maxDamage <= 0 {
+		return
+	}
+
+	damage := int(itemDamage)
+	maxD := int(maxDamage)
+	if damage < 0 {
+		return
+	}
+	if damage > maxD {
+		damage = maxD
+	}
+
+	barWidth := int(math.Round(13.0 - float64(damage)*13.0/float64(maxD)))
+	colorVal := int(math.Round(255.0 - float64(damage)*255.0/float64(maxD)))
+	barWidth = clampInt(barWidth, 0, 13)
+	colorVal = clampInt(colorVal, 0, 255)
+	fillColor := (255-colorVal)<<16 | colorVal<<8
+	midColor := (255-colorVal)/4<<16 | 16128
+
+	drawSolidRect(x+2, y+13, x+15, y+15, 0xFF000000)
+	drawSolidRect(x+2, y+13, x+14, y+14, 0xFF000000|midColor)
+	if barWidth > 0 {
+		drawSolidRect(x+2, y+13, x+2+barWidth, y+14, 0xFF000000|fillColor)
 	}
 }
 
@@ -4823,22 +4855,21 @@ func (a *App) drawHealthAndFood(snap netclient.StateSnapshot) {
 }
 
 func (a *App) drawHotbarStackCounts(snap netclient.StateSnapshot) {
-	if a.font == nil {
-		return
-	}
 	uiW, uiH := a.uiWidth(), a.uiHeight()
 
 	baseX := uiW/2 - 90
 	baseY := uiH - 16 - 3
 	for i := 0; i < 9; i++ {
 		slot := snap.Hotbar[i]
-		if slot.ItemID == 0 || slot.StackSize <= 1 {
+		if slot.ItemID <= 0 || slot.StackSize <= 0 {
 			continue
 		}
-		count := strconv.Itoa(int(slot.StackSize))
-		x := baseX + i*20 + 2 + 19 - a.font.getStringWidth(count)
-		y := baseY + 9
-		a.font.drawStringWithShadow(count, x, y, 0xFFFFFF)
+		x := baseX + i*20 + 2
+		if a.font != nil && slot.StackSize > 1 {
+			count := strconv.Itoa(int(slot.StackSize))
+			a.font.drawStringWithShadow(count, x+19-a.font.getStringWidth(count), baseY+9, 0xFFFFFF)
+		}
+		a.drawItemDurabilityBar(slot.ItemID, slot.ItemDamage, x, baseY)
 	}
 }
 
