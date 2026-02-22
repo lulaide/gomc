@@ -164,3 +164,68 @@ func TestBlockCollisionRelativeAABBs_SnowAndSlab(t *testing.T) {
 		t.Fatalf("top slab collision mismatch: boxes=%d y=(%.4f,%.4f)", len(topSlab), topSlab[0].minY, topSlab[0].maxY)
 	}
 }
+
+func TestBlockRenderRelativeAABB_PartialBlockShapes(t *testing.T) {
+	bottomSlab := blockRenderRelativeAABB(44, 0)
+	if bottomSlab.minY != 0.0 || bottomSlab.maxY != 0.5 {
+		t.Fatalf("bottom slab render bounds mismatch: y=(%.4f,%.4f)", bottomSlab.minY, bottomSlab.maxY)
+	}
+
+	topSlab := blockRenderRelativeAABB(44, 8)
+	if topSlab.minY != 0.5 || topSlab.maxY != 1.0 {
+		t.Fatalf("top slab render bounds mismatch: y=(%.4f,%.4f)", topSlab.minY, topSlab.maxY)
+	}
+
+	farmland := blockRenderRelativeAABB(60, 0)
+	if farmland.maxY != 0.9375 {
+		t.Fatalf("farmland render maxY mismatch: got=%.4f want=0.9375", farmland.maxY)
+	}
+
+	snow := blockRenderRelativeAABB(78, 0)
+	if snow.maxY != 0.125 {
+		t.Fatalf("snow meta0 render maxY mismatch: got=%.4f want=0.1250", snow.maxY)
+	}
+	snowTop := blockRenderRelativeAABB(78, 7)
+	if snowTop.maxY != 1.0 {
+		t.Fatalf("snow meta7 render maxY mismatch: got=%.4f want=1.0000", snowTop.maxY)
+	}
+
+	cactus := blockRenderRelativeAABB(81, 0)
+	if cactus.minX != 0.0625 || cactus.maxX != 0.9375 || cactus.maxY != 1.0 {
+		t.Fatalf(
+			"cactus render bounds mismatch: got=(%.4f,%.4f,%.4f)->(%.4f,%.4f,%.4f)",
+			cactus.minX, cactus.minY, cactus.minZ, cactus.maxX, cactus.maxY, cactus.maxZ,
+		)
+	}
+}
+
+func TestFaceFullyOccludedByNeighbor_PartialShapeCases(t *testing.T) {
+	full := blockRenderRelativeAABB(1, 0)
+	bottomSlab := blockRenderRelativeAABB(44, 0)
+	topSlab := blockRenderRelativeAABB(44, 8)
+	cactus := blockRenderRelativeAABB(81, 0)
+
+	if !faceFullyOccludedByNeighbor(faceUp, full, bottomSlab) {
+		t.Fatal("full block top should be occluded by bottom slab in block above")
+	}
+	if faceFullyOccludedByNeighbor(faceUp, full, topSlab) {
+		t.Fatal("full block top should not be occluded by top slab in block above")
+	}
+	if faceFullyOccludedByNeighbor(faceUp, bottomSlab, bottomSlab) {
+		t.Fatal("bottom slab top should not be occluded by bottom slab in block above")
+	}
+	if !faceFullyOccludedByNeighbor(faceNorth, full, full) {
+		t.Fatal("full block north face should be occluded by adjacent full block")
+	}
+	if faceFullyOccludedByNeighbor(faceEast, cactus, full) {
+		t.Fatal("cactus east face should stay visible against adjacent full block due inset bounds")
+	}
+}
+
+func TestIsOpaqueRenderBlock_PartialBlocksAreNonOpaque(t *testing.T) {
+	for _, id := range []int{44, 60, 78, 81, 88, 126} {
+		if isOpaqueRenderBlock(id) {
+			t.Fatalf("partial block id=%d should be non-opaque", id)
+		}
+	}
+}

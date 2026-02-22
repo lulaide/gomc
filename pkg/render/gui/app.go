@@ -2868,7 +2868,7 @@ func (a *App) rebuildChunkRenderEntry(entry *chunkRenderEntry, chunkX, chunkZ in
 				if !ok || id == 0 {
 					continue
 				}
-				faces := a.visibleBlockFaces(worldX, y, worldZ, id)
+				faces := a.visibleBlockFaces(worldX, y, worldZ, id, meta)
 				if !faces.any() && !isCrossedPlantRenderBlock(id) && !isFlatPlantRenderBlock(id) && id != 106 {
 					continue
 				}
@@ -2932,19 +2932,19 @@ func (a *App) cleanupChunkRenderCache() {
 	}
 }
 
-func (a *App) visibleBlockFaces(x, y, z, currentID int) visibleFaces {
+func (a *App) visibleBlockFaces(x, y, z, currentID, currentMeta int) visibleFaces {
 	return visibleFaces{
-		Down:  a.shouldRenderFace(currentID, x, y-1, z),
-		Up:    a.shouldRenderFace(currentID, x, y+1, z),
-		North: a.shouldRenderFace(currentID, x, y, z-1),
-		South: a.shouldRenderFace(currentID, x, y, z+1),
-		West:  a.shouldRenderFace(currentID, x-1, y, z),
-		East:  a.shouldRenderFace(currentID, x+1, y, z),
+		Down:  a.shouldRenderFace(currentID, currentMeta, faceDown, x, y-1, z),
+		Up:    a.shouldRenderFace(currentID, currentMeta, faceUp, x, y+1, z),
+		North: a.shouldRenderFace(currentID, currentMeta, faceNorth, x, y, z-1),
+		South: a.shouldRenderFace(currentID, currentMeta, faceSouth, x, y, z+1),
+		West:  a.shouldRenderFace(currentID, currentMeta, faceWest, x-1, y, z),
+		East:  a.shouldRenderFace(currentID, currentMeta, faceEast, x+1, y, z),
 	}
 }
 
-func (a *App) shouldRenderFace(currentID, nx, ny, nz int) bool {
-	neighborID, _, ok := a.session.BlockAt(nx, ny, nz)
+func (a *App) shouldRenderFace(currentID, currentMeta, face, nx, ny, nz int) bool {
+	neighborID, neighborMeta, ok := a.session.BlockAt(nx, ny, nz)
 	if !ok || neighborID == 0 {
 		return true
 	}
@@ -2958,9 +2958,17 @@ func (a *App) shouldRenderFace(currentID, nx, ny, nz int) bool {
 		if currentID == 18 {
 			return a.fancyGraphics
 		}
-		return false
 	}
-	return !isOpaqueRenderBlock(neighborID)
+	if !isOpaqueRenderBlock(neighborID) {
+		return true
+	}
+
+	currentBounds := blockRenderRelativeAABB(currentID, currentMeta)
+	neighborBounds := blockRenderRelativeAABB(neighborID, neighborMeta)
+	if !faceFullyOccludedByNeighbor(face, currentBounds, neighborBounds) {
+		return true
+	}
+	return false
 }
 
 func (a *App) appendTexturedBlockBatches(
@@ -3008,7 +3016,13 @@ func (a *App) appendTexturedBlockBatches(
 		return false
 	}
 
-	x2, y2, z2 := x+1, y+1, z+1
+	shape := blockRenderRelativeAABB(blockID, blockMeta)
+	x1 := x + float32(shape.minX)
+	y1 := y + float32(shape.minY)
+	z1 := z + float32(shape.minZ)
+	x2 := x + float32(shape.maxX)
+	y2 := y + float32(shape.maxY)
+	z2 := z + float32(shape.maxZ)
 	addFace := func(tex *texture2D, shade, tintR, tintG, tintB float32, v0, v1, v2, v3 [3]float32, target map[uint32]*textureBatch) {
 		b := ensureTextureBatch(target, tex)
 		if b == nil {
@@ -3027,49 +3041,49 @@ func (a *App) appendTexturedBlockBatches(
 
 	if faces.Up {
 		addMainFace(top, faceUp, 1.0,
-			[3]float32{x, y2, z},
-			[3]float32{x, y2, z2},
+			[3]float32{x1, y2, z1},
+			[3]float32{x1, y2, z2},
 			[3]float32{x2, y2, z2},
-			[3]float32{x2, y2, z},
+			[3]float32{x2, y2, z1},
 		)
 	}
 	if faces.Down {
 		addMainFace(bottom, faceDown, 0.52,
-			[3]float32{x, y, z},
-			[3]float32{x2, y, z},
-			[3]float32{x2, y, z2},
-			[3]float32{x, y, z2},
+			[3]float32{x1, y1, z1},
+			[3]float32{x2, y1, z1},
+			[3]float32{x2, y1, z2},
+			[3]float32{x1, y1, z2},
 		)
 	}
 	if faces.North {
 		addMainFace(north, faceNorth, 0.80,
-			[3]float32{x2, y, z},
-			[3]float32{x, y, z},
-			[3]float32{x, y2, z},
-			[3]float32{x2, y2, z},
+			[3]float32{x2, y1, z1},
+			[3]float32{x1, y1, z1},
+			[3]float32{x1, y2, z1},
+			[3]float32{x2, y2, z1},
 		)
 	}
 	if faces.South {
 		addMainFace(south, faceSouth, 0.80,
-			[3]float32{x, y, z2},
-			[3]float32{x2, y, z2},
+			[3]float32{x1, y1, z2},
+			[3]float32{x2, y1, z2},
 			[3]float32{x2, y2, z2},
-			[3]float32{x, y2, z2},
+			[3]float32{x1, y2, z2},
 		)
 	}
 	if faces.West {
 		addMainFace(west, faceWest, 0.65,
-			[3]float32{x, y, z},
-			[3]float32{x, y, z2},
-			[3]float32{x, y2, z2},
-			[3]float32{x, y2, z},
+			[3]float32{x1, y1, z1},
+			[3]float32{x1, y1, z2},
+			[3]float32{x1, y2, z2},
+			[3]float32{x1, y2, z1},
 		)
 	}
 	if faces.East {
 		addMainFace(east, faceEast, 0.65,
-			[3]float32{x2, y, z2},
-			[3]float32{x2, y, z},
-			[3]float32{x2, y2, z},
+			[3]float32{x2, y1, z2},
+			[3]float32{x2, y1, z1},
+			[3]float32{x2, y2, z1},
 			[3]float32{x2, y2, z2},
 		)
 	}
@@ -3079,36 +3093,36 @@ func (a *App) appendTexturedBlockBatches(
 		overlayR, overlayG, overlayB := a.blockSideOverlayTintAt(blockX, blockY, blockZ, blockID)
 		if faces.North {
 			addFace(overlay, 0.80, overlayR, overlayG, overlayB,
-				[3]float32{x2, y, z},
-				[3]float32{x, y, z},
-				[3]float32{x, y2, z},
-				[3]float32{x2, y2, z},
+				[3]float32{x2, y1, z1},
+				[3]float32{x1, y1, z1},
+				[3]float32{x1, y2, z1},
+				[3]float32{x2, y2, z1},
 				overlayBatches,
 			)
 		}
 		if faces.South {
 			addFace(overlay, 0.80, overlayR, overlayG, overlayB,
-				[3]float32{x, y, z2},
-				[3]float32{x2, y, z2},
+				[3]float32{x1, y1, z2},
+				[3]float32{x2, y1, z2},
 				[3]float32{x2, y2, z2},
-				[3]float32{x, y2, z2},
+				[3]float32{x1, y2, z2},
 				overlayBatches,
 			)
 		}
 		if faces.West {
 			addFace(overlay, 0.65, overlayR, overlayG, overlayB,
-				[3]float32{x, y, z},
-				[3]float32{x, y, z2},
-				[3]float32{x, y2, z2},
-				[3]float32{x, y2, z},
+				[3]float32{x1, y1, z1},
+				[3]float32{x1, y1, z2},
+				[3]float32{x1, y2, z2},
+				[3]float32{x1, y2, z1},
 				overlayBatches,
 			)
 		}
 		if faces.East {
 			addFace(overlay, 0.65, overlayR, overlayG, overlayB,
-				[3]float32{x2, y, z2},
-				[3]float32{x2, y, z},
-				[3]float32{x2, y2, z},
+				[3]float32{x2, y1, z2},
+				[3]float32{x2, y1, z1},
+				[3]float32{x2, y2, z1},
 				[3]float32{x2, y2, z2},
 				overlayBatches,
 			)
@@ -4890,6 +4904,112 @@ func blockCollisionRelativeAABBs(blockID, blockMeta int) []axisAlignedBB {
 	return nil
 }
 
+func blockRenderRelativeAABB(blockID, blockMeta int) axisAlignedBB {
+	// Translation references:
+	// - net.minecraft.src.BlockHalfSlab#setBlockBoundsBasedOnState(...)
+	// - net.minecraft.src.BlockFarmland constructor bounds
+	// - net.minecraft.src.BlockSnow#setBlockBoundsForSnowDepth(...)
+	// - net.minecraft.src.BlockCactus#setBlockBounds(...)
+	// - net.minecraft.src.BlockSoulSand constructor bounds
+	switch blockID {
+	case 44, 126:
+		if blockMeta&8 != 0 {
+			return axisAlignedBB{
+				minX: 0.0, minY: 0.5, minZ: 0.0,
+				maxX: 1.0, maxY: 1.0, maxZ: 1.0,
+			}
+		}
+		return axisAlignedBB{
+			minX: 0.0, minY: 0.0, minZ: 0.0,
+			maxX: 1.0, maxY: 0.5, maxZ: 1.0,
+		}
+	case 60:
+		return axisAlignedBB{
+			minX: 0.0, minY: 0.0, minZ: 0.0,
+			maxX: 1.0, maxY: 0.9375, maxZ: 1.0,
+		}
+	case 78:
+		depth := blockMeta & 7
+		height := float64(2*(1+depth)) / 16.0
+		return axisAlignedBB{
+			minX: 0.0, minY: 0.0, minZ: 0.0,
+			maxX: 1.0, maxY: height, maxZ: 1.0,
+		}
+	case 81:
+		return axisAlignedBB{
+			minX: 0.0625, minY: 0.0, minZ: 0.0625,
+			maxX: 0.9375, maxY: 1.0, maxZ: 0.9375,
+		}
+	case 88:
+		return axisAlignedBB{
+			minX: 0.0, minY: 0.0, minZ: 0.0,
+			maxX: 1.0, maxY: 0.875, maxZ: 1.0,
+		}
+	default:
+		return axisAlignedBB{
+			minX: 0.0, minY: 0.0, minZ: 0.0,
+			maxX: 1.0, maxY: 1.0, maxZ: 1.0,
+		}
+	}
+}
+
+func faceFullyOccludedByNeighbor(face int, current, neighbor axisAlignedBB) bool {
+	const eps = 1.0e-6
+	shifted := neighbor
+	switch face {
+	case faceDown:
+		shifted = shifted.offset(0, -1, 0)
+		return shifted.minY <= current.minY+eps &&
+			shifted.maxY >= current.minY-eps &&
+			shifted.minX <= current.minX+eps &&
+			shifted.maxX >= current.maxX-eps &&
+			shifted.minZ <= current.minZ+eps &&
+			shifted.maxZ >= current.maxZ-eps
+	case faceUp:
+		shifted = shifted.offset(0, 1, 0)
+		return shifted.minY <= current.maxY+eps &&
+			shifted.maxY >= current.maxY-eps &&
+			shifted.minX <= current.minX+eps &&
+			shifted.maxX >= current.maxX-eps &&
+			shifted.minZ <= current.minZ+eps &&
+			shifted.maxZ >= current.maxZ-eps
+	case faceNorth:
+		shifted = shifted.offset(0, 0, -1)
+		return shifted.minZ <= current.minZ+eps &&
+			shifted.maxZ >= current.minZ-eps &&
+			shifted.minX <= current.minX+eps &&
+			shifted.maxX >= current.maxX-eps &&
+			shifted.minY <= current.minY+eps &&
+			shifted.maxY >= current.maxY-eps
+	case faceSouth:
+		shifted = shifted.offset(0, 0, 1)
+		return shifted.minZ <= current.maxZ+eps &&
+			shifted.maxZ >= current.maxZ-eps &&
+			shifted.minX <= current.minX+eps &&
+			shifted.maxX >= current.maxX-eps &&
+			shifted.minY <= current.minY+eps &&
+			shifted.maxY >= current.maxY-eps
+	case faceWest:
+		shifted = shifted.offset(-1, 0, 0)
+		return shifted.minX <= current.minX+eps &&
+			shifted.maxX >= current.minX-eps &&
+			shifted.minZ <= current.minZ+eps &&
+			shifted.maxZ >= current.maxZ-eps &&
+			shifted.minY <= current.minY+eps &&
+			shifted.maxY >= current.maxY-eps
+	case faceEast:
+		shifted = shifted.offset(1, 0, 0)
+		return shifted.minX <= current.maxX+eps &&
+			shifted.maxX >= current.maxX-eps &&
+			shifted.minZ <= current.minZ+eps &&
+			shifted.maxZ >= current.maxZ-eps &&
+			shifted.minY <= current.minY+eps &&
+			shifted.maxY >= current.maxY-eps
+	default:
+		return false
+	}
+}
+
 func (a *App) pickBlockTarget(snap netclient.StateSnapshot, reach float64) blockTarget {
 	if a.session == nil {
 		return blockTarget{}
@@ -6002,7 +6122,7 @@ func discoverFontCharsPath(assetsRoot string) string {
 
 func isOpaqueRenderBlock(id int) bool {
 	switch id {
-	case 8, 9, 10, 11, 18, 20, 31, 32, 37, 38, 39, 40, 50, 51, 59, 63, 64, 65, 66, 68, 69, 70, 71, 72, 75, 76, 77, 78, 79, 83, 85, 90, 106, 111, 127:
+	case 8, 9, 10, 11, 18, 20, 31, 32, 37, 38, 39, 40, 44, 50, 51, 59, 60, 63, 64, 65, 66, 68, 69, 70, 71, 72, 75, 76, 77, 78, 79, 81, 83, 85, 88, 90, 106, 111, 126, 127:
 		return false
 	default:
 		return true
