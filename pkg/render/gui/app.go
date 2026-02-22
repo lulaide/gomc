@@ -271,6 +271,7 @@ type App struct {
 
 	blockTextureDefs   map[int]blockTextureDef
 	blockTextures      map[string]*texture2D
+	itemTextures       map[string]*texture2D
 	grassColorMap      []uint32
 	foliageColorMap    []uint32
 	entityTextures     map[string]*texture2D
@@ -531,6 +532,9 @@ func (a *App) loadAssets() error {
 	if err := a.loadBlockTextures(); err != nil {
 		errs = append(errs, err.Error())
 	}
+	if err := a.loadItemTextures(); err != nil {
+		errs = append(errs, err.Error())
+	}
 	if err := a.loadEntityTextures(); err != nil {
 		errs = append(errs, err.Error())
 	}
@@ -605,6 +609,12 @@ func (a *App) releaseAssets() {
 			tex.delete()
 		}
 		delete(a.blockTextures, name)
+	}
+	for name, tex := range a.itemTextures {
+		if tex != nil {
+			tex.delete()
+		}
+		delete(a.itemTextures, name)
 	}
 	for name, tex := range a.entityTextures {
 		if tex != nil {
@@ -835,6 +845,9 @@ func (a *App) loop() error {
 
 func (a *App) advanceAnimatedTextures(now time.Time) {
 	for _, tex := range a.blockTextures {
+		tex.advanceAnimatedFrame(now)
+	}
+	for _, tex := range a.itemTextures {
 		tex.advanceAnimatedFrame(now)
 	}
 }
@@ -1828,7 +1841,11 @@ func (a *App) forEachPlayerInventorySlot(fn func(slot int16, x, y int)) {
 }
 
 func (a *App) drawInventorySlotText(stack netclient.InventorySlotSnapshot, x, y int) {
-	if a.font == nil || stack.ItemID <= 0 || stack.StackSize <= 0 {
+	if stack.ItemID <= 0 || stack.StackSize <= 0 {
+		return
+	}
+	a.drawItemStackIcon(stack.ItemID, stack.ItemDamage, x, y, 16)
+	if a.font == nil {
 		return
 	}
 	if stack.StackSize > 1 {
@@ -1841,10 +1858,14 @@ func (a *App) inventoryHoverLabel(stack netclient.InventorySlotSnapshot) string 
 	if stack.ItemID <= 0 || stack.StackSize <= 0 {
 		return ""
 	}
-	if stack.StackSize > 1 {
-		return fmt.Sprintf("ID %d x%d", stack.ItemID, stack.StackSize)
+	name := a.itemDisplayName(stack.ItemID, stack.ItemDamage)
+	if name == "" {
+		name = fmt.Sprintf("ID %d", stack.ItemID)
 	}
-	return fmt.Sprintf("ID %d", stack.ItemID)
+	if stack.StackSize > 1 {
+		return fmt.Sprintf("%s x%d", name, stack.StackSize)
+	}
+	return name
 }
 
 func (a *App) drawInventoryScreen() {
@@ -4217,6 +4238,14 @@ func (a *App) drawDroppedItemEntity(ent netclient.EntitySnapshot, animTime float
 	gl.Rotatef(spinDeg, 0, 1, 0)
 	gl.Scalef(0.25, 0.25, 0.25)
 
+	if itemID > 255 {
+		if tex := a.itemTextureForStack(itemID, itemMeta); tex != nil {
+			a.drawDroppedItemSprite(tex)
+			gl.PopMatrix()
+			return
+		}
+	}
+
 	if itemID > 0 && itemID <= 255 {
 		if a.drawTexturedBlockMeta(-0.5, 0.0, -0.5, itemID, itemMeta, fullFaces) {
 			gl.PopMatrix()
@@ -4230,6 +4259,58 @@ func (a *App) drawDroppedItemEntity(ent netclient.EntitySnapshot, animTime float
 	gl.Enable(gl.TEXTURE_2D)
 	gl.Color4f(1, 1, 1, 1)
 	gl.PopMatrix()
+}
+
+func (a *App) drawDroppedItemSprite(tex *texture2D) {
+	if tex == nil {
+		return
+	}
+	gl.Enable(gl.TEXTURE_2D)
+	gl.Color4f(1, 1, 1, 1)
+	tex.bind()
+	const (
+		halfSize = float32(0.5)
+		minY     = float32(0.0)
+		maxY     = float32(0.5)
+	)
+	gl.Begin(gl.QUADS)
+	// Crossed quads, matching vanilla dropped-item sprite style.
+	gl.TexCoord2f(0, 1)
+	gl.Vertex3f(-halfSize, maxY, -halfSize)
+	gl.TexCoord2f(0, 0)
+	gl.Vertex3f(-halfSize, minY, -halfSize)
+	gl.TexCoord2f(1, 0)
+	gl.Vertex3f(halfSize, minY, halfSize)
+	gl.TexCoord2f(1, 1)
+	gl.Vertex3f(halfSize, maxY, halfSize)
+
+	gl.TexCoord2f(0, 1)
+	gl.Vertex3f(halfSize, maxY, halfSize)
+	gl.TexCoord2f(0, 0)
+	gl.Vertex3f(halfSize, minY, halfSize)
+	gl.TexCoord2f(1, 0)
+	gl.Vertex3f(-halfSize, minY, -halfSize)
+	gl.TexCoord2f(1, 1)
+	gl.Vertex3f(-halfSize, maxY, -halfSize)
+
+	gl.TexCoord2f(0, 1)
+	gl.Vertex3f(-halfSize, maxY, halfSize)
+	gl.TexCoord2f(0, 0)
+	gl.Vertex3f(-halfSize, minY, halfSize)
+	gl.TexCoord2f(1, 0)
+	gl.Vertex3f(halfSize, minY, -halfSize)
+	gl.TexCoord2f(1, 1)
+	gl.Vertex3f(halfSize, maxY, -halfSize)
+
+	gl.TexCoord2f(0, 1)
+	gl.Vertex3f(halfSize, maxY, -halfSize)
+	gl.TexCoord2f(0, 0)
+	gl.Vertex3f(halfSize, minY, -halfSize)
+	gl.TexCoord2f(1, 0)
+	gl.Vertex3f(-halfSize, minY, halfSize)
+	gl.TexCoord2f(1, 1)
+	gl.Vertex3f(-halfSize, maxY, halfSize)
+	gl.End()
 }
 
 func (a *App) startHandSwing() {
@@ -4536,6 +4617,7 @@ func (a *App) drawHUD(snap netclient.StateSnapshot) {
 
 		a.drawHealthAndFood(snap)
 		a.drawExperienceBar(snap)
+		a.drawHotbarItemIcons(snap)
 		a.drawHotbarStackCounts(snap)
 		a.drawDebugOverlay(snap)
 		a.drawPlayerListOverlay(snap)
@@ -4615,6 +4697,20 @@ func (a *App) drawHotbarStackCounts(snap netclient.StateSnapshot) {
 		x := baseX + i*20 + 2 + 19 - a.font.getStringWidth(count)
 		y := baseY + 9
 		a.font.drawStringWithShadow(count, x, y, 0xFFFFFF)
+	}
+}
+
+func (a *App) drawHotbarItemIcons(snap netclient.StateSnapshot) {
+	uiW, uiH := a.uiWidth(), a.uiHeight()
+	baseX := uiW/2 - 90
+	baseY := uiH - 16 - 3
+
+	for i := 0; i < 9; i++ {
+		slot := snap.Hotbar[i]
+		if slot.ItemID <= 0 || slot.StackSize <= 0 {
+			continue
+		}
+		a.drawItemStackIcon(slot.ItemID, slot.ItemDamage, baseX+i*20+2, baseY, 16)
 	}
 }
 
