@@ -4188,11 +4188,48 @@ func (a *App) drawEntities() {
 	gl.Enable(gl.DEPTH_TEST)
 	animTime := float64(time.Now().UnixNano()) / 1e9
 	for _, ent := range entities {
+		if ent.Type == 2 {
+			a.drawDroppedItemEntity(ent, animTime)
+			continue
+		}
 		a.drawEntityModel(ent, animTime)
 	}
 	gl.Enable(gl.TEXTURE_2D)
 	gl.Enable(gl.CULL_FACE)
 	gl.Color4f(1, 1, 1, 1)
+}
+
+// Translation references:
+// - net.minecraft.src.RenderItem#doRenderItem(EntityItem,...)
+// - net.minecraft.src.EntityItem (hover + spin visual motion)
+func (a *App) drawDroppedItemEntity(ent netclient.EntitySnapshot, animTime float64) {
+	itemID := int(ent.DroppedItemID)
+	if itemID <= 0 {
+		itemID = 1
+	}
+	itemMeta := int(ent.DroppedItemDamage)
+
+	spinDeg := float32(math.Mod(animTime*57.2957795+float64(ent.EntityID)*19.0, 360.0))
+	hover := float32(math.Sin(animTime*2.0+float64(ent.EntityID)*0.37))*0.10 + 0.10
+
+	gl.PushMatrix()
+	gl.Translatef(float32(ent.X), float32(ent.Y)+hover, float32(ent.Z))
+	gl.Rotatef(spinDeg, 0, 1, 0)
+	gl.Scalef(0.25, 0.25, 0.25)
+
+	if itemID > 0 && itemID <= 255 {
+		if a.drawTexturedBlockMeta(-0.5, 0.0, -0.5, itemID, itemMeta, fullFaces) {
+			gl.PopMatrix()
+			return
+		}
+	}
+
+	r, g, b := colorForBlock(itemID)
+	gl.Disable(gl.TEXTURE_2D)
+	drawCubeFaces(-0.5, 0.0, -0.5, r, g, b, fullFaces)
+	gl.Enable(gl.TEXTURE_2D)
+	gl.Color4f(1, 1, 1, 1)
+	gl.PopMatrix()
 }
 
 func (a *App) startHandSwing() {
@@ -4318,6 +4355,10 @@ func (a *App) drawFirstPersonRightArmRaw(tex *texture2D) {
 }
 
 func (a *App) drawTexturedBlock(x, y, z float32, blockID int, faces visibleFaces) bool {
+	return a.drawTexturedBlockMeta(x, y, z, blockID, 0, faces)
+}
+
+func (a *App) drawTexturedBlockMeta(x, y, z float32, blockID, blockMeta int, faces visibleFaces) bool {
 	if len(a.blockTextureDefs) == 0 || len(a.blockTextures) == 0 {
 		return false
 	}
@@ -4325,12 +4366,12 @@ func (a *App) drawTexturedBlock(x, y, z float32, blockID int, faces visibleFaces
 		return false
 	}
 
-	top := a.blockTextureForFace(blockID, faceUp)
-	bottom := a.blockTextureForFace(blockID, faceDown)
-	north := a.blockTextureForFace(blockID, faceNorth)
-	south := a.blockTextureForFace(blockID, faceSouth)
-	west := a.blockTextureForFace(blockID, faceWest)
-	east := a.blockTextureForFace(blockID, faceEast)
+	top := a.blockTextureForFaceMeta(blockID, blockMeta, faceUp)
+	bottom := a.blockTextureForFaceMeta(blockID, blockMeta, faceDown)
+	north := a.blockTextureForFaceMeta(blockID, blockMeta, faceNorth)
+	south := a.blockTextureForFaceMeta(blockID, blockMeta, faceSouth)
+	west := a.blockTextureForFaceMeta(blockID, blockMeta, faceWest)
+	east := a.blockTextureForFaceMeta(blockID, blockMeta, faceEast)
 
 	if (faces.Up && top == nil) ||
 		(faces.Down && bottom == nil) ||
@@ -5758,6 +5799,8 @@ func entityCollisionSize(ent netclient.EntitySnapshot) (width float64, height fl
 	switch ent.Type {
 	case 0: // player
 		return 0.6, 1.8
+	case 2: // dropped item
+		return 0.25, 0.25
 	case 50, 51, 54, 57, 66, 120: // creeper/skeleton/zombie/pigzombie/witch/villager
 		return 0.6, 1.8
 	case 52: // spider
