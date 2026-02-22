@@ -60,3 +60,37 @@ func TestDroppedItemRenderRandomOffsetDeterministic(t *testing.T) {
 		}
 	}
 }
+
+func TestDroppedBlockItemIsLarge(t *testing.T) {
+	tests := []struct {
+		blockID int
+		want    bool
+	}{
+		{blockID: 31, want: true},  // tall grass (crossed)
+		{blockID: 50, want: true},  // torch (render type 2)
+		{blockID: 69, want: true},  // lever (render type 12)
+		{blockID: 104, want: true}, // pumpkin stem (render type 19)
+		{blockID: 1, want: false},  // stone
+	}
+	for _, tc := range tests {
+		got := droppedBlockItemIsLarge(tc.blockID)
+		if got != tc.want {
+			t.Fatalf("droppedBlockItemIsLarge(%d)=%t want=%t", tc.blockID, got, tc.want)
+		}
+	}
+}
+
+func TestDroppedBlockItemRenderFaces(t *testing.T) {
+	plantFaces := droppedBlockItemRenderFaces(31)
+	if !plantFaces.North || !plantFaces.South || !plantFaces.West || !plantFaces.East {
+		t.Fatalf("plant faces mismatch: %+v", plantFaces)
+	}
+	if plantFaces.Up || plantFaces.Down {
+		t.Fatalf("plant vertical faces should be off: %+v", plantFaces)
+	}
+
+	cubeFaces := droppedBlockItemRenderFaces(1)
+	if cubeFaces != fullFaces {
+		t.Fatalf("cube faces mismatch: got=%+v want=%+v", cubeFaces, fullFaces)
+	}
+}

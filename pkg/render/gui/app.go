@@ -4278,6 +4278,11 @@ func (a *App) drawDroppedItemEntity(ent netclient.EntitySnapshot, animTime float
 		// Translation reference:
 		// - net.minecraft.src.RenderItem#doRenderItem(EntityItem,...) non-frame branch
 		itemScale = 0.5
+	} else if droppedBlockItemIsLarge(itemID) {
+		// Translation reference:
+		// - net.minecraft.src.RenderItem#doRenderItem(EntityItem,...)
+		//   render type 1/19/12/2 uses 0.5F scale instead of 0.25F.
+		itemScale = 0.5
 	}
 
 	gl.PushMatrix()
@@ -4310,7 +4315,7 @@ func (a *App) drawDroppedItemEntity(ent netclient.EntitySnapshot, animTime float
 			}
 		}
 		if !rendered && itemID > 0 && itemID <= 255 {
-			rendered = a.drawTexturedBlockMeta(-0.5, 0.0, -0.5, itemID, itemMeta, fullFaces)
+			rendered = a.drawBlockItemModel(itemID, itemMeta, droppedBlockItemRenderFaces(itemID))
 		}
 		if !rendered {
 			r, g, b := colorForBlock(itemID)
@@ -4545,7 +4550,7 @@ func (a *App) drawFirstPersonHeldItem(itemID, itemDamage int16) {
 	if id > 0 && id <= 255 {
 		// Translation reference:
 		// - net.minecraft.src.ItemRenderer#renderItem(...) block render branch
-		if a.drawTexturedBlockMeta(-0.5, -0.5, -0.5, id, int(itemDamage), fullFaces) {
+		if a.drawBlockItemModel(id, int(itemDamage), fullFaces) {
 			return
 		}
 	}
@@ -4688,6 +4693,103 @@ func itemShouldRotateAroundWhenRendering(itemID int16) bool {
 	default:
 		return false
 	}
+}
+
+func droppedBlockItemIsLarge(blockID int) bool {
+	if isCrossedPlantRenderBlock(blockID) {
+		return true
+	}
+	switch blockID {
+	// Translation reference:
+	// - net.minecraft.src.RenderItem#doRenderItem(EntityItem,...)
+	//   render types 2 / 12 / 19 are also 0.5F.
+	// Torch(50) -> type 2, Lever(69) -> type 12, Stem(104/105) -> type 19.
+	case 50, 69, 104, 105:
+		return true
+	default:
+		return false
+	}
+}
+
+func droppedBlockItemRenderFaces(blockID int) visibleFaces {
+	if isCrossedPlantRenderBlock(blockID) {
+		return visibleFaces{North: true, South: true, West: true, East: true}
+	}
+	return fullFaces
+}
+
+func (a *App) drawBlockItemModel(blockID, blockMeta int, faces visibleFaces) bool {
+	if isCrossedPlantRenderBlock(blockID) {
+		return a.drawCrossedBlockItemModel(blockID, blockMeta)
+	}
+	return a.drawTexturedBlockMeta(-0.5, -0.5, -0.5, blockID, blockMeta, faces)
+}
+
+// Translation references:
+// - net.minecraft.src.RenderBlocks#drawCrossedSquares(...)
+// - net.minecraft.src.RenderBlocks#renderBlockAsItem(...)
+func (a *App) drawCrossedBlockItemModel(blockID, blockMeta int) bool {
+	tex := a.blockTextureForFaceMeta(blockID, blockMeta, faceNorth)
+	if tex == nil {
+		tex = a.blockTextureForFaceMeta(blockID, blockMeta, faceUp)
+	}
+	if tex == nil {
+		return false
+	}
+
+	tintR, tintG, tintB := a.blockFaceTint(blockID, faceNorth)
+	tex.bind()
+	gl.Color4f(tintR, tintG, tintB, 1)
+	const (
+		size = float32(0.45)
+		y0   = float32(-0.5)
+		y1   = float32(0.5)
+	)
+	x0 := -size
+	x1 := size
+	z0 := -size
+	z1 := size
+	gl.Begin(gl.QUADS)
+	// Plane 1 (front/back)
+	gl.TexCoord2f(0, 1)
+	gl.Vertex3f(x0, y1, z0)
+	gl.TexCoord2f(0, 0)
+	gl.Vertex3f(x0, y0, z0)
+	gl.TexCoord2f(1, 0)
+	gl.Vertex3f(x1, y0, z1)
+	gl.TexCoord2f(1, 1)
+	gl.Vertex3f(x1, y1, z1)
+
+	gl.TexCoord2f(0, 1)
+	gl.Vertex3f(x1, y1, z1)
+	gl.TexCoord2f(0, 0)
+	gl.Vertex3f(x1, y0, z1)
+	gl.TexCoord2f(1, 0)
+	gl.Vertex3f(x0, y0, z0)
+	gl.TexCoord2f(1, 1)
+	gl.Vertex3f(x0, y1, z0)
+
+	// Plane 2 (front/back)
+	gl.TexCoord2f(0, 1)
+	gl.Vertex3f(x0, y1, z1)
+	gl.TexCoord2f(0, 0)
+	gl.Vertex3f(x0, y0, z1)
+	gl.TexCoord2f(1, 0)
+	gl.Vertex3f(x1, y0, z0)
+	gl.TexCoord2f(1, 1)
+	gl.Vertex3f(x1, y1, z0)
+
+	gl.TexCoord2f(0, 1)
+	gl.Vertex3f(x1, y1, z0)
+	gl.TexCoord2f(0, 0)
+	gl.Vertex3f(x1, y0, z0)
+	gl.TexCoord2f(1, 0)
+	gl.Vertex3f(x0, y0, z1)
+	gl.TexCoord2f(1, 1)
+	gl.Vertex3f(x0, y1, z1)
+	gl.End()
+	gl.Color4f(1, 1, 1, 1)
+	return true
 }
 
 func (a *App) drawFirstPersonRightArmRaw(tex *texture2D) {
