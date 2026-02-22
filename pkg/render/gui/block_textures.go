@@ -149,6 +149,7 @@ func defaultBlockTextureDefs() map[int]blockTextureDef {
 		87:  blockAll("netherrack.png"),
 		88:  blockAll("soul_sand.png"),
 		89:  blockAll("glowstone.png"),
+		97:  blockAll("stone.png"),
 		99:  blockAll("mushroom_block_skin_brown.png"),
 		100: blockAll("mushroom_block_skin_red.png"),
 		98:  blockAll("stonebrick.png"),
@@ -201,6 +202,12 @@ func (a *App) loadBlockTextures() error {
 		"sandstone_carved.png",
 		"sandstone_smooth.png",
 		"fern.png",
+		"farmland_wet.png",
+		"stonebrick_mossy.png",
+		"stonebrick_cracked.png",
+		"stonebrick_carved.png",
+		"cocoa_stage_0.png",
+		"cocoa_stage_1.png",
 		"wool_colored_orange.png",
 		"wool_colored_magenta.png",
 		"wool_colored_light_blue.png",
@@ -425,6 +432,17 @@ func (a *App) blockTextureNameForFace(blockID, blockMeta, face int) string {
 			return "sandstone_normal.png"
 		}
 	}
+	if blockID == 60 {
+		// Translation reference:
+		// - net.minecraft.src.BlockFarmland.getIcon(int side, int metadata)
+		if face == faceUp {
+			if blockMeta > 0 {
+				return "farmland_wet.png"
+			}
+			return "farmland_dry.png"
+		}
+		return "dirt.png"
+	}
 	if blockID == 31 {
 		// Translation reference:
 		// - net.minecraft.src.BlockTallGrass.getIcon(int side, int metadata)
@@ -466,6 +484,32 @@ func (a *App) blockTextureNameForFace(blockID, blockMeta, face int) string {
 		}
 		return "wool_colored_" + woolByMeta[meta] + ".png"
 	}
+	if blockID == 97 {
+		// Translation reference:
+		// - net.minecraft.src.BlockSilverfish.getIcon(int side, int metadata)
+		switch blockMeta {
+		case 1:
+			return "cobblestone.png"
+		case 2:
+			return "stonebrick.png"
+		default:
+			return "stone.png"
+		}
+	}
+	if blockID == 98 {
+		// Translation reference:
+		// - net.minecraft.src.BlockStoneBrick.getIcon(int side, int metadata)
+		switch blockMeta {
+		case 1:
+			return "stonebrick_mossy.png"
+		case 2:
+			return "stonebrick_cracked.png"
+		case 3:
+			return "stonebrick_carved.png"
+		default:
+			return "stonebrick.png"
+		}
+	}
 	if blockID == 43 || blockID == 44 {
 		// Translation reference:
 		// - net.minecraft.src.BlockStep.getIcon(int side, int metadata)
@@ -501,6 +545,25 @@ func (a *App) blockTextureNameForFace(blockID, blockMeta, face int) string {
 			return "quartz_block_side.png"
 		default:
 			return "stone_slab_top.png"
+		}
+	}
+	if blockID == 127 {
+		// Translation reference:
+		// - net.minecraft.src.BlockCocoa.getCocoaIcon(int stage)
+		stage := (blockMeta & 12) >> 2
+		if stage < 0 {
+			stage = 0
+		}
+		if stage > 2 {
+			stage = 2
+		}
+		switch stage {
+		case 0:
+			return "cocoa_stage_0.png"
+		case 1:
+			return "cocoa_stage_1.png"
+		default:
+			return "cocoa_stage_2.png"
 		}
 	}
 	if blockID == 125 || blockID == 126 {
