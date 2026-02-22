@@ -201,7 +201,7 @@ func (a *App) itemTextureByName(name string) *texture2D {
 // - net.minecraft.src.ItemMonsterPlacer#requiresMultipleRenderPasses()
 func itemRequiresMultipleRenderPasses(itemID int) bool {
 	switch itemID {
-	case 298, 299, 300, 301, 373, 383:
+	case 298, 299, 300, 301, 373, 383, 402:
 		return true
 	default:
 		return false
@@ -232,6 +232,11 @@ func itemTextureNameForRenderPass(itemID, itemDamage, pass int) string {
 			return "potion_bottle_splash"
 		}
 		return "potion_bottle_drinkable"
+	case 402:
+		if pass > 0 {
+			return "fireworks_charge_overlay"
+		}
+		return "fireworks_charge"
 	default:
 		if pass == 0 {
 			return itemTextureNameForID(itemID, itemDamage)
@@ -307,9 +312,47 @@ func itemColorForRenderPassWithTag(itemID, itemDamage, pass int, itemTag *nbt.Co
 			return 0xFFFFFF
 		}
 		return potionLiquidColorFromStack(itemDamage, itemTag)
+	case 402:
+		// Translation reference:
+		// - net.minecraft.src.ItemFireworkCharge#getColorFromItemStack(ItemStack,int)
+		if pass != 1 {
+			return 0xFFFFFF
+		}
+		return fireworkChargeColorFromStackTag(itemTag)
 	default:
 		return 0xFFFFFF
 	}
+}
+
+// Translation references:
+// - net.minecraft.src.ItemFireworkCharge#func_92108_a(ItemStack,String)
+// - net.minecraft.src.ItemFireworkCharge#getColorFromItemStack(ItemStack,int)
+func fireworkChargeColorFromStackTag(itemTag *nbt.CompoundTag) int {
+	const defaultFireworkColor = 9079434
+	if itemTag == nil {
+		return defaultFireworkColor
+	}
+	explosionTag, ok := itemTag.GetTag("Explosion").(*nbt.CompoundTag)
+	if !ok || explosionTag == nil {
+		return defaultFireworkColor
+	}
+	colorsTag, ok := explosionTag.GetTag("Colors").(*nbt.IntArrayTag)
+	if !ok || colorsTag == nil || len(colorsTag.Ints) == 0 {
+		return defaultFireworkColor
+	}
+	if len(colorsTag.Ints) == 1 {
+		return int(colorsTag.Ints[0]) & 0xFFFFFF
+	}
+
+	var sumR, sumG, sumB int
+	for _, c := range colorsTag.Ints {
+		color := int(c)
+		sumR += (color & 0xFF0000) >> 16
+		sumG += (color & 0x00FF00) >> 8
+		sumB += color & 0x0000FF
+	}
+	n := len(colorsTag.Ints)
+	return ((sumR / n) << 16) | ((sumG / n) << 8) | (sumB / n)
 }
 
 func (a *App) itemTexturePasses(itemID, itemDamage int16) []itemTexturePass {

@@ -84,6 +84,9 @@ func TestItemRequiresMultipleRenderPasses(t *testing.T) {
 	if !itemRequiresMultipleRenderPasses(373) {
 		t.Fatal("potion should require multiple render passes")
 	}
+	if !itemRequiresMultipleRenderPasses(402) {
+		t.Fatal("firework charge should require multiple render passes")
+	}
 	if !itemRequiresMultipleRenderPasses(298) {
 		t.Fatal("leather helmet should require multiple render passes")
 	}
@@ -102,6 +105,8 @@ func TestItemTextureNameForRenderPass(t *testing.T) {
 		{itemID: 373, damage: 0, pass: 0, want: "potion_overlay"},
 		{itemID: 373, damage: 0, pass: 1, want: "potion_bottle_drinkable"},
 		{itemID: 373, damage: 0x4000, pass: 1, want: "potion_bottle_splash"},
+		{itemID: 402, damage: 0, pass: 0, want: "fireworks_charge"},
+		{itemID: 402, damage: 0, pass: 1, want: "fireworks_charge_overlay"},
 		{itemID: 383, damage: 90, pass: 0, want: "spawn_egg"},
 		{itemID: 383, damage: 90, pass: 1, want: "spawn_egg_overlay"},
 		{itemID: 298, damage: 0, pass: 0, want: "leather_helmet"},
@@ -122,6 +127,9 @@ func TestItemColorForRenderPass(t *testing.T) {
 	}
 	if got := itemColorForRenderPass(373, 0, 1); got != 0xFFFFFF {
 		t.Fatalf("potion bottle pass color mismatch: got=%d want=%d", got, 0xFFFFFF)
+	}
+	if got := itemColorForRenderPass(402, 0, 1); got != 9079434 {
+		t.Fatalf("firework default color mismatch: got=%d want=%d", got, 9079434)
 	}
 	if got := itemColorForRenderPass(383, 90, 0); got != 15771042 {
 		t.Fatalf("spawn egg primary mismatch: got=%d want=%d", got, 15771042)
@@ -212,5 +220,18 @@ func TestItemDisplayNamePotionUsesCustomPotionEffectsNBT(t *testing.T) {
 	}
 	if got := a.itemDisplayNameWithTag(373, 1, stackTag); got != "Potion of Swiftness" {
 		t.Fatalf("custom potion display name mismatch: got=%q want=%q", got, "Potion of Swiftness")
+	}
+}
+
+func TestFireworkChargeColorFromStackTag(t *testing.T) {
+	stackTag := nbt.NewCompoundTag("")
+	explosionTag := nbt.NewCompoundTag("Explosion")
+	explosionTag.SetIntArray("Colors", []int32{0xFF0000, 0x00FF00, 0x0000FF})
+	stackTag.SetCompoundTag("Explosion", explosionTag)
+
+	got := fireworkChargeColorFromStackTag(stackTag)
+	// Average RGB = (85,85,85)
+	if got != 0x555555 {
+		t.Fatalf("firework average color mismatch: got=0x%06x want=0x555555", got)
 	}
 }
