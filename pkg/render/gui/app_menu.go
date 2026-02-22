@@ -25,6 +25,7 @@ const (
 	menuScreenSingleplayer
 	menuScreenMultiplayer
 	menuScreenOptions
+	menuScreenVideo
 	menuScreenCreateWorld
 	menuScreenRenameWorld
 )
@@ -92,6 +93,17 @@ const (
 	buttonIDOptionViewBobbing = 1316
 	buttonIDOptionDone        = 1399
 
+	buttonIDVideoGraphics    = 1601
+	buttonIDVideoClouds      = 1602
+	buttonIDVideoRDMinus     = 1603
+	buttonIDVideoRDPlus      = 1604
+	buttonIDVideoFOVMinus    = 1605
+	buttonIDVideoFOVPlus     = 1606
+	buttonIDVideoFPS         = 1607
+	buttonIDVideoGUIScale    = 1608
+	buttonIDVideoViewBobbing = 1609
+	buttonIDVideoDone        = 1699
+
 	buttonIDCreateDone          = 1401
 	buttonIDCreateCancel        = 1402
 	buttonIDCreateGameMode      = 1403
@@ -111,6 +123,7 @@ func (a *App) initAllMenuButtons() {
 	a.initSingleButtons()
 	a.initMultiButtons()
 	a.initOptionButtons()
+	a.initVideoButtons()
 	a.initCreateButtons()
 	a.initRenameButtons()
 	if len(a.singleWorlds) == 0 {
@@ -118,6 +131,7 @@ func (a *App) initAllMenuButtons() {
 	}
 	a.updateSingleButtonsState()
 	a.updateOptionButtonsState()
+	a.updateVideoButtonsState()
 	a.updateCreateButtonsState()
 	a.updateRenameButtonsState()
 }
@@ -179,6 +193,23 @@ func (a *App) initOptionButtons() {
 	}
 }
 
+func (a *App) initVideoButtons() {
+	w, h := a.uiWidth(), a.uiHeight()
+	baseY := h/6 + 20
+	a.videoButtons = []*guiButton{
+		newButton(buttonIDVideoGraphics, w/2-155, baseY, 150, 20, "Graphics: Fancy"),
+		newButton(buttonIDVideoClouds, w/2+5, baseY, 150, 20, "Clouds: ON"),
+		newButton(buttonIDVideoRDMinus, w/2-100, baseY+24, 20, 20, "-"),
+		newButton(buttonIDVideoRDPlus, w/2+80, baseY+24, 20, 20, "+"),
+		newButton(buttonIDVideoFOVMinus, w/2-100, baseY+48, 20, 20, "-"),
+		newButton(buttonIDVideoFOVPlus, w/2+80, baseY+48, 20, 20, "+"),
+		newButton(buttonIDVideoFPS, w/2-155, baseY+72, 150, 20, "Max Framerate: Balanced"),
+		newButton(buttonIDVideoGUIScale, w/2+5, baseY+72, 150, 20, "GUI Scale: Auto"),
+		newButton(buttonIDVideoViewBobbing, w/2-75, baseY+96, 150, 20, "View Bobbing: ON"),
+		newButton(buttonIDVideoDone, w/2-100, baseY+132, 200, 20, "Done"),
+	}
+}
+
 func (a *App) initCreateButtons() {
 	w, h := a.uiWidth(), a.uiHeight()
 	a.createButtons = []*guiButton{
@@ -231,7 +262,11 @@ func (a *App) updateOptionButtonsState() {
 			b.Label = a.optionGraphicsLabel()
 			b.Enabled = true
 		case buttonIDOptionVideo:
-			b.Label = a.optionFramerateLabel()
+			if a.mainMenu {
+				b.Label = "Video Settings..."
+			} else {
+				b.Label = a.optionFramerateLabel()
+			}
 			b.Enabled = true
 		case buttonIDOptionControls:
 			b.Label = a.optionInvertMouseLabel()
@@ -256,6 +291,45 @@ func (a *App) updateOptionButtonsState() {
 			b.Enabled = a.mouseSens > 0.0
 		case buttonIDOptionSensPlus:
 			b.Enabled = a.mouseSens < 1.0
+		}
+	}
+}
+
+func (a *App) updateVideoButtonsState() {
+	viewBobbingLabel := "View Bobbing: OFF"
+	if a.viewBobbing {
+		viewBobbingLabel = "View Bobbing: ON"
+	}
+	for _, b := range a.videoButtons {
+		if b == nil {
+			continue
+		}
+		switch b.ID {
+		case buttonIDVideoGraphics:
+			b.Label = a.optionGraphicsLabel()
+			b.Enabled = true
+		case buttonIDVideoClouds:
+			b.Label = a.optionCloudsLabel()
+			b.Enabled = true
+		case buttonIDVideoFPS:
+			b.Label = a.optionFramerateLabel()
+			b.Enabled = true
+		case buttonIDVideoGUIScale:
+			b.Label = a.optionGUIScaleLabel()
+			b.Enabled = true
+		case buttonIDVideoViewBobbing:
+			b.Label = viewBobbingLabel
+			b.Enabled = true
+		case buttonIDVideoRDMinus:
+			b.Enabled = a.renderDistance < 3
+		case buttonIDVideoRDPlus:
+			b.Enabled = a.renderDistance > 0
+		case buttonIDVideoFOVMinus:
+			b.Enabled = a.fovSetting > 0.0
+		case buttonIDVideoFOVPlus:
+			b.Enabled = a.fovSetting < 1.0
+		case buttonIDVideoDone:
+			b.Enabled = true
 		}
 	}
 }
@@ -507,6 +581,8 @@ func (a *App) currentMenuButtons() []*guiButton {
 		return a.multiButtons
 	case menuScreenOptions:
 		return a.optionButtons
+	case menuScreenVideo:
+		return a.videoButtons
 	case menuScreenCreateWorld:
 		return a.createButtons
 	case menuScreenRenameWorld:
@@ -791,8 +867,8 @@ func (a *App) handleMenuButton(id int) bool {
 			a.viewBobbing = !a.viewBobbing
 			changed = true
 		case buttonIDOptionVideo:
-			a.limitFramerateMode = (a.limitFramerateMode + 1) % len(framerateModeNames)
-			changed = true
+			a.menuScreen = menuScreenVideo
+			a.menuStatus = ""
 		case buttonIDOptionLanguage:
 			a.guiScaleMode = (a.guiScaleMode + 1) % len(guiScaleModeNames)
 			a.updateGUIMetrics()
@@ -820,6 +896,57 @@ func (a *App) handleMenuButton(id int) bool {
 			changed = true
 		}
 		a.updateOptionButtonsState()
+		a.updateVideoButtonsState()
+		if changed {
+			a.saveOptionsFile()
+		}
+	case menuScreenVideo:
+		changed := false
+		switch id {
+		case buttonIDVideoDone:
+			a.menuScreen = menuScreenOptions
+			a.menuStatus = ""
+		case buttonIDVideoGraphics:
+			a.fancyGraphics = !a.fancyGraphics
+			changed = true
+		case buttonIDVideoClouds:
+			a.cloudsEnabled = !a.cloudsEnabled
+			changed = true
+		case buttonIDVideoRDMinus:
+			if a.renderDistance < 3 {
+				a.renderDistance++
+				changed = true
+			}
+		case buttonIDVideoRDPlus:
+			if a.renderDistance > 0 {
+				a.renderDistance--
+				changed = true
+			}
+		case buttonIDVideoFOVMinus:
+			a.fovSetting -= 0.05
+			if a.fovSetting < 0.0 {
+				a.fovSetting = 0.0
+			}
+			changed = true
+		case buttonIDVideoFOVPlus:
+			a.fovSetting += 0.05
+			if a.fovSetting > 1.0 {
+				a.fovSetting = 1.0
+			}
+			changed = true
+		case buttonIDVideoFPS:
+			a.limitFramerateMode = (a.limitFramerateMode + 1) % len(framerateModeNames)
+			changed = true
+		case buttonIDVideoGUIScale:
+			a.guiScaleMode = (a.guiScaleMode + 1) % len(guiScaleModeNames)
+			a.updateGUIMetrics()
+			changed = true
+		case buttonIDVideoViewBobbing:
+			a.viewBobbing = !a.viewBobbing
+			changed = true
+		}
+		a.updateOptionButtonsState()
+		a.updateVideoButtonsState()
 		if changed {
 			a.saveOptionsFile()
 		}
@@ -1539,6 +1666,8 @@ func (a *App) drawMenuScreen() {
 		a.drawMultiplayerMenu()
 	case menuScreenOptions:
 		a.drawOptionsMenu()
+	case menuScreenVideo:
+		a.drawVideoMenu()
 	case menuScreenCreateWorld:
 		a.drawCreateWorldMenu()
 	case menuScreenRenameWorld:
@@ -1554,6 +1683,10 @@ func (a *App) handleMenuEscape() bool {
 		a.menuScreen = menuScreenSingleplayer
 		a.activeTextField = textFieldNone
 		a.typedRuneQueue = a.typedRuneQueue[:0]
+		a.menuStatus = ""
+		return true
+	case menuScreenVideo:
+		a.menuScreen = menuScreenOptions
 		a.menuStatus = ""
 		return true
 	case menuScreenMain:
@@ -1819,6 +1952,28 @@ func (a *App) drawOptionsMenu() {
 		a.font.drawCenteredString(rd, a.uiWidth()/2, baseY+88+6, 0xFFFFFF)
 		a.font.drawCenteredString(fov, a.uiWidth()/2, baseY+112+6, 0xFFFFFF)
 		a.font.drawCenteredString(sens, a.uiWidth()/2, baseY+136+6, 0xFFFFFF)
+	}
+
+	a.drawMenuStatusLine()
+	gl.Disable(gl.BLEND)
+	gl.Enable(gl.CULL_FACE)
+	gl.Enable(gl.DEPTH_TEST)
+}
+
+func (a *App) drawVideoMenu() {
+	a.drawMenuBackground("Video Settings")
+	a.updateVideoButtonsState()
+
+	for _, b := range a.videoButtons {
+		b.draw(a.font, a.texWidgets, a.mouseX, a.mouseY)
+	}
+
+	if a.font != nil {
+		baseY := a.uiHeight()/6 + 20
+		rd := a.optionRenderDistanceLabel()
+		fov := a.optionFOVLabel()
+		a.font.drawCenteredString(rd, a.uiWidth()/2, baseY+24+6, 0xFFFFFF)
+		a.font.drawCenteredString(fov, a.uiWidth()/2, baseY+48+6, 0xFFFFFF)
 	}
 
 	a.drawMenuStatusLine()

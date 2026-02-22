@@ -196,6 +196,7 @@ type App struct {
 	singleButtons      []*guiButton
 	multiButtons       []*guiButton
 	optionButtons      []*guiButton
+	videoButtons       []*guiButton
 	createButtons      []*guiButton
 	renameButtons      []*guiButton
 	singleWorlds       []string
