@@ -245,6 +245,7 @@ type App struct {
 	assetsRoot     string
 	optionsPath    string
 	optionsKV      map[string]string
+	langEN         map[string]string
 	keyBindings    []keyBindingConfig
 	keyBindCapture int
 	texWidgets     *texture2D
@@ -529,6 +530,7 @@ func (a *App) loadAssets() error {
 	if a.splashText == "" {
 		a.splashText = "missingno"
 	}
+	a.langEN = loadLanguageMap(filepath.Join(a.assetsRoot, "lang", "en_US.lang"))
 	if err := a.loadBlockTextures(); err != nil {
 		errs = append(errs, err.Error())
 	}

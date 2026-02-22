@@ -44,3 +44,31 @@ func TestHumanizeTextureToken(t *testing.T) {
 		}
 	}
 }
+
+func TestItemLangKeyForStackSpecialCases(t *testing.T) {
+	tests := []struct {
+		id     int
+		damage int
+		want   string
+	}{
+		{id: 263, damage: 1, want: "item.charcoal.name"},
+		{id: 351, damage: 12, want: "item.dyePowder.lightBlue.name"},
+		{id: 397, damage: 4, want: "item.skull.creeper.name"},
+		{id: 264, damage: 0, want: "item.diamond.name"},
+	}
+	for _, tc := range tests {
+		got := itemLangKeyForStack(tc.id, tc.damage)
+		if got != tc.want {
+			t.Fatalf("itemLangKeyForStack(%d,%d)=%q want=%q", tc.id, tc.damage, got, tc.want)
+		}
+	}
+}
+
+func TestBlockLangKeyForID(t *testing.T) {
+	if got := blockLangKeyForID(1); got != "tile.stone.name" {
+		t.Fatalf("blockLangKeyForID(1)=%q want=%q", got, "tile.stone.name")
+	}
+	if got := blockLangKeyForID(999); got != "" {
+		t.Fatalf("blockLangKeyForID(999)=%q want empty", got)
+	}
+}

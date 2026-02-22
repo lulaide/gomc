@@ -30,6 +30,25 @@ var dyeColorTokens = [16]string{
 	"white",
 }
 
+var dyeLangTokens = [16]string{
+	"black",
+	"red",
+	"green",
+	"brown",
+	"blue",
+	"purple",
+	"cyan",
+	"silver",
+	"gray",
+	"pink",
+	"lime",
+	"yellow",
+	"lightBlue",
+	"magenta",
+	"orange",
+	"white",
+}
+
 func (a *App) loadItemTextures() error {
 	a.itemTextures = make(map[string]*texture2D)
 	root := filepath.Join(a.assetsRoot, "textures", "items")
@@ -198,6 +217,17 @@ func (a *App) itemDisplayName(itemID, itemDamage int16) string {
 		return ""
 	}
 
+	if key := blockLangKeyForID(id); key != "" {
+		if localized, ok := a.langEN[key]; ok && localized != "" {
+			return localized
+		}
+	}
+	if key := itemLangKeyForStack(id, int(itemDamage)); key != "" {
+		if localized, ok := a.langEN[key]; ok && localized != "" {
+			return localized
+		}
+	}
+
 	var token string
 	if id <= 255 {
 		token = normalizeTextureToken(a.blockTextureNameForFace(id, int(itemDamage), faceUp))
@@ -246,4 +276,46 @@ func humanizeTextureToken(token string) string {
 		words[i] = string(rs)
 	}
 	return strings.Join(words, " ")
+}
+
+func blockLangKeyForID(blockID int) string {
+	if blockID <= 0 {
+		return ""
+	}
+	if unlocalized, ok := blockUnlocalizedNames[blockID]; ok && unlocalized != "" {
+		return "tile." + unlocalized + ".name"
+	}
+	return ""
+}
+
+func itemLangKeyForStack(itemID, itemDamage int) string {
+	if itemID <= 0 {
+		return ""
+	}
+	switch itemID {
+	case 263:
+		if itemDamage&1 == 1 {
+			return "item.charcoal.name"
+		}
+	case 351:
+		return "item.dyePowder." + dyeLangTokens[itemDamage&15] + ".name"
+	case 397:
+		switch itemDamage & 255 {
+		case 1:
+			return "item.skull.wither.name"
+		case 2:
+			return "item.skull.zombie.name"
+		case 3:
+			return "item.skull.char.name"
+		case 4:
+			return "item.skull.creeper.name"
+		default:
+			return "item.skull.skeleton.name"
+		}
+	}
+
+	if def, ok := itemTextureDefs[itemID]; ok && def.UnlocalizedName != "" {
+		return "item." + def.UnlocalizedName + ".name"
+	}
+	return ""
 }
