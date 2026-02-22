@@ -734,6 +734,15 @@ func (s *Session) handlePacket(packet protocol.Packet) error {
 				Type:    EventSystem,
 				Message: fmt.Sprintf("entity %d died", p.EntityID),
 			})
+		case 9:
+			// Translation reference:
+			// - net.minecraft.src.EntityPlayerMP#onItemUseFinish()
+			s.emitEvent(Event{
+				Type:        EventSound,
+				SoundName:   "random.burp",
+				SoundVolume: 0.5,
+				SoundPitch:  0.9,
+			})
 		}
 	case *protocol.Packet40EntityMetadata:
 		s.stateMu.Lock()

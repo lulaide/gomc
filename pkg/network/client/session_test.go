@@ -931,6 +931,24 @@ func TestHandlePacket38EntityStatusEmitsEvent(t *testing.T) {
 	default:
 		t.Fatal("expected entity status event")
 	}
+
+	if err := s.handlePacket(&protocol.Packet38EntityStatus{
+		EntityID:     77,
+		EntityStatus: 9,
+	}); err != nil {
+		t.Fatalf("handle Packet38 finish-use failed: %v", err)
+	}
+	select {
+	case ev := <-s.events:
+		if ev.Type != EventSound {
+			t.Fatalf("event type mismatch: got=%s want=%s", ev.Type, EventSound)
+		}
+		if ev.SoundName != "random.burp" {
+			t.Fatalf("sound mismatch: got=%q want=%q", ev.SoundName, "random.burp")
+		}
+	default:
+		t.Fatal("expected finish-use sound event")
+	}
 }
 
 func TestHandlePacket18AnimationEmitsEvent(t *testing.T) {
