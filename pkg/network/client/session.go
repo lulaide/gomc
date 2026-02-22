@@ -80,6 +80,7 @@ type trackedEntity struct {
 	DroppedItemID     int16
 	DroppedItemCount  int8
 	DroppedItemDamage int16
+	DroppedItemTag    *nbt.CompoundTag
 }
 
 // EntitySnapshot is a read-only view of a currently tracked remote entity.
@@ -114,6 +115,7 @@ type EntitySnapshot struct {
 	DroppedItemID     int16
 	DroppedItemCount  int8
 	DroppedItemDamage int16
+	DroppedItemTag    *nbt.CompoundTag
 }
 
 // HotbarSlotSnapshot represents one player hotbar slot (0..8).
@@ -469,10 +471,12 @@ func applyEntityMetadata(ent *trackedEntity, metadata []protocol.WatchableObject
 				ent.DroppedItemID = stack.ItemID
 				ent.DroppedItemCount = stack.StackSize
 				ent.DroppedItemDamage = stack.ItemDamage
+				ent.DroppedItemTag = cloneCompoundTag(stack.Tag)
 			} else if m.ObjectType == 5 {
 				ent.DroppedItemID = 0
 				ent.DroppedItemCount = 0
 				ent.DroppedItemDamage = 0
+				ent.DroppedItemTag = nil
 			}
 			continue
 		}
@@ -1059,6 +1063,7 @@ func (s *Session) EntitiesSnapshot() []EntitySnapshot {
 			DroppedItemID:     ent.DroppedItemID,
 			DroppedItemCount:  ent.DroppedItemCount,
 			DroppedItemDamage: ent.DroppedItemDamage,
+			DroppedItemTag:    cloneCompoundTag(ent.DroppedItemTag),
 		})
 	}
 	return out

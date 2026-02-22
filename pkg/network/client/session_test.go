@@ -301,6 +301,10 @@ func TestHandleVehicleSpawnAndVelocityPackets(t *testing.T) {
 
 func TestHandlePacket40EntityMetadataUpdatesDroppedItemFields(t *testing.T) {
 	s := newUnitTestSession(io.Discard)
+	displayTag := nbt.NewCompoundTag("display")
+	displayTag.SetInteger("color", 0x334455)
+	stackTag := nbt.NewCompoundTag("")
+	stackTag.SetCompoundTag("display", displayTag)
 
 	if err := s.handlePacket(&protocol.Packet23VehicleSpawn{
 		EntityID:        99,
@@ -322,6 +326,7 @@ func TestHandlePacket40EntityMetadataUpdatesDroppedItemFields(t *testing.T) {
 					ItemID:     4,
 					StackSize:  3,
 					ItemDamage: 2,
+					Tag:        stackTag,
 				},
 			},
 		},
@@ -338,6 +343,35 @@ func TestHandlePacket40EntityMetadataUpdatesDroppedItemFields(t *testing.T) {
 	}
 	if out[0].DroppedItemID != 4 || out[0].DroppedItemCount != 3 || out[0].DroppedItemDamage != 2 {
 		t.Fatalf("dropped item metadata mismatch: %#v", out[0])
+	}
+	if out[0].DroppedItemTag == nil {
+		t.Fatal("expected dropped item tag in snapshot")
+	}
+	outDisplay, ok := out[0].DroppedItemTag.GetTag("display").(*nbt.CompoundTag)
+	if !ok || outDisplay == nil {
+		t.Fatal("expected dropped item display compound tag in snapshot")
+	}
+	outColor, ok := outDisplay.GetTag("color").(*nbt.IntTag)
+	if !ok || outColor == nil || outColor.Data != 0x334455 {
+		t.Fatalf("expected dropped item color tag 0x334455, got=%v ok=%t", outColor, ok)
+	}
+
+	// Ensure snapshot carries clone semantics.
+	outDisplay.SetInteger("color", 0x999999)
+	out2 := s.EntitiesSnapshot()
+	if len(out2) != 1 || out2[0].DroppedItemTag == nil {
+		t.Fatal("expected dropped item tag in subsequent snapshot")
+	}
+	out2Display, ok := out2[0].DroppedItemTag.GetTag("display").(*nbt.CompoundTag)
+	if !ok || out2Display == nil {
+		t.Fatal("expected dropped item display in subsequent snapshot")
+	}
+	out2Color, ok := out2Display.GetTag("color").(*nbt.IntTag)
+	if !ok || out2Color == nil {
+		t.Fatal("expected dropped item color in subsequent snapshot")
+	}
+	if out2Color.Data != 0x334455 {
+		t.Fatalf("dropped item color should remain original after snapshot mutation: got=0x%06x want=0x334455", out2Color.Data)
 	}
 }
 

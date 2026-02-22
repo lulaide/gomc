@@ -4344,7 +4344,7 @@ func (a *App) drawDroppedItemEntity(ent netclient.EntitySnapshot, animTime float
 	gl.Translatef(float32(ent.X), float32(ent.Y)+hover, float32(ent.Z))
 	gl.Rotatef(spinDeg, 0, 1, 0)
 	gl.Scalef(itemScale, itemScale, itemScale)
-	itemPasses := a.itemTexturePasses(int16(itemID), int16(itemMeta))
+	itemPasses := a.itemTexturePassesWithTag(int16(itemID), int16(itemMeta), ent.DroppedItemTag)
 
 	rnd := util.NewJavaRandom(187)
 	for i := 0; i < copies; i++ {
