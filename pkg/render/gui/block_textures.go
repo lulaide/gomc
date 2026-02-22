@@ -124,6 +124,7 @@ func defaultBlockTextureDefs() map[int]blockTextureDef {
 		41:  blockAll("gold_block.png"),
 		42:  blockAll("iron_block.png"),
 		43:  blockTopBottomSide("stone_slab_top.png", "stone_slab_top.png", "stone_slab_side.png"),
+		44:  blockTopBottomSide("stone_slab_top.png", "stone_slab_top.png", "stone_slab_side.png"),
 		45:  blockAll("brick.png"),
 		46:  blockTopBottomSide("tnt_top.png", "tnt_bottom.png", "tnt_side.png"),
 		47:  blockAll("bookshelf.png"),
@@ -157,6 +158,8 @@ func defaultBlockTextureDefs() map[int]blockTextureDef {
 		111: blockAll("waterlily.png"),
 		112: blockAll("nether_brick.png"),
 		121: blockAll("end_stone.png"),
+		125: blockAll("planks_oak.png"),
+		126: blockAll("planks_oak.png"),
 		127: blockAll("cocoa_stage_2.png"),
 		129: blockAll("emerald_ore.png"),
 		133: blockAll("emerald_block.png"),
@@ -181,6 +184,38 @@ func (a *App) loadBlockTextures() error {
 	// - net.minecraft.src.BlockLeaves#setGraphicsLevel(boolean)
 	// Both fancy and opaque leaves variants are used depending on graphics setting.
 	for _, n := range [...]string{
+		"log_oak.png",
+		"log_oak_top.png",
+		"log_spruce.png",
+		"log_spruce_top.png",
+		"log_birch.png",
+		"log_birch_top.png",
+		"log_jungle.png",
+		"log_jungle_top.png",
+		"planks_spruce.png",
+		"planks_birch.png",
+		"planks_jungle.png",
+		"sapling_spruce.png",
+		"sapling_birch.png",
+		"sapling_jungle.png",
+		"sandstone_carved.png",
+		"sandstone_smooth.png",
+		"fern.png",
+		"wool_colored_orange.png",
+		"wool_colored_magenta.png",
+		"wool_colored_light_blue.png",
+		"wool_colored_yellow.png",
+		"wool_colored_lime.png",
+		"wool_colored_pink.png",
+		"wool_colored_gray.png",
+		"wool_colored_silver.png",
+		"wool_colored_cyan.png",
+		"wool_colored_purple.png",
+		"wool_colored_blue.png",
+		"wool_colored_brown.png",
+		"wool_colored_green.png",
+		"wool_colored_red.png",
+		"wool_colored_black.png",
 		"leaves_oak.png",
 		"leaves_spruce.png",
 		"leaves_birch.png",
@@ -300,6 +335,19 @@ func (a *App) blockTextureNameForFace(blockID, blockMeta, face int) string {
 		return ""
 	}
 
+	speciesByMeta := func(meta int) string {
+		switch meta {
+		case 1:
+			return "spruce"
+		case 2:
+			return "birch"
+		case 3:
+			return "jungle"
+		default:
+			return "oak"
+		}
+	}
+
 	// Translation reference:
 	// - net.minecraft.src.BlockLeaves / BlockLeavesBase#setGraphicsLevel(boolean)
 	// - metadata variants: oak/spruce/birch/jungle.
@@ -317,6 +365,153 @@ func (a *App) blockTextureNameForFace(blockID, blockMeta, face int) string {
 			base += "_opaque"
 		}
 		return base + ".png"
+	}
+	if blockID == 5 {
+		// Translation reference:
+		// - net.minecraft.src.BlockWood.getIcon(int side, int metadata)
+		meta := blockMeta
+		if meta < 0 || meta > 3 {
+			meta = 0
+		}
+		return "planks_" + speciesByMeta(meta) + ".png"
+	}
+	if blockID == 6 {
+		// Translation reference:
+		// - net.minecraft.src.BlockSapling.getIcon(int side, int metadata)
+		return "sapling_" + speciesByMeta(blockMeta&3) + ".png"
+	}
+	if blockID == 17 {
+		// Translation reference:
+		// - net.minecraft.src.BlockLog.getIcon(int side, int metadata)
+		base := speciesByMeta(blockMeta & 3)
+		sideTex := "log_" + base + ".png"
+		topTex := "log_" + base + "_top.png"
+		orientation := blockMeta & 12
+		switch orientation {
+		case 0:
+			if face == faceUp || face == faceDown {
+				return topTex
+			}
+		case 4:
+			if face == faceEast || face == faceWest {
+				return topTex
+			}
+		case 8:
+			if face == faceNorth || face == faceSouth {
+				return topTex
+			}
+		}
+		return sideTex
+	}
+	if blockID == 24 {
+		// Translation reference:
+		// - net.minecraft.src.BlockSandStone.getIcon(int side, int metadata)
+		variant := blockMeta
+		if variant < 0 || variant > 2 {
+			variant = 0
+		}
+		if face == faceUp || (face == faceDown && (variant == 1 || variant == 2)) {
+			return "sandstone_top.png"
+		}
+		if face == faceDown {
+			return "sandstone_bottom.png"
+		}
+		switch variant {
+		case 1:
+			return "sandstone_carved.png"
+		case 2:
+			return "sandstone_smooth.png"
+		default:
+			return "sandstone_normal.png"
+		}
+	}
+	if blockID == 31 {
+		// Translation reference:
+		// - net.minecraft.src.BlockTallGrass.getIcon(int side, int metadata)
+		switch blockMeta {
+		case 1:
+			return "tallgrass.png"
+		case 2:
+			return "fern.png"
+		default:
+			return "deadbush.png"
+		}
+	}
+	if blockID == 35 {
+		// Translation reference:
+		// - net.minecraft.src.BlockColored.registerIcons(...)
+		// - net.minecraft.src.BlockColored.getIcon(int side, int metadata)
+		// Metadata order is white->black, texture registration uses reversed dye names.
+		woolByMeta := [...]string{
+			"white",
+			"orange",
+			"magenta",
+			"light_blue",
+			"yellow",
+			"lime",
+			"pink",
+			"gray",
+			"silver",
+			"cyan",
+			"purple",
+			"blue",
+			"brown",
+			"green",
+			"red",
+			"black",
+		}
+		meta := blockMeta % len(woolByMeta)
+		if meta < 0 {
+			meta += len(woolByMeta)
+		}
+		return "wool_colored_" + woolByMeta[meta] + ".png"
+	}
+	if blockID == 43 || blockID == 44 {
+		// Translation reference:
+		// - net.minecraft.src.BlockStep.getIcon(int side, int metadata)
+		// Metadata low 3 bits select the slab material.
+		slabMeta := blockMeta & 7
+		faceForType := face
+		if blockID == 43 && (blockMeta&8) != 0 {
+			// Seamless double slab uses top texture lookup for all sides.
+			faceForType = faceUp
+		}
+		switch slabMeta {
+		case 0: // stone slab top+side pair
+			if faceForType == faceUp || faceForType == faceDown {
+				return "stone_slab_top.png"
+			}
+			return "stone_slab_side.png"
+		case 1: // sandstone slab (default sandstone variant only)
+			return a.blockTextureNameForFace(24, 0, faceForType)
+		case 2: // wood slab delegates to Block.planks side texture (oak)
+			return "planks_oak.png"
+		case 3:
+			return "cobblestone.png"
+		case 4:
+			return "brick.png"
+		case 5:
+			return "stonebrick.png"
+		case 6:
+			return "nether_brick.png"
+		case 7:
+			if faceForType == faceUp || faceForType == faceDown {
+				return "quartz_block_top.png"
+			}
+			return "quartz_block_side.png"
+		default:
+			return "stone_slab_top.png"
+		}
+	}
+	if blockID == 125 || blockID == 126 {
+		// Translation reference:
+		// - net.minecraft.src.BlockWoodSlab.getIcon(int side, int metadata)
+		// Delegates to planks icon with metadata & 7, and BlockWood clamps unknown values.
+		meta := blockMeta & 7
+		if meta < 0 || meta > 3 {
+			meta = 0
+		}
+		return "planks_" + speciesByMeta(meta) + ".png"
 	}
 
 	switch face {
@@ -360,6 +555,12 @@ func (a *App) blockFaceTintAt(x, y, z, blockID, blockMeta, face int) (float32, f
 			return a.biomeGrassTintAt(x, z)
 		}
 	case 31: // tall grass (plains biome tint approximation)
+		// Translation reference:
+		// - net.minecraft.src.BlockTallGrass#colorMultiplier(...)
+		// meta=0 (deadbush variant) stays white; grass/fern use biome tint.
+		if (blockMeta & 3) == 0 {
+			return 1, 1, 1
+		}
 		return a.biomeGrassTintAt(x, z)
 	case 18: // leaves (oak/spruce/birch variants by metadata)
 		switch blockMeta & 3 {
@@ -458,6 +659,10 @@ func biomeWaterColorMultiplier(biomeID int) int {
 }
 
 func (a *App) biomeColorAt(x, z int, foliage bool) (uint32, bool) {
+	if a.session == nil {
+		return 0, false
+	}
+
 	biomeID, ok := a.session.BiomeAt(x, z)
 	if !ok {
 		// Unknown biome payload defaults to plains in vanilla generation.

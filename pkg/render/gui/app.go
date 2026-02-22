@@ -3662,9 +3662,9 @@ func (a *App) appendCrossedPlantBatches(
 	blockMeta int,
 	solidBatches map[uint32]*textureBatch,
 ) bool {
-	tex := a.blockTextureForFace(blockID, faceNorth)
+	tex := a.blockTextureForFaceMeta(blockID, blockMeta, faceNorth)
 	if tex == nil {
-		tex = a.blockTextureForFace(blockID, faceUp)
+		tex = a.blockTextureForFaceMeta(blockID, blockMeta, faceUp)
 	}
 	if tex == nil {
 		return false
