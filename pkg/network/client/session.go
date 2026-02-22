@@ -1245,6 +1245,45 @@ func (s *Session) PlaceHeldBlock(x, y, z, direction int32) error {
 	})
 }
 
+// UseHeldItemInAir sends Packet15 right-click-air action, equivalent to
+// PlayerControllerMP#sendUseItem in 1.6.4.
+func (s *Session) UseHeldItemInAir() error {
+	s.stateMu.RLock()
+	heldSlot := s.heldItemSlot
+	if heldSlot < 0 || heldSlot >= hotbarCount {
+		heldSlot = 0
+	}
+	windowSlot := int(hotbarBaseWindowSlot + heldSlot)
+	var stack *protocol.ItemStack
+	if windowSlot >= 0 && windowSlot < playerWindowSlotCount {
+		stack = cloneItemStack(s.inventory[windowSlot])
+	}
+	s.stateMu.RUnlock()
+
+	return s.sendPacket(&protocol.Packet15Place{
+		XPosition: -1,
+		YPosition: -1,
+		ZPosition: -1,
+		Direction: 255,
+		ItemStack: stack,
+		XOffset:   0.0,
+		YOffset:   0.0,
+		ZOffset:   0.0,
+	})
+}
+
+// ReleaseUseItem sends Packet14 status=5, equivalent to
+// PlayerControllerMP#onStoppedUsingItem in 1.6.4.
+func (s *Session) ReleaseUseItem() error {
+	return s.sendPacket(&protocol.Packet14BlockDig{
+		Status:    5,
+		XPosition: 0,
+		YPosition: 0,
+		ZPosition: 0,
+		Face:      255,
+	})
+}
+
 // SwingArm sends Packet18 animation id=1 (arm swing).
 func (s *Session) SwingArm() error {
 	s.stateMu.RLock()

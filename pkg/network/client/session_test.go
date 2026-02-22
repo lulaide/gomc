@@ -483,6 +483,60 @@ func TestDropHeldItemWritesPacket14Status(t *testing.T) {
 	}
 }
 
+func TestUseHeldItemInAirWritesPacket15(t *testing.T) {
+	var out bytes.Buffer
+	s := newUnitTestSession(&out)
+	s.heldItemSlot = 2
+	s.inventory[38] = &protocol.ItemStack{
+		ItemID:     261,
+		StackSize:  1,
+		ItemDamage: 7,
+	}
+
+	if err := s.UseHeldItemInAir(); err != nil {
+		t.Fatalf("UseHeldItemInAir failed: %v", err)
+	}
+
+	packet, err := protocol.ReadPacket(&out, protocol.DirectionServerbound)
+	if err != nil {
+		t.Fatalf("failed to read Packet15: %v", err)
+	}
+	place, ok := packet.(*protocol.Packet15Place)
+	if !ok {
+		t.Fatalf("expected Packet15Place, got %T", packet)
+	}
+	if place.XPosition != -1 || place.YPosition != 255 || place.ZPosition != -1 || place.Direction != 255 {
+		t.Fatalf("packet coords mismatch: %#v", place)
+	}
+	if place.ItemStack == nil || place.ItemStack.ItemID != 261 || place.ItemStack.ItemDamage != 7 || place.ItemStack.StackSize != 1 {
+		t.Fatalf("packet stack mismatch: %#v", place.ItemStack)
+	}
+	if place.XOffset != 0 || place.YOffset != 0 || place.ZOffset != 0 {
+		t.Fatalf("packet offset mismatch: %#v", place)
+	}
+}
+
+func TestReleaseUseItemWritesPacket14Status5(t *testing.T) {
+	var out bytes.Buffer
+	s := newUnitTestSession(&out)
+
+	if err := s.ReleaseUseItem(); err != nil {
+		t.Fatalf("ReleaseUseItem failed: %v", err)
+	}
+
+	packet, err := protocol.ReadPacket(&out, protocol.DirectionServerbound)
+	if err != nil {
+		t.Fatalf("failed to read Packet14: %v", err)
+	}
+	dig, ok := packet.(*protocol.Packet14BlockDig)
+	if !ok {
+		t.Fatalf("expected Packet14BlockDig, got %T", packet)
+	}
+	if dig.Status != 5 || dig.Face != 255 {
+		t.Fatalf("release packet mismatch: %#v", dig)
+	}
+}
+
 func TestSetCreativeHotbarSlotWritesPacket107(t *testing.T) {
 	var out bytes.Buffer
 	s := newUnitTestSession(&out)

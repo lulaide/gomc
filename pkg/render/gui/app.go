@@ -80,6 +80,22 @@ const (
 	pauseScreenSounds
 )
 
+type itemUseAction int
+
+const (
+	itemUseActionNone itemUseAction = iota
+	itemUseActionBlock
+	itemUseActionBow
+	itemUseActionEat
+	itemUseActionDrink
+)
+
+type itemUseProfile struct {
+	Action         itemUseAction
+	MaxUseDuration int
+	AlwaysEdible   bool
+}
+
 type Config struct {
 	Width            int
 	Height           int
@@ -270,6 +286,11 @@ type App struct {
 	localOnGround  bool
 	prevTab        bool
 	prevBacksp     bool
+	localUsingItem bool
+	localUseAction itemUseAction
+	localUseStart  time.Time
+	localUseMax    int
+	localUseItemID int16
 
 	blockTextureDefs   map[int]blockTextureDef
 	blockTextures      map[string]*texture2D
@@ -1012,11 +1033,13 @@ func (a *App) handleInput(deltaSeconds float64) bool {
 	}
 	if escPressed && !a.prevEsc && !a.mainMenu {
 		if a.chatInputOpen {
+			a.stopLocalItemUse(true)
 			a.closeChatInput(true)
 			a.prevEsc = escPressed
 			return true
 		}
 		if a.inventoryOpen {
+			a.stopLocalItemUse(true)
 			a.closeInventoryScreen()
 			a.prevEsc = escPressed
 			return true
@@ -1052,10 +1075,12 @@ func (a *App) handleInput(deltaSeconds float64) bool {
 	a.prevF3 = f3Pressed
 
 	if a.mainMenu {
+		a.stopLocalItemUse(true)
 		a.moveTickAccum = 0
 		return a.handleMainMenuInput(leftMouse, rightMouse, middleMouse, enterPressed)
 	}
 	if a.session == nil {
+		a.stopLocalItemUse(false)
 		a.moveTickAccum = 0
 		a.paused = false
 		a.pauseScreen = pauseScreenMain
@@ -1067,6 +1092,7 @@ func (a *App) handleInput(deltaSeconds float64) bool {
 	}
 
 	if a.paused {
+		a.stopLocalItemUse(true)
 		a.moveTickAccum = 0
 		if a.pauseScreen == pauseScreenKeyBindings {
 			if a.tryCaptureKeyBindingFromMouse(
@@ -1107,6 +1133,7 @@ func (a *App) handleInput(deltaSeconds float64) bool {
 	}
 
 	if a.chatInputOpen {
+		a.stopLocalItemUse(true)
 		a.moveTickAccum = 0
 		runes := a.consumeTypedRunes()
 		for _, ch := range runes {
@@ -1133,6 +1160,7 @@ func (a *App) handleInput(deltaSeconds float64) bool {
 	}
 
 	if inventoryPressed && !a.prevE {
+		a.stopLocalItemUse(true)
 		if a.inventoryOpen {
 			a.closeInventoryScreen()
 		} else {
@@ -1141,6 +1169,7 @@ func (a *App) handleInput(deltaSeconds float64) bool {
 		return true
 	}
 	if a.inventoryOpen {
+		a.stopLocalItemUse(true)
 		a.moveTickAccum = 0
 		if leftMouse && !a.prevLeftMouse {
 			a.handleInventoryClick(false, sneakPressed)
@@ -1153,10 +1182,12 @@ func (a *App) handleInput(deltaSeconds float64) bool {
 	a.showPlayerList = playerListPressed
 
 	if (chatKeyPressed && !a.prevT) || (enterPressed && !a.prevEnter) {
+		a.stopLocalItemUse(true)
 		a.openChatInput("")
 		return true
 	}
 	if commandKeyPressed && !a.prevSlash {
+		a.stopLocalItemUse(true)
 		a.openChatInput("/")
 		return true
 	}
@@ -1168,6 +1199,9 @@ func (a *App) handleInput(deltaSeconds float64) bool {
 	}
 
 	snapMove := a.session.Snapshot()
+	if a.localUsingItem && (snapMove.HeldItemID != a.localUseItemID || snapMove.HeldItemID <= 0 || !usePressed) {
+		a.stopLocalItemUse(usePressed == false)
+	}
 	allowFlight := snapMove.CanFly || snapMove.IsCreative
 	flyingNow := snapMove.IsFlying
 	if allowFlight && jumpPressed && !a.prevSpace {
@@ -1210,6 +1244,7 @@ func (a *App) handleInput(deltaSeconds float64) bool {
 	}
 
 	if attackPressed && !a.prevAttackInput {
+		a.stopLocalItemUse(true)
 		a.startHandSwing()
 		_ = a.session.SwingArm()
 		snapNow := a.session.Snapshot()
@@ -1228,12 +1263,19 @@ func (a *App) handleInput(deltaSeconds float64) bool {
 		}
 	}
 
+	if !usePressed && a.prevUseInput && a.localUsingItem {
+		a.stopLocalItemUse(true)
+	}
+
 	if usePressed && !a.prevUseInput {
 		snapNow := a.session.Snapshot()
 		target := a.pickBlockTarget(snapNow, interactReach)
 		if target.Hit {
 			_ = a.session.PlaceHeldBlock(int32(target.X), int32(target.Y), int32(target.Z), target.Face)
 			audio.PlayPlaceHeldItem(int(snapNow.HeldItemID))
+		} else {
+			_ = a.session.UseHeldItemInAir()
+			a.tryStartLocalItemUse(snapNow)
 		}
 	}
 
@@ -1440,6 +1482,9 @@ func (a *App) setLocalSprinting(enabled bool) {
 }
 
 func (a *App) setPaused(paused bool) {
+	if paused {
+		a.stopLocalItemUse(true)
+	}
 	a.paused = paused
 	a.moveTickAccum = 0
 	a.firstMouse = true
@@ -2103,6 +2148,7 @@ func (a *App) applyCursorMode() {
 
 func (a *App) replaceSession(next *netclient.Session) {
 	old := a.session
+	a.stopLocalItemUse(false)
 	a.releaseChunkRenderCache()
 	a.session = next
 	if next != nil {
@@ -2153,6 +2199,11 @@ func (a *App) replaceSession(next *netclient.Session) {
 		a.resetRenderTrackFromSnapshot(next.Snapshot())
 	}
 	a.handSwingStart = time.Time{}
+	a.localUsingItem = false
+	a.localUseAction = itemUseActionNone
+	a.localUseStart = time.Time{}
+	a.localUseMax = 0
+	a.localUseItemID = 0
 	a.paused = false
 	a.pauseScreen = pauseScreenMain
 	a.inventoryOpen = false
@@ -4444,6 +4495,108 @@ func (a *App) currentHandSwingProgress(now time.Time) float32 {
 	return float32(float64(elapsed) / float64(swingDuration))
 }
 
+func heldItemUseProfile(itemID, itemDamage int16) (itemUseProfile, bool) {
+	switch itemID {
+	case 267, 268, 272, 276, 283: // swords
+		return itemUseProfile{Action: itemUseActionBlock, MaxUseDuration: 72000}, true
+	case 261: // bow
+		return itemUseProfile{Action: itemUseActionBow, MaxUseDuration: 72000}, true
+	case 335: // milk bucket
+		return itemUseProfile{Action: itemUseActionDrink, MaxUseDuration: 32}, true
+	case 373: // potion
+		if (itemDamage & 0x4000) != 0 {
+			// Splash potion is thrown immediately (non-duration use path).
+			return itemUseProfile{}, false
+		}
+		return itemUseProfile{Action: itemUseActionDrink, MaxUseDuration: 32}, true
+	}
+
+	switch itemID {
+	case 260, 282, 297, 319, 320, 349, 350, 357, 360, 363, 364, 365, 366, 367, 375, 391, 392, 393, 394, 400:
+		return itemUseProfile{Action: itemUseActionEat, MaxUseDuration: 32}, true
+	case 322, 396:
+		return itemUseProfile{Action: itemUseActionEat, MaxUseDuration: 32, AlwaysEdible: true}, true
+	default:
+		return itemUseProfile{}, false
+	}
+}
+
+func (a *App) inventoryHasItem(itemID int16) bool {
+	if a.session == nil || itemID <= 0 {
+		return false
+	}
+	inv := a.session.InventorySnapshot()
+	for i := range inv {
+		if inv[i].ItemID == itemID && inv[i].StackSize > 0 {
+			return true
+		}
+	}
+	return false
+}
+
+func (a *App) tryStartLocalItemUse(snap netclient.StateSnapshot) {
+	if a.session == nil || snap.HeldItemID <= 0 {
+		return
+	}
+	profile, ok := heldItemUseProfile(snap.HeldItemID, snap.HeldDamage)
+	if !ok || profile.MaxUseDuration <= 0 {
+		return
+	}
+
+	if profile.Action == itemUseActionBow && !snap.IsCreative && !a.inventoryHasItem(262) {
+		return
+	}
+	if profile.Action == itemUseActionEat {
+		if snap.IsCreative {
+			return
+		}
+		if !profile.AlwaysEdible && snap.Food >= 20 {
+			return
+		}
+	}
+
+	a.localUsingItem = true
+	a.localUseAction = profile.Action
+	a.localUseStart = time.Now()
+	a.localUseMax = profile.MaxUseDuration
+	a.localUseItemID = snap.HeldItemID
+}
+
+func (a *App) stopLocalItemUse(sendRelease bool) {
+	if !a.localUsingItem {
+		return
+	}
+	if sendRelease && a.session != nil {
+		_ = a.session.ReleaseUseItem()
+	}
+	a.localUsingItem = false
+	a.localUseAction = itemUseActionNone
+	a.localUseStart = time.Time{}
+	a.localUseMax = 0
+	a.localUseItemID = 0
+}
+
+func (a *App) localUseElapsedTicks(now time.Time) int {
+	if !a.localUsingItem || a.localUseStart.IsZero() {
+		return 0
+	}
+	if now.Before(a.localUseStart) {
+		return 0
+	}
+	return int(now.Sub(a.localUseStart) / (50 * time.Millisecond))
+}
+
+func (a *App) localUseRemainingTicks(now time.Time) int {
+	if !a.localUsingItem || a.localUseMax <= 0 {
+		return 0
+	}
+	remaining := a.localUseMax - a.localUseElapsedTicks(now)
+	if remaining < 0 {
+		return 0
+	}
+	return remaining
+}
+
 // Translation references:
 // - net.minecraft.src.ItemRenderer#renderItemInFirstPerson(float)
 // - net.minecraft.src.RenderPlayer#renderFirstPersonArm(EntityPlayer)
@@ -4486,7 +4639,8 @@ func (a *App) drawFirstPersonArm(snap netclient.StateSnapshot) {
 	// Translation references:
 	// - net.minecraft.src.ItemRenderer#renderItemInFirstPerson(float)
 	//   (item branch / empty-hand branch)
-	swing := a.currentHandSwingProgress(time.Now())
+	now := time.Now()
+	swing := a.currentHandSwingProgress(now)
 	sinSwing := float32(math.Sin(float64(swing) * math.Pi))
 	sinSqrtSwing := float32(math.Sin(math.Sqrt(float64(swing)) * math.Pi))
 	equip := float32(1.0)
@@ -4494,9 +4648,71 @@ func (a *App) drawFirstPersonArm(snap netclient.StateSnapshot) {
 	sinSqrtSwing2 := float32(math.Sin(math.Sqrt(float64(swing)) * math.Pi))
 
 	if snap.HeldItemID > 0 {
-		// Item branch (non-map, non-using-item branch).
+		// Item branch.
 		armScale := float32(0.8)
-		gl.Translatef(-sinSqrtSwing*0.4, float32(math.Sin(math.Sqrt(float64(swing))*math.Pi*2.0))*0.2, -sinSwing*0.2)
+		if a.localUsingItem {
+			if remaining := a.localUseRemainingTicks(now); remaining <= 0 {
+				a.stopLocalItemUse(false)
+			}
+		}
+		if a.localUsingItem {
+			useCount := float32(a.localUseRemainingTicks(now)) - partial + 1.0
+			if useCount < 0 {
+				useCount = 0
+			}
+			switch a.localUseAction {
+			case itemUseActionEat, itemUseActionDrink:
+				progress := float32(1.0)
+				if a.localUseMax > 0 {
+					progress = 1.0 - useCount/float32(a.localUseMax)
+				}
+				falloff := 1.0 - progress
+				falloff = falloff * falloff * falloff
+				falloff = falloff * falloff * falloff
+				falloff = falloff * falloff * falloff
+				apply := 1.0 - falloff
+				bob := float32(math.Abs(math.Cos(float64(useCount/4.0*float32(math.Pi))))) * 0.1
+				if progress <= 0.2 {
+					bob = 0
+				}
+				gl.Translatef(0.0, bob, 0.0)
+				gl.Translatef(apply*0.6, -apply*0.5, 0.0)
+				gl.Rotatef(apply*90.0, 0, 1, 0)
+				gl.Rotatef(apply*10.0, 1, 0, 0)
+				gl.Rotatef(apply*30.0, 0, 0, 1)
+			case itemUseActionBlock:
+				gl.Translatef(-0.5, 0.2, 0.0)
+				gl.Rotatef(30.0, 0, 1, 0)
+				gl.Rotatef(-80.0, 1, 0, 0)
+				gl.Rotatef(60.0, 0, 1, 0)
+			case itemUseActionBow:
+				gl.Rotatef(-18.0, 0, 0, 1)
+				gl.Rotatef(-12.0, 0, 1, 0)
+				gl.Rotatef(-8.0, 1, 0, 0)
+				gl.Translatef(-0.9, 0.2, 0.0)
+				drawTicks := float32(a.localUseMax) - useCount
+				drawScale := drawTicks / 20.0
+				drawScale = (drawScale*drawScale + drawScale*2.0) / 3.0
+				if drawScale > 1.0 {
+					drawScale = 1.0
+				}
+				if drawScale > 0.1 {
+					gl.Translatef(0.0, float32(math.Sin(float64((drawTicks-0.1)*1.3)))*0.01*(drawScale-0.1), 0.0)
+				}
+				gl.Translatef(0.0, 0.0, drawScale*0.1)
+				gl.Rotatef(-335.0, 0, 0, 1)
+				gl.Rotatef(-50.0, 0, 1, 0)
+				gl.Translatef(0.0, 0.5, 0.0)
+				gl.Scalef(1.0, 1.0, 1.0+drawScale*0.2)
+				gl.Translatef(0.0, -0.5, 0.0)
+				gl.Rotatef(50.0, 0, 1, 0)
+				gl.Rotatef(335.0, 0, 0, 1)
+			default:
+				gl.Translatef(-sinSqrtSwing*0.4, float32(math.Sin(math.Sqrt(float64(swing))*math.Pi*2.0))*0.2, -sinSwing*0.2)
+			}
+		} else {
+			gl.Translatef(-sinSqrtSwing*0.4, float32(math.Sin(math.Sqrt(float64(swing))*math.Pi*2.0))*0.2, -sinSwing*0.2)
+		}
 		gl.Translatef(0.7*armScale, -0.65*armScale-(1.0-equip)*0.6, -0.9*armScale)
 		gl.Rotatef(45.0, 0, 1, 0)
 		gl.Rotatef(-sinSwing2*20.0, 0, 1, 0)
