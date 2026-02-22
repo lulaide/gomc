@@ -4342,16 +4342,27 @@ func (a *App) drawDroppedItemEntity(ent netclient.EntitySnapshot, animTime float
 
 	gl.PushMatrix()
 	gl.Translatef(float32(ent.X), float32(ent.Y)+hover, float32(ent.Z))
-	gl.Rotatef(spinDeg, 0, 1, 0)
+	if !renderAsSprite || a.fancyGraphics {
+		// Translation reference:
+		// - net.minecraft.src.RenderItem#doRenderItem(EntityItem,...) block branch
+		// - net.minecraft.src.RenderItem#renderDroppedItem(...): fancy item branch spin
+		gl.Rotatef(spinDeg, 0, 1, 0)
+	}
 	gl.Scalef(itemScale, itemScale, itemScale)
 	itemPasses := a.itemTexturePassesWithTag(int16(itemID), int16(itemMeta), ent.DroppedItemTag)
+	fancyStep := float32(0.0625 + 0.021875)
+	if renderAsSprite && a.fancyGraphics {
+		// Translation reference:
+		// - net.minecraft.src.RenderItem#renderDroppedItem(...)
+		//   GL11.glTranslatef(-0.5F, -0.25F, -((0.0625F+0.021875F)*copies/2.0F))
+		gl.Translatef(-0.5, -0.25, -(fancyStep*float32(copies))/2.0)
+	}
 
 	rnd := util.NewJavaRandom(187)
 	for i := 0; i < copies; i++ {
 		gl.PushMatrix()
 		if renderAsSprite && a.fancyGraphics {
-			step := float32(0.0625 + 0.021875)
-			gl.Translatef(0, 0, step*float32(i)-step*float32(copies-1)/2.0)
+			gl.Translatef(0, 0, fancyStep)
 		} else if i > 0 {
 			{
 				amp := float32(0.3)
@@ -4371,7 +4382,11 @@ func (a *App) drawDroppedItemEntity(ent netclient.EntitySnapshot, animTime float
 						continue
 					}
 					gl.Color4f(pass.r, pass.g, pass.b, 1)
-					a.drawDroppedItemSprite(pass.tex)
+					if a.fancyGraphics {
+						a.drawDroppedItemSpriteFancy(pass.tex)
+					} else {
+						a.drawDroppedItemSpriteFlat(pass.tex, float32(a.yaw))
+					}
 				}
 				rendered = true
 			}
@@ -4434,54 +4449,39 @@ func droppedItemRenderRandomOffset(rnd *util.JavaRandom, amplitude float32) (flo
 	return ox, oy, oz
 }
 
-func (a *App) drawDroppedItemSprite(tex *texture2D) {
+func (a *App) drawDroppedItemSpriteFancy(tex *texture2D) {
+	if tex == nil {
+		return
+	}
+	gl.Enable(gl.TEXTURE_2D)
+	gl.PushMatrix()
+	gl.Translatef(0, 0, -0.03125)
+	drawFirstPersonItemIn2D(tex, 0.0625)
+	gl.PopMatrix()
+}
+
+func (a *App) drawDroppedItemSpriteFlat(tex *texture2D, cameraYaw float32) {
 	if tex == nil {
 		return
 	}
 	gl.Enable(gl.TEXTURE_2D)
 	tex.bind()
+	gl.Rotatef(180.0-cameraYaw, 0, 1, 0)
 	const (
-		halfSize = float32(0.5)
-		minY     = float32(0.0)
-		maxY     = float32(0.5)
+		minX = float32(-0.5)
+		maxX = float32(0.5)
+		minY = float32(-0.25)
+		maxY = float32(0.75)
 	)
 	gl.Begin(gl.QUADS)
-	// Crossed quads, matching vanilla dropped-item sprite style.
 	gl.TexCoord2f(0, 1)
-	gl.Vertex3f(-halfSize, maxY, -halfSize)
-	gl.TexCoord2f(0, 0)
-	gl.Vertex3f(-halfSize, minY, -halfSize)
-	gl.TexCoord2f(1, 0)
-	gl.Vertex3f(halfSize, minY, halfSize)
+	gl.Vertex3f(minX, minY, 0)
 	gl.TexCoord2f(1, 1)
-	gl.Vertex3f(halfSize, maxY, halfSize)
-
-	gl.TexCoord2f(0, 1)
-	gl.Vertex3f(halfSize, maxY, halfSize)
-	gl.TexCoord2f(0, 0)
-	gl.Vertex3f(halfSize, minY, halfSize)
+	gl.Vertex3f(maxX, minY, 0)
 	gl.TexCoord2f(1, 0)
-	gl.Vertex3f(-halfSize, minY, -halfSize)
-	gl.TexCoord2f(1, 1)
-	gl.Vertex3f(-halfSize, maxY, -halfSize)
-
-	gl.TexCoord2f(0, 1)
-	gl.Vertex3f(-halfSize, maxY, halfSize)
+	gl.Vertex3f(maxX, maxY, 0)
 	gl.TexCoord2f(0, 0)
-	gl.Vertex3f(-halfSize, minY, halfSize)
-	gl.TexCoord2f(1, 0)
-	gl.Vertex3f(halfSize, minY, -halfSize)
-	gl.TexCoord2f(1, 1)
-	gl.Vertex3f(halfSize, maxY, -halfSize)
-
-	gl.TexCoord2f(0, 1)
-	gl.Vertex3f(halfSize, maxY, -halfSize)
-	gl.TexCoord2f(0, 0)
-	gl.Vertex3f(halfSize, minY, -halfSize)
-	gl.TexCoord2f(1, 0)
-	gl.Vertex3f(-halfSize, minY, halfSize)
-	gl.TexCoord2f(1, 1)
-	gl.Vertex3f(-halfSize, maxY, halfSize)
+	gl.Vertex3f(minX, maxY, 0)
 	gl.End()
 }
 
