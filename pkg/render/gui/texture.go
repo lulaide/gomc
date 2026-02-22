@@ -185,6 +185,37 @@ func (t *texture2D) advanceAnimatedFrame(now time.Time) {
 	t.animatedFrame = frame
 }
 
+func (t *texture2D) setAnimatedFrame(frame int) {
+	if t == nil || t.ID == 0 || len(t.animatedFrames) <= 1 || t.Width <= 0 || t.Height <= 0 {
+		return
+	}
+	n := len(t.animatedFrames)
+	if n <= 0 {
+		return
+	}
+	frame %= n
+	if frame < 0 {
+		frame += n
+	}
+	if frame == t.animatedFrame {
+		return
+	}
+
+	t.bind()
+	gl.TexSubImage2D(
+		gl.TEXTURE_2D,
+		0,
+		0,
+		0,
+		int32(t.Width),
+		int32(t.Height),
+		gl.RGBA,
+		gl.UNSIGNED_BYTE,
+		gl.Ptr(t.animatedFrames[frame]),
+	)
+	t.animatedFrame = frame
+}
+
 func (t *texture2D) bind() {
 	if t == nil {
 		return

@@ -4,6 +4,7 @@ package gui
 
 import (
 	"fmt"
+	"math"
 	"os"
 	"path/filepath"
 	"sort"
@@ -387,6 +388,7 @@ func (a *App) itemTexturePassesWithTag(itemID, itemDamage int16, itemTag *nbt.Co
 			if tex == nil {
 				continue
 			}
+			a.prepareDynamicItemTexture(id, tex)
 			r, g, b := rgbIntToFloat(itemColorForRenderPassWithTag(id, damage, pass, itemTag))
 			out = append(out, itemTexturePass{tex: tex, r: r, g: g, b: b})
 		}
@@ -396,11 +398,102 @@ func (a *App) itemTexturePassesWithTag(itemID, itemDamage int16, itemTag *nbt.Co
 	}
 
 	if tex := a.itemTextureForStack(id, damage); tex != nil {
+		a.prepareDynamicItemTexture(id, tex)
 		r, g, b := rgbIntToFloat(itemColorForRenderPassWithTag(id, damage, 0, itemTag))
 		return []itemTexturePass{{tex: tex, r: r, g: g, b: b}}
 	}
 
 	return nil
+}
+
+// Translation references:
+// - net.minecraft.src.TextureClock#updateAnimation()
+// - net.minecraft.src.TextureCompass#updateCompass(...)
+func (a *App) prepareDynamicItemTexture(itemID int, tex *texture2D) {
+	if tex == nil || len(tex.animatedFrames) <= 1 {
+		return
+	}
+	switch itemID {
+	case 347: // clock
+		a.updateClockTextureFrame(tex)
+	case 345: // compass
+		a.updateCompassTextureFrame(tex)
+	}
+}
+
+func (a *App) updateClockTextureFrame(tex *texture2D) {
+	if tex == nil || len(tex.animatedFrames) <= 1 {
+		return
+	}
+
+	target := 0.0
+	if a.session != nil {
+		snap := a.session.Snapshot()
+		target = float64(celestialAngle(snap.WorldTime, 1.0))
+	}
+
+	d := target - a.clockAngle
+	for d < -0.5 {
+		d++
+	}
+	for d >= 0.5 {
+		d--
+	}
+	if d < -1.0 {
+		d = -1.0
+	}
+	if d > 1.0 {
+		d = 1.0
+	}
+	a.clockDelta += d * 0.1
+	a.clockDelta *= 0.8
+	a.clockAngle += a.clockDelta
+
+	frames := len(tex.animatedFrames)
+	frame := int((a.clockAngle+1.0)*float64(frames)) % frames
+	if frame < 0 {
+		frame = (frame + frames) % frames
+	}
+	tex.setAnimatedFrame(frame)
+}
+
+func (a *App) updateCompassTextureFrame(tex *texture2D) {
+	if tex == nil || len(tex.animatedFrames) <= 1 {
+		return
+	}
+
+	target := 0.0
+	if a.session != nil {
+		snap := a.session.Snapshot()
+		dx := float64(snap.SpawnX) - snap.PlayerX
+		dz := float64(snap.SpawnZ) - snap.PlayerZ
+		yaw := math.Mod(float64(snap.PlayerYaw), 360.0)
+		target = -((yaw-90.0)*math.Pi/180.0 - math.Atan2(dz, dx))
+	}
+
+	d := target - a.compassAngle
+	for d < -math.Pi {
+		d += math.Pi * 2.0
+	}
+	for d >= math.Pi {
+		d -= math.Pi * 2.0
+	}
+	if d < -1.0 {
+		d = -1.0
+	}
+	if d > 1.0 {
+		d = 1.0
+	}
+	a.compassDelta += d * 0.1
+	a.compassDelta *= 0.8
+	a.compassAngle += a.compassDelta
+
+	frames := len(tex.animatedFrames)
+	frame := int((a.compassAngle/(math.Pi*2.0)+1.0)*float64(frames)) % frames
+	if frame < 0 {
+		frame = (frame + frames) % frames
+	}
+	tex.setAnimatedFrame(frame)
 }
 
 // Translation references:

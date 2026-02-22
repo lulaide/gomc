@@ -291,6 +291,10 @@ type App struct {
 	localUseStart  time.Time
 	localUseMax    int
 	localUseItemID int16
+	clockAngle     float64
+	clockDelta     float64
+	compassAngle   float64
+	compassDelta   float64
 
 	blockTextureDefs   map[int]blockTextureDef
 	blockTextures      map[string]*texture2D
