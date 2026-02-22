@@ -201,7 +201,7 @@ func (a *App) itemTextureByName(name string) *texture2D {
 // - net.minecraft.src.ItemMonsterPlacer#requiresMultipleRenderPasses()
 func itemRequiresMultipleRenderPasses(itemID int) bool {
 	switch itemID {
-	case 298, 299, 300, 301, 383:
+	case 298, 299, 300, 301, 373, 383:
 		return true
 	default:
 		return false
@@ -221,6 +221,17 @@ func itemTextureNameForRenderPass(itemID, itemDamage, pass int) string {
 			return "spawn_egg_overlay"
 		}
 		return "spawn_egg"
+	case 373:
+		// Translation reference:
+		// - net.minecraft.src.ItemPotion#getIconFromDamageForRenderPass(int,int)
+		// pass 0: colored overlay, pass 1: bottle icon.
+		if pass == 0 {
+			return "potion_overlay"
+		}
+		if (itemDamage & 0x4000) != 0 {
+			return "potion_bottle_splash"
+		}
+		return "potion_bottle_drinkable"
 	default:
 		if pass == 0 {
 			return itemTextureNameForID(itemID, itemDamage)
@@ -289,6 +300,13 @@ func itemColorForRenderPassWithTag(itemID, itemDamage, pass int, itemTag *nbt.Co
 			return pair.primary
 		}
 		return pair.secondary
+	case 373:
+		// Translation reference:
+		// - net.minecraft.src.ItemPotion#getColorFromItemStack(ItemStack,int)
+		if pass > 0 {
+			return 0xFFFFFF
+		}
+		return potionLiquidColorFromDamage(itemDamage)
 	default:
 		return 0xFFFFFF
 	}

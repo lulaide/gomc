@@ -81,6 +81,9 @@ func TestItemRequiresMultipleRenderPasses(t *testing.T) {
 	if !itemRequiresMultipleRenderPasses(383) {
 		t.Fatal("spawn egg should require multiple render passes")
 	}
+	if !itemRequiresMultipleRenderPasses(373) {
+		t.Fatal("potion should require multiple render passes")
+	}
 	if !itemRequiresMultipleRenderPasses(298) {
 		t.Fatal("leather helmet should require multiple render passes")
 	}
@@ -96,6 +99,9 @@ func TestItemTextureNameForRenderPass(t *testing.T) {
 		pass   int
 		want   string
 	}{
+		{itemID: 373, damage: 0, pass: 0, want: "potion_overlay"},
+		{itemID: 373, damage: 0, pass: 1, want: "potion_bottle_drinkable"},
+		{itemID: 373, damage: 0x4000, pass: 1, want: "potion_bottle_splash"},
 		{itemID: 383, damage: 90, pass: 0, want: "spawn_egg"},
 		{itemID: 383, damage: 90, pass: 1, want: "spawn_egg_overlay"},
 		{itemID: 298, damage: 0, pass: 0, want: "leather_helmet"},
@@ -111,6 +117,12 @@ func TestItemTextureNameForRenderPass(t *testing.T) {
 }
 
 func TestItemColorForRenderPass(t *testing.T) {
+	if got := itemColorForRenderPass(373, 0, 0); got != 3694022 {
+		t.Fatalf("potion color mismatch: got=%d want=%d", got, 3694022)
+	}
+	if got := itemColorForRenderPass(373, 0, 1); got != 0xFFFFFF {
+		t.Fatalf("potion bottle pass color mismatch: got=%d want=%d", got, 0xFFFFFF)
+	}
 	if got := itemColorForRenderPass(383, 90, 0); got != 15771042 {
 		t.Fatalf("spawn egg primary mismatch: got=%d want=%d", got, 15771042)
 	}
