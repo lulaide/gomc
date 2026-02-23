@@ -707,6 +707,39 @@ func TestHandleAbilitiesPacketUpdatesSnapshot(t *testing.T) {
 	}
 }
 
+func TestHandleLoginAndRespawnUpdateDimensionAndSkyLight(t *testing.T) {
+	s := newUnitTestSession(io.Discard)
+
+	if err := s.handlePacket(&protocol.Packet1Login{
+		ClientEntityID: 1,
+		GameType:       0,
+		Dimension:      -1,
+	}); err != nil {
+		t.Fatalf("handle Packet1Login failed: %v", err)
+	}
+	snap := s.Snapshot()
+	if snap.Dimension != -1 {
+		t.Fatalf("login dimension mismatch: got=%d want=-1", snap.Dimension)
+	}
+	if s.hasSkyLight {
+		t.Fatal("nether login should disable skylight decoding")
+	}
+
+	if err := s.handlePacket(&protocol.Packet9Respawn{
+		RespawnDimension: 0,
+		GameType:         1,
+	}); err != nil {
+		t.Fatalf("handle Packet9Respawn failed: %v", err)
+	}
+	snap = s.Snapshot()
+	if snap.Dimension != 0 {
+		t.Fatalf("respawn dimension mismatch: got=%d want=0", snap.Dimension)
+	}
+	if !s.hasSkyLight {
+		t.Fatal("overworld respawn should enable skylight decoding")
+	}
+}
+
 func TestUseEntityWritesPacket7(t *testing.T) {
 	var out bytes.Buffer
 	s := newUnitTestSession(&out)

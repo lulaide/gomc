@@ -177,6 +177,7 @@ type StateSnapshot struct {
 
 	WorldAge  int64
 	WorldTime int64
+	Dimension int32
 
 	LoadedChunks    int
 	TrackedEntities int
@@ -204,6 +205,7 @@ type Session struct {
 	onGround     bool
 	heldItemSlot int16
 	gameType     int8
+	dimension    int32
 	canFly       bool
 	isFlying     bool
 	isCreative   bool
@@ -556,6 +558,8 @@ func (s *Session) handlePacket(packet protocol.Packet) error {
 		s.stateMu.Lock()
 		s.entityID = p.ClientEntityID
 		s.gameType = p.GameType
+		s.dimension = int32(p.Dimension)
+		s.hasSkyLight = p.Dimension == 0
 		s.stateMu.Unlock()
 	case *protocol.Packet3Chat:
 		s.emitEvent(Event{
@@ -583,6 +587,8 @@ func (s *Session) handlePacket(packet protocol.Packet) error {
 		s.stateMu.Lock()
 		s.entities = make(map[int32]*trackedEntity)
 		s.gameType = p.GameType
+		s.dimension = p.RespawnDimension
+		s.hasSkyLight = p.RespawnDimension == 0
 		s.stateMu.Unlock()
 	case *protocol.Packet13PlayerLookMove:
 		// Server->client Packet13 uses the same wire order; when correction packets are sent,
@@ -965,6 +971,7 @@ func (s *Session) Snapshot() StateSnapshot {
 
 		WorldAge:  s.worldAge,
 		WorldTime: s.worldTime,
+		Dimension: s.dimension,
 
 		LoadedChunks:    s.world.chunkCount(),
 		TrackedEntities: len(s.entities),

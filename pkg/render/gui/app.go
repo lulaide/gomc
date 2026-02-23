@@ -259,42 +259,44 @@ type App struct {
 	chatLines  []chatLine
 	chatClosed bool
 
-	assetsRoot     string
-	optionsPath    string
-	optionsKV      map[string]string
-	langEN         map[string]string
-	keyBindings    []keyBindingConfig
-	keyBindCapture int
-	texWidgets     *texture2D
-	texIcons       *texture2D
-	texOptionsBG   *texture2D
-	texInventory   *texture2D
-	texTitle       *texture2D
-	texPanorama    [6]*texture2D
-	texMenuView    *texture2D
-	texSun         *texture2D
-	texMoonPhases  *texture2D
-	texClouds      *texture2D
-	font           *fontRenderer
-	splashText     string
-	panoramaTick   int
-	panoramaFrac   float64
-	lastSpaceTap   time.Time
-	sprintTimer    int
-	localSprinting bool
-	lastOnGround   time.Time
-	localOnGround  bool
-	prevTab        bool
-	prevBacksp     bool
-	localUsingItem bool
-	localUseAction itemUseAction
-	localUseStart  time.Time
-	localUseMax    int
-	localUseItemID int16
-	clockAngle     float64
-	clockDelta     float64
-	compassAngle   float64
-	compassDelta   float64
+	assetsRoot        string
+	optionsPath       string
+	optionsKV         map[string]string
+	langEN            map[string]string
+	keyBindings       []keyBindingConfig
+	keyBindCapture    int
+	texWidgets        *texture2D
+	texIcons          *texture2D
+	texOptionsBG      *texture2D
+	texInventory      *texture2D
+	texTitle          *texture2D
+	texPanorama       [6]*texture2D
+	texMenuView       *texture2D
+	texSun            *texture2D
+	texMoonPhases     *texture2D
+	texClouds         *texture2D
+	font              *fontRenderer
+	splashText        string
+	panoramaTick      int
+	panoramaFrac      float64
+	lastSpaceTap      time.Time
+	sprintTimer       int
+	localSprinting    bool
+	lastOnGround      time.Time
+	localOnGround     bool
+	prevTab           bool
+	prevBacksp        bool
+	localUsingItem    bool
+	localUseAction    itemUseAction
+	localUseStart     time.Time
+	localUseMax       int
+	localUseItemID    int16
+	clockAngle        float64
+	clockDelta        float64
+	clockUpdateTick   int64
+	compassAngle      float64
+	compassDelta      float64
+	compassUpdateTick int64
 
 	blockTextureDefs   map[int]blockTextureDef
 	blockTextures      map[string]*texture2D
@@ -875,7 +877,15 @@ func (a *App) advanceAnimatedTextures(now time.Time) {
 	for _, tex := range a.blockTextures {
 		tex.advanceAnimatedFrame(now)
 	}
-	for _, tex := range a.itemTextures {
+	for name, tex := range a.itemTextures {
+		// Translation reference:
+		// - net.minecraft.src.TextureClock
+		// - net.minecraft.src.TextureCompass
+		// These sprites use custom angle-based animation and must not follow
+		// generic vertical-strip frame stepping.
+		if name == "clock" || name == "compass" {
+			continue
+		}
 		tex.advanceAnimatedFrame(now)
 	}
 }

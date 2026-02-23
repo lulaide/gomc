@@ -5,10 +5,12 @@ package gui
 import (
 	"fmt"
 	"math"
+	"math/rand"
 	"os"
 	"path/filepath"
 	"sort"
 	"strings"
+	"time"
 	"unicode"
 
 	"github.com/go-gl/gl/v2.1/gl"
@@ -425,11 +427,19 @@ func (a *App) updateClockTextureFrame(tex *texture2D) {
 	if tex == nil || len(tex.animatedFrames) <= 1 {
 		return
 	}
+	updateTick := time.Now().UnixMilli() / 50
+	if updateTick == a.clockUpdateTick {
+		return
+	}
+	a.clockUpdateTick = updateTick
 
 	target := 0.0
 	if a.session != nil {
 		snap := a.session.Snapshot()
-		target = float64(celestialAngle(snap.WorldTime, 1.0))
+		target = rand.Float64()
+		if snap.Dimension == 0 {
+			target = float64(celestialAngle(snap.WorldTime, 1.0))
+		}
 	}
 
 	d := target - a.clockAngle
@@ -461,14 +471,22 @@ func (a *App) updateCompassTextureFrame(tex *texture2D) {
 	if tex == nil || len(tex.animatedFrames) <= 1 {
 		return
 	}
+	updateTick := time.Now().UnixMilli() / 50
+	if updateTick == a.compassUpdateTick {
+		return
+	}
+	a.compassUpdateTick = updateTick
 
 	target := 0.0
 	if a.session != nil {
 		snap := a.session.Snapshot()
-		dx := float64(snap.SpawnX) - snap.PlayerX
-		dz := float64(snap.SpawnZ) - snap.PlayerZ
-		yaw := math.Mod(float64(snap.PlayerYaw), 360.0)
-		target = -((yaw-90.0)*math.Pi/180.0 - math.Atan2(dz, dx))
+		target = rand.Float64() * math.Pi * 2.0
+		if snap.Dimension == 0 {
+			dx := float64(snap.SpawnX) - snap.PlayerX
+			dz := float64(snap.SpawnZ) - snap.PlayerZ
+			yaw := math.Mod(float64(snap.PlayerYaw), 360.0)
+			target = -((yaw-90.0)*math.Pi/180.0 - math.Atan2(dz, dx))
+		}
 	}
 
 	d := target - a.compassAngle
