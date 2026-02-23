@@ -3572,6 +3572,80 @@ func TestHandleUseEntityInteractPigWithSaddleSetsSaddledAndConsumes(t *testing.T
 	}
 }
 
+func TestHandleUseEntityInteractSaddledPigSendsAttachPacket(t *testing.T) {
+	srv := NewStatusServer(StatusConfig{})
+	var buf bytes.Buffer
+	session := newInteractionTestSession(srv, &buf)
+	session.entityID = 411
+	session.playerHealth = 20
+	session.playerRegistered = true
+
+	mob := srv.spawnMob(&spawnListEntry{entityType: entityTypePig}, 0.5, 5.0, 2.5, 0)
+	if mob == nil {
+		t.Fatal("spawnMob returned nil")
+	}
+	srv.mobMu.Lock()
+	livePig := srv.mobs[mob.EntityID]
+	if livePig != nil {
+		livePig.pigSaddled = true
+	}
+	srv.mobMu.Unlock()
+
+	if !session.handleUseEntity(&protocol.Packet7UseEntity{
+		PlayerEntityID: session.entityID,
+		TargetEntityID: mob.EntityID,
+		Action:         0,
+	}) {
+		t.Fatal("handleUseEntity returned false")
+	}
+	if session.ridingEntityID != mob.EntityID {
+		t.Fatalf("riding entity mismatch: got=%d want=%d", session.ridingEntityID, mob.EntityID)
+	}
+
+	packet, err := protocol.ReadPacket(&buf, protocol.DirectionClientbound)
+	if err != nil {
+		t.Fatalf("failed to read attach packet: %v", err)
+	}
+	attach, ok := packet.(*protocol.Packet39AttachEntity)
+	if !ok {
+		t.Fatalf("expected Packet39AttachEntity, got %T", packet)
+	}
+	if attach.RidingEntityID != session.entityID || attach.VehicleEntityID != mob.EntityID || attach.AttachState != 0 {
+		t.Fatalf("attach packet mismatch: %#v", attach)
+	}
+}
+
+func TestHandleEntityActionSneakDismountsAndSendsDetachPacket(t *testing.T) {
+	srv := NewStatusServer(StatusConfig{})
+	var buf bytes.Buffer
+	session := newInteractionTestSession(srv, &buf)
+	session.entityID = 412
+	session.playerHealth = 20
+	session.playerRegistered = true
+	session.ridingEntityID = 9999
+
+	session.handleEntityAction(&protocol.Packet19EntityAction{Action: 1})
+
+	if session.ridingEntityID != 0 {
+		t.Fatalf("expected riding entity cleared on dismount, got=%d", session.ridingEntityID)
+	}
+	if !session.playerSneaking {
+		t.Fatal("expected player sneaking set on action=1")
+	}
+
+	packet, err := protocol.ReadPacket(&buf, protocol.DirectionClientbound)
+	if err != nil {
+		t.Fatalf("failed to read detach packet: %v", err)
+	}
+	detach, ok := packet.(*protocol.Packet39AttachEntity)
+	if !ok {
+		t.Fatalf("expected Packet39AttachEntity, got %T", packet)
+	}
+	if detach.RidingEntityID != session.entityID || detach.VehicleEntityID != -1 || detach.AttachState != 0 {
+		t.Fatalf("detach packet mismatch: %#v", detach)
+	}
+}
+
 func TestLootingLevelFromItemStackReadsEnchantList(t *testing.T) {
 	enchList := nbt.NewListTag("ench")
 	entrySharpness := nbt.NewCompoundTag("")

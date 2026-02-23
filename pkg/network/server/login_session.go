@@ -244,6 +244,7 @@ type loginSession struct {
 	playerInputForward float32
 	playerInputJump    bool
 	playerInputSneak   bool
+	ridingEntityID     int32
 	playerUsingItem    bool
 	playerIsFlying     bool
 	playerItemUseCount int
@@ -3600,12 +3601,16 @@ func (s *loginSession) handleEntityAction(packet *protocol.Packet19EntityAction)
 
 	// Translated from: net.minecraft.src.NetServerHandler#handleEntityAction(Packet19EntityAction)
 	changed := false
+	shouldDismount := false
 	s.stateMu.Lock()
 	switch packet.Action {
 	case 1:
 		if !s.playerSneaking {
 			s.playerSneaking = true
 			changed = true
+		}
+		if s.ridingEntityID != 0 {
+			shouldDismount = true
 		}
 	case 2:
 		if s.playerSneaking {
@@ -3624,6 +3629,9 @@ func (s *loginSession) handleEntityAction(packet *protocol.Packet19EntityAction)
 		}
 	}
 	s.stateMu.Unlock()
+	if shouldDismount {
+		s.dismountRidingEntity()
+	}
 	if changed {
 		s.broadcastOwnEntityMetadata()
 	}
@@ -3846,13 +3854,73 @@ func (s *loginSession) interactWithPig(target *trackedMob) bool {
 
 	// Translation reference:
 	// - net.minecraft.src.EntityPig#interact(EntityPlayer)
-	// Riding itself is pending full mount control/state sync; keep vanilla consume behavior:
-	// if saddled, interaction is handled.
+	// Minimal riding attach parity: saddled pig interaction emits Packet39 attach.
+	var (
+		pigEntityID int32
+		playerID    int32
+		chunkX      int32
+		chunkZ      int32
+	)
 	s.server.mobMu.Lock()
 	live := s.server.mobs[target.EntityID]
 	saddled := live != nil && live.EntityType == entityTypePig && live.pigSaddled
+	if saddled {
+		pigEntityID = live.EntityID
+		chunkX, chunkZ = live.chunkCoords()
+	}
 	s.server.mobMu.Unlock()
-	return saddled
+	if !saddled {
+		return false
+	}
+
+	s.stateMu.Lock()
+	playerID = s.entityID
+	alreadyMounted := s.ridingEntityID == pigEntityID
+	s.ridingEntityID = pigEntityID
+	s.stateMu.Unlock()
+	if alreadyMounted {
+		return true
+	}
+
+	attach := &protocol.Packet39AttachEntity{
+		RidingEntityID:  playerID,
+		VehicleEntityID: pigEntityID,
+		AttachState:     0,
+	}
+	_ = s.sendPacket(attach)
+	s.server.broadcastEntityPacketToWatchers(attach, chunkX, chunkZ, s)
+	return true
+}
+
+func (s *loginSession) dismountRidingEntity() {
+	var (
+		vehicleID int32
+		playerID  int32
+		chunkX    int32
+		chunkZ    int32
+	)
+
+	s.stateMu.Lock()
+	vehicleID = s.ridingEntityID
+	playerID = s.entityID
+	s.ridingEntityID = 0
+	s.stateMu.Unlock()
+
+	if vehicleID == 0 || playerID == 0 {
+		return
+	}
+	chunkX, chunkZ = s.currentChunkCoords()
+	if mob := s.server.mobByEntityID(vehicleID); mob != nil {
+		chunkX, chunkZ = mob.chunkCoords()
+	}
+
+	detach := &protocol.Packet39AttachEntity{
+		RidingEntityID:  playerID,
+		VehicleEntityID: -1,
+		AttachState:     0,
+	}
+	_ = s.sendPacket(detach)
+	s.server.broadcastEntityPacketToWatchers(detach, chunkX, chunkZ, s)
 }
 
 func (s *loginSession) interactWithCow(target *trackedMob) bool {
