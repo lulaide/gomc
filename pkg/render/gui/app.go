@@ -78,6 +78,9 @@ const (
 	pauseScreenControls
 	pauseScreenKeyBindings
 	pauseScreenSounds
+	pauseScreenLanguage
+	pauseScreenChatOptions
+	pauseScreenResourcePacks
 )
 
 type itemUseAction int
@@ -1087,7 +1090,7 @@ func (a *App) handleInput(deltaSeconds float64) bool {
 				a.pauseScreen = pauseScreenMain
 			} else if a.pauseScreen == pauseScreenKeyBindings {
 				a.pauseScreen = pauseScreenControls
-			} else if a.pauseScreen == pauseScreenVideo || a.pauseScreen == pauseScreenControls || a.pauseScreen == pauseScreenSounds {
+			} else if a.pauseScreen == pauseScreenVideo || a.pauseScreen == pauseScreenControls || a.pauseScreen == pauseScreenSounds || a.pauseScreen == pauseScreenLanguage || a.pauseScreen == pauseScreenChatOptions || a.pauseScreen == pauseScreenResourcePacks {
 				a.pauseScreen = pauseScreenOptions
 			} else {
 				a.setPaused(false)
@@ -1151,6 +1154,12 @@ func (a *App) handleInput(deltaSeconds float64) bool {
 				}
 				if a.pauseScreen == pauseScreenOptions {
 					a.handlePauseOptionButton(b.ID)
+				} else if a.pauseScreen == pauseScreenLanguage {
+					a.handlePauseLanguageButton(b.ID)
+				} else if a.pauseScreen == pauseScreenChatOptions {
+					a.handlePauseChatOptionButton(b.ID)
+				} else if a.pauseScreen == pauseScreenResourcePacks {
+					a.handlePauseResourceButton(b.ID)
 				} else if a.pauseScreen == pauseScreenVideo {
 					a.handlePauseVideoButton(b.ID)
 				} else if a.pauseScreen == pauseScreenControls {
@@ -1546,6 +1555,15 @@ func (a *App) currentPauseButtons() []*guiButton {
 	if a.pauseScreen == pauseScreenOptions {
 		return a.pauseOptionButtons
 	}
+	if a.pauseScreen == pauseScreenLanguage {
+		return a.languageButtons
+	}
+	if a.pauseScreen == pauseScreenChatOptions {
+		return a.chatOptionButtons
+	}
+	if a.pauseScreen == pauseScreenResourcePacks {
+		return a.resourceButtons
+	}
 	if a.pauseScreen == pauseScreenVideo {
 		return a.videoButtons
 	}
@@ -1597,21 +1615,95 @@ func (a *App) handlePauseOptionButton(id int) {
 		a.keyBindCapture = -1
 		a.menuStatus = ""
 	case buttonIDOptionLanguage:
-		a.menuStatus = "Language screen is not implemented yet."
+		a.pauseScreen = pauseScreenLanguage
+		a.menuStatus = ""
 	case buttonIDOptionMusic:
 		a.pauseScreen = pauseScreenSounds
 		a.keyBindCapture = -1
 		a.menuStatus = ""
 	case buttonIDOptionSnooper:
 		a.menuStatus = "Snooper Settings are not implemented yet."
+	case buttonIDOptionMultiplayer:
+		a.pauseScreen = pauseScreenChatOptions
+		a.menuStatus = ""
+	case buttonIDOptionResource:
+		a.pauseScreen = pauseScreenResourcePacks
+		a.menuStatus = ""
 	}
 	a.updatePauseOptionButtonsState()
+	a.updateLanguageButtonsState()
+	a.updateChatOptionButtonsState()
+	a.updateResourceButtonsState()
 	a.updateVideoButtonsState()
 	a.updateControlButtonsState()
 	a.updateSoundButtonsState()
 	if changed {
 		a.saveOptionsFile()
 	}
+}
+
+func (a *App) handlePauseLanguageButton(id int) {
+	changed := false
+	switch id {
+	case buttonIDLanguageDone, buttonIDMenuBack:
+		a.pauseScreen = pauseScreenOptions
+		a.menuStatus = ""
+	case buttonIDLanguageForceUnicode:
+		a.forceUnicodeFont = !a.forceUnicodeFont
+		changed = true
+	case buttonIDLanguageEnglish:
+		a.languageCode = "en_US"
+		changed = true
+	}
+	a.updateLanguageButtonsState()
+	if changed {
+		a.saveOptionsFile()
+	}
+}
+
+func (a *App) handlePauseChatOptionButton(id int) {
+	changed := false
+	switch id {
+	case buttonIDChatDone, buttonIDMenuBack:
+		a.pauseScreen = pauseScreenOptions
+		a.menuStatus = ""
+	case buttonIDChatVisibility:
+		a.chatVisibility = (a.chatVisibility + 1) % 3
+		changed = true
+	case buttonIDChatColors:
+		a.chatColours = !a.chatColours
+		changed = true
+	case buttonIDChatLinks:
+		a.chatLinks = !a.chatLinks
+		changed = true
+	case buttonIDChatLinksPrompt:
+		if a.chatLinks {
+			a.chatLinksPrompt = !a.chatLinksPrompt
+			changed = true
+		}
+	case buttonIDChatShowCape:
+		a.showCape = !a.showCape
+		changed = true
+	}
+	a.updateChatOptionButtonsState()
+	if changed {
+		a.saveOptionsFile()
+	}
+}
+
+func (a *App) handlePauseResourceButton(id int) {
+	switch id {
+	case buttonIDResourceDone, buttonIDMenuBack:
+		a.pauseScreen = pauseScreenOptions
+		a.menuStatus = ""
+	case buttonIDResourceOpenFolder:
+		if err := a.openResourcePackFolder(); err != nil {
+			a.menuStatus = fmt.Sprintf("Open folder failed: %v", err)
+		} else {
+			a.menuStatus = "Opened resource pack folder."
+		}
+	}
+	a.updateResourceButtonsState()
 }
 
 func (a *App) handlePauseVideoButton(id int) {
@@ -2140,11 +2232,17 @@ func (a *App) initPauseButtons() {
 
 func (a *App) initPauseOptionsButtons() {
 	a.initOptionButtons()
+	a.initLanguageButtons()
+	a.initChatOptionButtons()
+	a.initResourceButtons()
 	a.initVideoButtons()
 	a.initControlButtons()
 	a.initKeyBindingButtons()
 	a.initSoundButtons()
 	a.updatePauseOptionButtonsState()
+	a.updateLanguageButtonsState()
+	a.updateChatOptionButtonsState()
+	a.updateResourceButtonsState()
 	a.updateVideoButtonsState()
 	a.updateControlButtonsState()
 	a.updateKeyBindingButtonsState()
@@ -5891,6 +5989,12 @@ func (a *App) drawPauseMenu() {
 		title := "Game menu"
 		if a.pauseScreen == pauseScreenOptions {
 			title = "Options"
+		} else if a.pauseScreen == pauseScreenLanguage {
+			title = "Language"
+		} else if a.pauseScreen == pauseScreenChatOptions {
+			title = "Chat Settings"
+		} else if a.pauseScreen == pauseScreenResourcePacks {
+			title = "Resource Packs"
 		} else if a.pauseScreen == pauseScreenVideo {
 			title = "Video Settings"
 		} else if a.pauseScreen == pauseScreenControls {
@@ -5906,7 +6010,13 @@ func (a *App) drawPauseMenu() {
 	for _, b := range a.currentPauseButtons() {
 		b.draw(a.font, a.texWidgets, a.mouseX, a.mouseY)
 	}
-	if a.pauseScreen == pauseScreenVideo && a.font != nil {
+	if a.pauseScreen == pauseScreenLanguage && a.font != nil {
+		a.font.drawCenteredString("Select language", uiW/2, uiH/6+6, 0xA0A0A0)
+	} else if a.pauseScreen == pauseScreenChatOptions && a.font != nil {
+		a.font.drawCenteredString("Multiplayer Settings", uiW/2, uiH/6+55, 0xFFFFFF)
+	} else if a.pauseScreen == pauseScreenResourcePacks && a.font != nil {
+		a.font.drawCenteredString("Open the folder to add resource packs.", uiW/2, uiH-26, 0x808080)
+	} else if a.pauseScreen == pauseScreenVideo && a.font != nil {
 		baseY := uiH/6 + 20
 		rd := a.optionRenderDistanceLabel()
 		fov := a.optionFOVLabel()

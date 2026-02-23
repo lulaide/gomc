@@ -161,3 +161,53 @@ func TestPauseOptionMusicOpensSoundsAndAdjustsVolume(t *testing.T) {
 		t.Fatalf("pause sounds done should return to options: got=%d want=%d", a.pauseScreen, pauseScreenOptions)
 	}
 }
+
+func TestPauseOptionsOpenLanguageChatAndResourceSubscreens(t *testing.T) {
+	a := &App{
+		guiW:            854,
+		guiH:            480,
+		mainMenu:        false,
+		pauseScreen:     pauseScreenOptions,
+		languageCode:    "en_US",
+		chatVisibility:  0,
+		chatColours:     true,
+		chatLinks:       true,
+		chatLinksPrompt: true,
+		showCape:        true,
+		optionsKV:       make(map[string]string),
+		optionsPath:     filepath.Join(t.TempDir(), "options.txt"),
+	}
+	a.initPauseButtons()
+	a.initPauseOptionsButtons()
+
+	a.handlePauseOptionButton(buttonIDOptionLanguage)
+	if a.pauseScreen != pauseScreenLanguage {
+		t.Fatalf("pause options language should open language screen: got=%d want=%d", a.pauseScreen, pauseScreenLanguage)
+	}
+	a.handlePauseLanguageButton(buttonIDLanguageDone)
+	if a.pauseScreen != pauseScreenOptions {
+		t.Fatalf("pause language done should return to options: got=%d want=%d", a.pauseScreen, pauseScreenOptions)
+	}
+
+	a.handlePauseOptionButton(buttonIDOptionMultiplayer)
+	if a.pauseScreen != pauseScreenChatOptions {
+		t.Fatalf("pause options multiplayer should open chat settings: got=%d want=%d", a.pauseScreen, pauseScreenChatOptions)
+	}
+	a.handlePauseChatOptionButton(buttonIDChatVisibility)
+	if a.chatVisibility != 1 {
+		t.Fatalf("chat visibility should cycle in pause screen: got=%d want=1", a.chatVisibility)
+	}
+	a.handlePauseChatOptionButton(buttonIDChatDone)
+	if a.pauseScreen != pauseScreenOptions {
+		t.Fatalf("pause chat done should return to options: got=%d want=%d", a.pauseScreen, pauseScreenOptions)
+	}
+
+	a.handlePauseOptionButton(buttonIDOptionResource)
+	if a.pauseScreen != pauseScreenResourcePacks {
+		t.Fatalf("pause options resource should open resource packs: got=%d want=%d", a.pauseScreen, pauseScreenResourcePacks)
+	}
+	a.handlePauseResourceButton(buttonIDResourceDone)
+	if a.pauseScreen != pauseScreenOptions {
+		t.Fatalf("pause resource done should return to options: got=%d want=%d", a.pauseScreen, pauseScreenOptions)
+	}
+}
