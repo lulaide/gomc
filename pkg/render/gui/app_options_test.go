@@ -347,6 +347,11 @@ func TestOptionsFileLoadAndSave(t *testing.T) {
 		"chatColors:false",
 		"chatLinks:false",
 		"chatLinksPrompt:false",
+		"chatOpacity:0.25",
+		"chatScale:0.80",
+		"chatWidth:0.65",
+		"chatHeightFocused:0.75",
+		"chatHeightUnfocused:0.40",
 		"serverTextures:false",
 		"showCape:false",
 		"snooperEnabled:false",
@@ -421,6 +426,21 @@ func TestOptionsFileLoadAndSave(t *testing.T) {
 	if a.chatLinksPrompt {
 		t.Fatal("loaded chatLinksPrompt should be false")
 	}
+	if a.chatOpacity != 0.25 {
+		t.Fatalf("loaded chatOpacity mismatch: got=%.2f want=0.25", a.chatOpacity)
+	}
+	if a.chatScale != 0.80 {
+		t.Fatalf("loaded chatScale mismatch: got=%.2f want=0.80", a.chatScale)
+	}
+	if a.chatWidth != 0.65 {
+		t.Fatalf("loaded chatWidth mismatch: got=%.2f want=0.65", a.chatWidth)
+	}
+	if a.chatHeightFocused != 0.75 {
+		t.Fatalf("loaded chatHeightFocused mismatch: got=%.2f want=0.75", a.chatHeightFocused)
+	}
+	if a.chatHeightUnfocused != 0.40 {
+		t.Fatalf("loaded chatHeightUnfocused mismatch: got=%.2f want=0.40", a.chatHeightUnfocused)
+	}
 	if a.serverTextures {
 		t.Fatal("loaded serverTextures should be false")
 	}
@@ -463,6 +483,11 @@ func TestOptionsFileLoadAndSave(t *testing.T) {
 	a.chatColours = true
 	a.chatLinks = true
 	a.chatLinksPrompt = true
+	a.chatOpacity = 0.90
+	a.chatScale = 0.55
+	a.chatWidth = 0.70
+	a.chatHeightFocused = 1.0
+	a.chatHeightUnfocused = 0.35
 	a.serverTextures = true
 	a.showCape = true
 	a.snooperEnabled = true
@@ -493,6 +518,11 @@ func TestOptionsFileLoadAndSave(t *testing.T) {
 		"chatColors:true",
 		"chatLinks:true",
 		"chatLinksPrompt:true",
+		"chatOpacity:0.900000",
+		"chatScale:0.550000",
+		"chatWidth:0.700000",
+		"chatHeightFocused:1.000000",
+		"chatHeightUnfocused:0.350000",
 		"serverTextures:true",
 		"showCape:true",
 		"snooperEnabled:true",

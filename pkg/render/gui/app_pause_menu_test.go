@@ -164,19 +164,24 @@ func TestPauseOptionMusicOpensSoundsAndAdjustsVolume(t *testing.T) {
 
 func TestPauseOptionsOpenLanguageChatAndResourceSubscreens(t *testing.T) {
 	a := &App{
-		guiW:            854,
-		guiH:            480,
-		mainMenu:        false,
-		pauseScreen:     pauseScreenOptions,
-		languageCode:    "en_US",
-		snooperEnabled:  true,
-		chatVisibility:  0,
-		chatColours:     true,
-		chatLinks:       true,
-		chatLinksPrompt: true,
-		showCape:        true,
-		optionsKV:       make(map[string]string),
-		optionsPath:     filepath.Join(t.TempDir(), "options.txt"),
+		guiW:                854,
+		guiH:                480,
+		mainMenu:            false,
+		pauseScreen:         pauseScreenOptions,
+		languageCode:        "en_US",
+		snooperEnabled:      true,
+		chatVisibility:      0,
+		chatColours:         true,
+		chatLinks:           true,
+		chatLinksPrompt:     true,
+		chatOpacity:         1.0,
+		chatScale:           1.0,
+		chatWidth:           1.0,
+		chatHeightFocused:   1.0,
+		chatHeightUnfocused: 0.44366196,
+		showCape:            true,
+		optionsKV:           make(map[string]string),
+		optionsPath:         filepath.Join(t.TempDir(), "options.txt"),
 	}
 	a.initPauseButtons()
 	a.initPauseOptionsButtons()
@@ -210,6 +215,10 @@ func TestPauseOptionsOpenLanguageChatAndResourceSubscreens(t *testing.T) {
 	a.handlePauseChatOptionButton(buttonIDChatVisibility)
 	if a.chatVisibility != 1 {
 		t.Fatalf("chat visibility should cycle in pause screen: got=%d want=1", a.chatVisibility)
+	}
+	a.handlePauseChatOptionButton(buttonIDChatWidthMinus)
+	if a.chatWidth >= 1.0 {
+		t.Fatalf("chat width should decrease in pause chat options: got=%.2f", a.chatWidth)
 	}
 	a.handlePauseChatOptionButton(buttonIDChatDone)
 	if a.pauseScreen != pauseScreenOptions {

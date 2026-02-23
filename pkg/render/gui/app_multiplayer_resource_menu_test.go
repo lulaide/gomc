@@ -12,19 +12,24 @@ import (
 func TestOptionsMultiplayerOpensChatSettingsAndSaves(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "options.txt")
 	a := &App{
-		guiW:            854,
-		guiH:            480,
-		mainMenu:        true,
-		menuScreen:      menuScreenOptions,
-		optionsPath:     path,
-		optionsKV:       make(map[string]string),
-		chatVisibility:  0,
-		chatColours:     true,
-		chatLinks:       true,
-		chatLinksPrompt: true,
-		showCape:        true,
-		serverTextures:  true,
-		languageCode:    "en_US",
+		guiW:                854,
+		guiH:                480,
+		mainMenu:            true,
+		menuScreen:          menuScreenOptions,
+		optionsPath:         path,
+		optionsKV:           make(map[string]string),
+		chatVisibility:      0,
+		chatColours:         true,
+		chatLinks:           true,
+		chatLinksPrompt:     true,
+		chatOpacity:         1.0,
+		chatScale:           1.0,
+		chatWidth:           1.0,
+		chatHeightFocused:   1.0,
+		chatHeightUnfocused: 0.44366196,
+		showCape:            true,
+		serverTextures:      true,
+		languageCode:        "en_US",
 	}
 	a.initOptionButtons()
 	a.initChatOptionButtons()
@@ -52,6 +57,14 @@ func TestOptionsMultiplayerOpensChatSettingsAndSaves(t *testing.T) {
 	if a.showCape {
 		t.Fatal("show cape should toggle off")
 	}
+	_ = a.handleMenuButton(buttonIDChatOpacityMinus)
+	if a.chatOpacity >= 1.0 {
+		t.Fatalf("chat opacity should decrease from max: got=%.2f", a.chatOpacity)
+	}
+	_ = a.handleMenuButton(buttonIDChatWidthMinus)
+	if a.chatWidth >= 1.0 {
+		t.Fatalf("chat width should decrease from max: got=%.2f", a.chatWidth)
+	}
 
 	_ = a.handleMenuButton(buttonIDChatDone)
 	if a.menuScreen != menuScreenOptions {
@@ -67,6 +80,8 @@ func TestOptionsMultiplayerOpensChatSettingsAndSaves(t *testing.T) {
 		"chatVisibility:1",
 		"chatLinks:false",
 		"showCape:false",
+		"chatOpacity:0.950000",
+		"chatWidth:0.950000",
 	}
 	for _, want := range checks {
 		if !strings.Contains(out, want) {

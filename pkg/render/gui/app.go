@@ -223,56 +223,61 @@ type App struct {
 	chatHistory    []string
 	chatHistPos    int
 
-	pauseButtons       []*guiButton
-	pauseOptionButtons []*guiButton
-	mainButtons        []*guiButton
-	singleButtons      []*guiButton
-	multiButtons       []*guiButton
-	optionButtons      []*guiButton
-	languageButtons    []*guiButton
-	chatOptionButtons  []*guiButton
-	resourceButtons    []*guiButton
-	snooperButtons     []*guiButton
-	videoButtons       []*guiButton
-	controlButtons     []*guiButton
-	keyBindButtons     []*guiButton
-	soundButtons       []*guiButton
-	createButtons      []*guiButton
-	renameButtons      []*guiButton
-	singleWorlds       []string
-	singleWorldMeta    map[string]singleWorldMeta
-	selectedWorld      int
-	languageReturn     menuScreen
-	chatOptionReturn   menuScreen
-	resourceReturn     menuScreen
-	snooperReturn      menuScreen
-	menuStatus         string
-	optionDifficulty   int
-	chatVisibility     int
-	chatColours        bool
-	chatLinks          bool
-	chatLinksPrompt    bool
-	showCape           bool
-	serverTextures     bool
-	snooperEnabled     bool
-	touchscreen        bool
-	createWorldName    string
-	createWorldSeed    string
-	createWorldMode    int
-	createMapFeature   bool
-	createAllowCheats  bool
-	createCheatsTog    bool
-	createBonusChest   bool
-	createWorldTypeID  int
-	createGeneratorOp  string
-	createMoreOptions  bool
-	createFolderName   string
-	recreateSource     string
-	renameWorldDir     string
-	renameWorldName    string
-	activeTextField    menuTextField
-	typedRuneQueue     []rune
-	keyPressQueue      []glfw.Key
+	pauseButtons        []*guiButton
+	pauseOptionButtons  []*guiButton
+	mainButtons         []*guiButton
+	singleButtons       []*guiButton
+	multiButtons        []*guiButton
+	optionButtons       []*guiButton
+	languageButtons     []*guiButton
+	chatOptionButtons   []*guiButton
+	resourceButtons     []*guiButton
+	snooperButtons      []*guiButton
+	videoButtons        []*guiButton
+	controlButtons      []*guiButton
+	keyBindButtons      []*guiButton
+	soundButtons        []*guiButton
+	createButtons       []*guiButton
+	renameButtons       []*guiButton
+	singleWorlds        []string
+	singleWorldMeta     map[string]singleWorldMeta
+	selectedWorld       int
+	languageReturn      menuScreen
+	chatOptionReturn    menuScreen
+	resourceReturn      menuScreen
+	snooperReturn       menuScreen
+	menuStatus          string
+	optionDifficulty    int
+	chatVisibility      int
+	chatColours         bool
+	chatLinks           bool
+	chatLinksPrompt     bool
+	chatOpacity         float64
+	chatScale           float64
+	chatWidth           float64
+	chatHeightFocused   float64
+	chatHeightUnfocused float64
+	showCape            bool
+	serverTextures      bool
+	snooperEnabled      bool
+	touchscreen         bool
+	createWorldName     string
+	createWorldSeed     string
+	createWorldMode     int
+	createMapFeature    bool
+	createAllowCheats   bool
+	createCheatsTog     bool
+	createBonusChest    bool
+	createWorldTypeID   int
+	createGeneratorOp   string
+	createMoreOptions   bool
+	createFolderName    string
+	recreateSource      string
+	renameWorldDir      string
+	renameWorldName     string
+	activeTextField     menuTextField
+	typedRuneQueue      []rune
+	keyPressQueue       []glfw.Key
 
 	eventsCh   <-chan netclient.Event
 	chatMu     sync.Mutex
@@ -357,6 +362,7 @@ type chatLine struct {
 	Message string
 	AddedAt time.Time
 	Color   int
+	System  bool
 }
 
 type chunkRenderEntry struct {
@@ -434,53 +440,58 @@ func Run(session *netclient.Session, cfg Config) error {
 	}
 
 	app := &App{
-		session:            session,
-		window:             window,
-		width:              cfg.Width,
-		height:             cfg.Height,
-		guiScaleMode:       0,
-		renderDistance:     renderDistanceChunksToMode(cfg.RenderDistance),
-		moveSpeed:          cfg.MoveSpeed,
-		mouseSens:          cfg.MouseSensitivity,
-		musicVolume:        1.0,
-		soundVolume:        1.0,
-		invertMouse:        false,
-		fovSetting:         0.0,
-		viewBobbing:        true,
-		fancyGraphics:      true,
-		cloudsEnabled:      true,
-		activeWorld:        cfg.CurrentWorld,
-		playWorldFn:        cfg.PlayWorld,
-		firstMouse:         true,
-		lastMouseX:         float64(cfg.Width) / 2,
-		lastMouseY:         float64(cfg.Height) / 2,
-		assetsRoot:         discoverAssetsRoot(),
-		optionsKV:          make(map[string]string),
-		languageCode:       "en_US",
-		chatVisibility:     0,
-		chatColours:        true,
-		chatLinks:          true,
-		chatLinksPrompt:    true,
-		showCape:           true,
-		serverTextures:     true,
-		snooperEnabled:     true,
-		touchscreen:        false,
-		eventsCh:           session.Events(),
-		mainMenu:           cfg.StartInMainMenu,
-		pauseScreen:        pauseScreenMain,
-		menuScreen:         menuScreenMain,
-		languageReturn:     menuScreenMain,
-		chatOptionReturn:   menuScreenOptions,
-		resourceReturn:     menuScreenOptions,
-		snooperReturn:      menuScreenOptions,
-		keyBindCapture:     -1,
-		selectedWorld:      -1,
-		singleWorldMeta:    make(map[string]singleWorldMeta),
-		optionDifficulty:   1,
-		createMapFeature:   true,
-		createWorldTypeID:  0,
-		chunkRenderCache:   make(map[chunk.CoordIntPair]*chunkRenderEntry),
-		limitFramerateMode: cfg.FPSLimitMode,
+		session:             session,
+		window:              window,
+		width:               cfg.Width,
+		height:              cfg.Height,
+		guiScaleMode:        0,
+		renderDistance:      renderDistanceChunksToMode(cfg.RenderDistance),
+		moveSpeed:           cfg.MoveSpeed,
+		mouseSens:           cfg.MouseSensitivity,
+		musicVolume:         1.0,
+		soundVolume:         1.0,
+		invertMouse:         false,
+		fovSetting:          0.0,
+		viewBobbing:         true,
+		fancyGraphics:       true,
+		cloudsEnabled:       true,
+		activeWorld:         cfg.CurrentWorld,
+		playWorldFn:         cfg.PlayWorld,
+		firstMouse:          true,
+		lastMouseX:          float64(cfg.Width) / 2,
+		lastMouseY:          float64(cfg.Height) / 2,
+		assetsRoot:          discoverAssetsRoot(),
+		optionsKV:           make(map[string]string),
+		languageCode:        "en_US",
+		chatVisibility:      0,
+		chatColours:         true,
+		chatLinks:           true,
+		chatLinksPrompt:     true,
+		chatOpacity:         1.0,
+		chatScale:           1.0,
+		chatWidth:           1.0,
+		chatHeightFocused:   1.0,
+		chatHeightUnfocused: 0.44366196,
+		showCape:            true,
+		serverTextures:      true,
+		snooperEnabled:      true,
+		touchscreen:         false,
+		eventsCh:            session.Events(),
+		mainMenu:            cfg.StartInMainMenu,
+		pauseScreen:         pauseScreenMain,
+		menuScreen:          menuScreenMain,
+		languageReturn:      menuScreenMain,
+		chatOptionReturn:    menuScreenOptions,
+		resourceReturn:      menuScreenOptions,
+		snooperReturn:       menuScreenOptions,
+		keyBindCapture:      -1,
+		selectedWorld:       -1,
+		singleWorldMeta:     make(map[string]singleWorldMeta),
+		optionDifficulty:    1,
+		createMapFeature:    true,
+		createWorldTypeID:   0,
+		chunkRenderCache:    make(map[chunk.CoordIntPair]*chunkRenderEntry),
+		limitFramerateMode:  cfg.FPSLimitMode,
 	}
 	app.initDefaultKeyBindings()
 	app.optionsPath = discoverOptionsPath(app.assetsRoot)
@@ -1712,6 +1723,46 @@ func (a *App) handlePauseChatOptionButton(id int) {
 			a.chatLinksPrompt = !a.chatLinksPrompt
 			changed = true
 		}
+	case buttonIDChatOpacityMinus:
+		var ok bool
+		a.chatOpacity, ok = stepOption01(a.chatOpacity, -0.05)
+		changed = changed || ok
+	case buttonIDChatOpacityPlus:
+		var ok bool
+		a.chatOpacity, ok = stepOption01(a.chatOpacity, 0.05)
+		changed = changed || ok
+	case buttonIDChatScaleMinus:
+		var ok bool
+		a.chatScale, ok = stepOption01(a.chatScale, -0.05)
+		changed = changed || ok
+	case buttonIDChatScalePlus:
+		var ok bool
+		a.chatScale, ok = stepOption01(a.chatScale, 0.05)
+		changed = changed || ok
+	case buttonIDChatHeightFocusedMinus:
+		var ok bool
+		a.chatHeightFocused, ok = stepOption01(a.chatHeightFocused, -0.05)
+		changed = changed || ok
+	case buttonIDChatHeightFocusedPlus:
+		var ok bool
+		a.chatHeightFocused, ok = stepOption01(a.chatHeightFocused, 0.05)
+		changed = changed || ok
+	case buttonIDChatHeightUnfocusedMinus:
+		var ok bool
+		a.chatHeightUnfocused, ok = stepOption01(a.chatHeightUnfocused, -0.05)
+		changed = changed || ok
+	case buttonIDChatHeightUnfocusedPlus:
+		var ok bool
+		a.chatHeightUnfocused, ok = stepOption01(a.chatHeightUnfocused, 0.05)
+		changed = changed || ok
+	case buttonIDChatWidthMinus:
+		var ok bool
+		a.chatWidth, ok = stepOption01(a.chatWidth, -0.05)
+		changed = changed || ok
+	case buttonIDChatWidthPlus:
+		var ok bool
+		a.chatWidth, ok = stepOption01(a.chatWidth, 0.05)
+		changed = changed || ok
 	case buttonIDChatShowCape:
 		a.showCape = !a.showCape
 		changed = true
@@ -3113,6 +3164,39 @@ func (a *App) optionFOVLabel() string {
 		return "FOV: Normal"
 	}
 	return fmt.Sprintf("FOV: %d", int(math.Round(fov)))
+}
+
+func stepOption01(v, delta float64) (float64, bool) {
+	nv := clampFloat64(v+delta, 0.0, 1.0)
+	if math.Abs(nv-v) < 1.0e-9 {
+		return v, false
+	}
+	return nv, true
+}
+
+func (a *App) optionChatOpacityLabel() string {
+	v := clampFloat64(a.chatOpacity, 0.0, 1.0)
+	return fmt.Sprintf("Opacity: %d%%", int(v*90.0+10.0))
+}
+
+func (a *App) optionChatScaleLabel() string {
+	v := clampFloat64(a.chatScale, 0.0, 1.0)
+	if v <= 0.0 {
+		return "Scale: OFF"
+	}
+	return fmt.Sprintf("Scale: %d%%", int(v*100.0))
+}
+
+func (a *App) optionChatHeightFocusedLabel() string {
+	return fmt.Sprintf("Height Focused: %dpx", chatHeightPixelsForValue(a.chatHeightFocused))
+}
+
+func (a *App) optionChatHeightUnfocusedLabel() string {
+	return fmt.Sprintf("Height Unfocused: %dpx", chatHeightPixelsForValue(a.chatHeightUnfocused))
+}
+
+func (a *App) optionChatWidthLabel() string {
+	return fmt.Sprintf("Width: %dpx", chatWidthPixelsForValue(a.chatWidth))
 }
 
 func (a *App) sensitivityPercent() int {
@@ -5710,62 +5794,234 @@ func (a *App) drawPlayerListOverlay(snap netclient.StateSnapshot) {
 }
 
 func (a *App) drawChatOverlay() {
-	if a.font == nil {
+	if a.font == nil || a.chatVisibility == 2 {
 		return
 	}
 	uiH := a.uiHeight()
-
-	a.chatMu.Lock()
-	lines := make([]chatLine, len(a.chatLines))
-	copy(lines, a.chatLines)
-	a.chatMu.Unlock()
-
+	lines := a.buildRenderedChatLines()
 	if len(lines) == 0 {
 		return
 	}
 
-	maxLines := 10
-	if a.chatInputOpen {
-		maxLines = 20
+	maxLines := a.chatVisibleLineCount(a.chatInputOpen)
+	if maxLines <= 0 {
+		return
 	}
+
+	scale := a.chatScaleClamped()
+	scaleDen := scale
+	if scaleDen < 1.0e-6 {
+		scaleDen = 1.0
+	}
+	boxWidth := int(math.Ceil(float64(a.chatWidthPixels()) / scaleDen))
+
 	now := time.Now()
 	baseY := uiH - 48
 	if a.chatInputOpen {
 		baseY = uiH - 28
 	}
 	drawn := 0
+	opacityMul := a.chatOpacityAlphaMultiplier()
 
-	for i := len(lines) - 1; i >= 0 && drawn < maxLines; i-- {
+	gl.PushMatrix()
+	gl.Translatef(2, float32(baseY), 0)
+	gl.Scalef(float32(scale), float32(scale), 1.0)
+
+	for i := 0; i < len(lines) && drawn < maxLines; i++ {
 		line := lines[i]
-		age := now.Sub(line.AddedAt)
-		if !a.paused && !a.chatInputOpen && age > 10*time.Second {
+		if a.chatVisibility == 1 && !line.System {
 			continue
 		}
 
 		alpha := 255
 		if !a.paused && !a.chatInputOpen {
-			fade := int((10*time.Second - age) * 255 / (10 * time.Second))
-			if fade < 0 {
-				fade = 0
+			ageTicks := int(now.Sub(line.AddedAt) / (50 * time.Millisecond))
+			if ageTicks >= 200 {
+				continue
 			}
-			if fade > 255 {
-				fade = 255
+			fade := 1.0 - float64(ageTicks)/200.0
+			fade *= 10.0
+			if fade < 0.0 {
+				fade = 0.0
 			}
-			alpha = fade
+			if fade > 1.0 {
+				fade = 1.0
+			}
+			fade *= fade
+			alpha = int(255.0 * fade)
 		}
+		alpha = int(float64(alpha) * opacityMul)
 		if alpha <= 8 {
 			continue
 		}
 
 		text := line.Message
-		w := a.font.getStringWidth(text)
-		y := baseY - drawn*10
+		if !a.chatColours {
+			text = stripFormattingCodes(text)
+		}
+		y := -drawn * 9
 		bg := (alpha / 2) << 24
-		drawSolidRect(1, y-1, 2+w+1, y+9, bg)
+		drawSolidRect(0, y-9, boxWidth+4, y, bg)
 		color := (alpha << 24) | (line.Color & 0xFFFFFF)
-		a.font.drawStringWithShadow(text, 2, y, color)
+		a.font.drawStringWithShadow(text, 0, y-8, color)
 		drawn++
 	}
+
+	gl.PopMatrix()
+}
+
+func (a *App) chatOpacityAlphaMultiplier() float64 {
+	return clampFloat64(a.chatOpacity, 0.0, 1.0)*0.9 + 0.1
+}
+
+func (a *App) chatScaleClamped() float64 {
+	return clampFloat64(a.chatScale, 0.0, 1.0)
+}
+
+func (a *App) chatWidthPixels() int {
+	return chatWidthPixelsForValue(a.chatWidth)
+}
+
+func (a *App) chatHeightPixels(focused bool) int {
+	if focused {
+		return chatHeightPixelsForValue(a.chatHeightFocused)
+	}
+	return chatHeightPixelsForValue(a.chatHeightUnfocused)
+}
+
+func (a *App) chatVisibleLineCount(focused bool) int {
+	return maxInt(1, a.chatHeightPixels(focused)/9)
+}
+
+func chatWidthPixelsForValue(v float64) int {
+	v = clampFloat64(v, 0.0, 1.0)
+	return int(v*280.0 + 40.0)
+}
+
+func chatHeightPixelsForValue(v float64) int {
+	v = clampFloat64(v, 0.0, 1.0)
+	return int(v*160.0 + 20.0)
+}
+
+func (a *App) buildRenderedChatLines() []chatLine {
+	if a.font == nil {
+		return nil
+	}
+
+	a.chatMu.Lock()
+	baseLines := make([]chatLine, len(a.chatLines))
+	copy(baseLines, a.chatLines)
+	a.chatMu.Unlock()
+	if len(baseLines) == 0 {
+		return nil
+	}
+
+	maxWidth := maxInt(a.chatWidthPixels(), 1)
+	rendered := make([]chatLine, 0, len(baseLines))
+
+	for i := len(baseLines) - 1; i >= 0; i-- {
+		line := baseLines[i]
+		parts := a.wrapChatMessage(line.Message, maxWidth)
+		if len(parts) == 0 {
+			continue
+		}
+		for j := len(parts) - 1; j >= 0; j-- {
+			rendered = append(rendered, chatLine{
+				Message: parts[j],
+				AddedAt: line.AddedAt,
+				Color:   line.Color,
+				System:  line.System,
+			})
+		}
+	}
+	if len(rendered) > 100 {
+		rendered = rendered[:100]
+	}
+	return rendered
+}
+
+func (a *App) wrapChatMessage(text string, maxWidth int) []string {
+	if a.font == nil {
+		return []string{text}
+	}
+	maxWidth = maxInt(maxWidth, 1)
+
+	segments := strings.Split(strings.ReplaceAll(text, "\r", ""), "\n")
+	out := make([]string, 0, len(segments))
+	for _, seg := range segments {
+		out = append(out, a.wrapChatSegment(seg, maxWidth)...)
+	}
+	if len(out) == 0 {
+		return []string{""}
+	}
+	return out
+}
+
+func (a *App) wrapChatSegment(text string, maxWidth int) []string {
+	runes := []rune(text)
+	if len(runes) == 0 {
+		return []string{""}
+	}
+
+	lines := make([]string, 0, 4)
+	for len(runes) > 0 {
+		if a.font.getStringWidth(string(runes)) <= maxWidth {
+			lines = append(lines, string(runes))
+			break
+		}
+
+		lastSpace := -1
+		width := 0
+		split := -1
+		for i := 0; i < len(runes); i++ {
+			r := runes[i]
+			if r == '\u00A7' && i+1 < len(runes) {
+				i++
+				continue
+			}
+			width += a.font.getCharWidth(r)
+			if r == ' ' {
+				lastSpace = i
+			}
+			if width > maxWidth {
+				if lastSpace >= 0 {
+					split = lastSpace
+				} else if i > 0 {
+					split = i
+				} else {
+					split = 1
+				}
+				break
+			}
+		}
+		if split <= 0 || split > len(runes) {
+			split = len(runes)
+		}
+
+		line := strings.TrimRight(string(runes[:split]), " ")
+		lines = append(lines, line)
+		runes = runes[split:]
+		for len(runes) > 0 && runes[0] == ' ' {
+			runes = runes[1:]
+		}
+	}
+	return lines
+}
+
+func stripFormattingCodes(text string) string {
+	if text == "" {
+		return text
+	}
+	runes := []rune(text)
+	out := make([]rune, 0, len(runes))
+	for i := 0; i < len(runes); i++ {
+		if runes[i] == '\u00A7' && i+1 < len(runes) {
+			i++
+			continue
+		}
+		out = append(out, runes[i])
+	}
+	return string(out)
 }
 
 func (a *App) drawChatInput() {
@@ -6057,8 +6313,8 @@ func (a *App) drawPauseMenu() {
 		a.font.drawCenteredString("Allow the game to send usage statistics.", uiW/2, uiH/6+48, 0x808080)
 	} else if a.pauseScreen == pauseScreenLanguage && a.font != nil {
 		a.font.drawCenteredString("Select language", uiW/2, uiH/6+6, 0xA0A0A0)
-	} else if a.pauseScreen == pauseScreenChatOptions && a.font != nil {
-		a.font.drawCenteredString("Multiplayer Settings", uiW/2, uiH/6+55, 0xFFFFFF)
+	} else if a.pauseScreen == pauseScreenChatOptions {
+		a.drawChatOptionCaptions()
 	} else if a.pauseScreen == pauseScreenResourcePacks && a.font != nil {
 		a.font.drawCenteredString("Open the folder to add resource packs.", uiW/2, uiH-26, 0x808080)
 	} else if a.pauseScreen == pauseScreenVideo && a.font != nil {
@@ -6882,9 +7138,9 @@ func (a *App) drainSessionEvents() {
 			}
 			switch ev.Type {
 			case netclient.EventChat:
-				a.addChatLine(ev.Message, 0xFFFFFF)
+				a.addChatLine(ev.Message, 0xFFFFFF, false)
 			case netclient.EventSystem:
-				a.addChatLine("[system] "+ev.Message, 0xA0A0A0)
+				a.addChatLine(ev.Message, 0xA0A0A0, true)
 			case netclient.EventSound:
 				if ev.SoundName != "" {
 					if ev.SoundName == "random.burp" {
@@ -6905,11 +7161,11 @@ func (a *App) drainSessionEvents() {
 					}
 				}
 			case netclient.EventKick:
-				a.addChatLine("[kick] "+ev.Message, 0xFF5555)
+				a.addChatLine(ev.Message, 0xFF5555, true)
 			case netclient.EventDisconnect:
-				a.addChatLine("[disconnect] "+ev.Message, 0xFF5555)
+				a.addChatLine(ev.Message, 0xFF5555, true)
 			default:
-				a.addChatLine(ev.Message, 0xFFFFFF)
+				a.addChatLine(ev.Message, 0xFFFFFF, false)
 			}
 		default:
 			return
@@ -6917,7 +7173,7 @@ func (a *App) drainSessionEvents() {
 	}
 }
 
-func (a *App) addChatLine(msg string, color int) {
+func (a *App) addChatLine(msg string, color int, system bool) {
 	if msg == "" {
 		return
 	}
@@ -6927,9 +7183,10 @@ func (a *App) addChatLine(msg string, color int) {
 		Message: msg,
 		AddedAt: time.Now(),
 		Color:   color,
+		System:  system,
 	})
-	if len(a.chatLines) > 200 {
-		a.chatLines = a.chatLines[len(a.chatLines)-200:]
+	if len(a.chatLines) > 100 {
+		a.chatLines = a.chatLines[len(a.chatLines)-100:]
 	}
 }
 
@@ -7330,6 +7587,26 @@ func (a *App) loadOptionsFile() {
 			if v, parseErr := strconv.ParseBool(value); parseErr == nil {
 				a.chatLinksPrompt = v
 			}
+		case "chatOpacity":
+			if v, parseErr := strconv.ParseFloat(value, 64); parseErr == nil {
+				a.chatOpacity = clampFloat64(v, 0.0, 1.0)
+			}
+		case "chatScale":
+			if v, parseErr := strconv.ParseFloat(value, 64); parseErr == nil {
+				a.chatScale = clampFloat64(v, 0.0, 1.0)
+			}
+		case "chatWidth":
+			if v, parseErr := strconv.ParseFloat(value, 64); parseErr == nil {
+				a.chatWidth = clampFloat64(v, 0.0, 1.0)
+			}
+		case "chatHeightFocused":
+			if v, parseErr := strconv.ParseFloat(value, 64); parseErr == nil {
+				a.chatHeightFocused = clampFloat64(v, 0.0, 1.0)
+			}
+		case "chatHeightUnfocused":
+			if v, parseErr := strconv.ParseFloat(value, 64); parseErr == nil {
+				a.chatHeightUnfocused = clampFloat64(v, 0.0, 1.0)
+			}
 		case "serverTextures":
 			if v, parseErr := strconv.ParseBool(value); parseErr == nil {
 				a.serverTextures = v
@@ -7409,6 +7686,11 @@ func (a *App) saveOptionsFile() {
 	a.optionsKV["chatColors"] = strconv.FormatBool(a.chatColours)
 	a.optionsKV["chatLinks"] = strconv.FormatBool(a.chatLinks)
 	a.optionsKV["chatLinksPrompt"] = strconv.FormatBool(a.chatLinksPrompt)
+	a.optionsKV["chatOpacity"] = strconv.FormatFloat(clampFloat64(a.chatOpacity, 0.0, 1.0), 'f', 6, 64)
+	a.optionsKV["chatScale"] = strconv.FormatFloat(clampFloat64(a.chatScale, 0.0, 1.0), 'f', 6, 64)
+	a.optionsKV["chatWidth"] = strconv.FormatFloat(clampFloat64(a.chatWidth, 0.0, 1.0), 'f', 6, 64)
+	a.optionsKV["chatHeightFocused"] = strconv.FormatFloat(clampFloat64(a.chatHeightFocused, 0.0, 1.0), 'f', 6, 64)
+	a.optionsKV["chatHeightUnfocused"] = strconv.FormatFloat(clampFloat64(a.chatHeightUnfocused, 0.0, 1.0), 'f', 6, 64)
 	a.optionsKV["serverTextures"] = strconv.FormatBool(a.serverTextures)
 	a.optionsKV["showCape"] = strconv.FormatBool(a.showCape)
 	a.optionsKV["snooperEnabled"] = strconv.FormatBool(a.snooperEnabled)

@@ -108,12 +108,22 @@ const (
 	buttonIDLanguageForceUnicode = 1552
 	buttonIDLanguageDone         = 1599
 
-	buttonIDChatVisibility  = 1561
-	buttonIDChatColors      = 1562
-	buttonIDChatLinks       = 1563
-	buttonIDChatLinksPrompt = 1564
-	buttonIDChatShowCape    = 1565
-	buttonIDChatDone        = 1569
+	buttonIDChatVisibility           = 1561
+	buttonIDChatColors               = 1562
+	buttonIDChatLinks                = 1563
+	buttonIDChatLinksPrompt          = 1564
+	buttonIDChatShowCape             = 1565
+	buttonIDChatOpacityMinus         = 1566
+	buttonIDChatOpacityPlus          = 1567
+	buttonIDChatScaleMinus           = 1568
+	buttonIDChatDone                 = 1569
+	buttonIDChatScalePlus            = 1570
+	buttonIDChatHeightFocusedMinus   = 1573
+	buttonIDChatHeightFocusedPlus    = 1574
+	buttonIDChatHeightUnfocusedMinus = 1575
+	buttonIDChatHeightUnfocusedPlus  = 1576
+	buttonIDChatWidthMinus           = 1577
+	buttonIDChatWidthPlus            = 1578
 
 	buttonIDResourceOpenFolder = 1571
 	buttonIDResourceDone       = 1572
@@ -269,8 +279,18 @@ func (a *App) initChatOptionButtons() {
 		newButton(buttonIDChatVisibility, w/2-155, baseY, 150, 20, "Chat: Shown"),
 		newButton(buttonIDChatColors, w/2+5, baseY, 150, 20, "Colors: ON"),
 		newButton(buttonIDChatLinks, w/2-155, baseY+24, 150, 20, "Web Links: ON"),
-		newButton(buttonIDChatLinksPrompt, w/2+5, baseY+24, 150, 20, "Prompt on Links: ON"),
-		newButton(buttonIDChatShowCape, w/2-155, baseY+72, 150, 20, "Show Cape: ON"),
+		newButton(buttonIDChatOpacityMinus, w/2+5, baseY+24, 20, 20, "-"),
+		newButton(buttonIDChatOpacityPlus, w/2+135, baseY+24, 20, 20, "+"),
+		newButton(buttonIDChatLinksPrompt, w/2-155, baseY+48, 150, 20, "Prompt on Links: ON"),
+		newButton(buttonIDChatScaleMinus, w/2+5, baseY+48, 20, 20, "-"),
+		newButton(buttonIDChatScalePlus, w/2+135, baseY+48, 20, 20, "+"),
+		newButton(buttonIDChatHeightFocusedMinus, w/2-155, baseY+72, 20, 20, "-"),
+		newButton(buttonIDChatHeightFocusedPlus, w/2-25, baseY+72, 20, 20, "+"),
+		newButton(buttonIDChatHeightUnfocusedMinus, w/2+5, baseY+72, 20, 20, "-"),
+		newButton(buttonIDChatHeightUnfocusedPlus, w/2+135, baseY+72, 20, 20, "+"),
+		newButton(buttonIDChatWidthMinus, w/2-155, baseY+96, 20, 20, "-"),
+		newButton(buttonIDChatWidthPlus, w/2-25, baseY+96, 20, 20, "+"),
+		newButton(buttonIDChatShowCape, w/2-155, baseY+144, 150, 20, "Show Cape: ON"),
 		newButton(buttonIDChatDone, w/2-100, h/6+168, 200, 20, "Done"),
 	}
 }
@@ -570,6 +590,36 @@ func (a *App) updateChatOptionButtonsState() {
 		case buttonIDChatLinksPrompt:
 			b.Label = "Prompt on Links: " + onOffLabel(a.chatLinksPrompt)
 			b.Enabled = a.chatLinks
+		case buttonIDChatOpacityMinus:
+			b.Label = "-"
+			b.Enabled = a.chatOpacity > 0.0
+		case buttonIDChatOpacityPlus:
+			b.Label = "+"
+			b.Enabled = a.chatOpacity < 1.0
+		case buttonIDChatScaleMinus:
+			b.Label = "-"
+			b.Enabled = a.chatScale > 0.0
+		case buttonIDChatScalePlus:
+			b.Label = "+"
+			b.Enabled = a.chatScale < 1.0
+		case buttonIDChatHeightFocusedMinus:
+			b.Label = "-"
+			b.Enabled = a.chatHeightFocused > 0.0
+		case buttonIDChatHeightFocusedPlus:
+			b.Label = "+"
+			b.Enabled = a.chatHeightFocused < 1.0
+		case buttonIDChatHeightUnfocusedMinus:
+			b.Label = "-"
+			b.Enabled = a.chatHeightUnfocused > 0.0
+		case buttonIDChatHeightUnfocusedPlus:
+			b.Label = "+"
+			b.Enabled = a.chatHeightUnfocused < 1.0
+		case buttonIDChatWidthMinus:
+			b.Label = "-"
+			b.Enabled = a.chatWidth > 0.0
+		case buttonIDChatWidthPlus:
+			b.Label = "+"
+			b.Enabled = a.chatWidth < 1.0
 		case buttonIDChatShowCape:
 			b.Label = "Show Cape: " + onOffLabel(a.showCape)
 		case buttonIDChatDone:
@@ -1402,6 +1452,46 @@ func (a *App) handleMenuButton(id int) bool {
 				a.chatLinksPrompt = !a.chatLinksPrompt
 				changed = true
 			}
+		case buttonIDChatOpacityMinus:
+			var ok bool
+			a.chatOpacity, ok = stepOption01(a.chatOpacity, -0.05)
+			changed = changed || ok
+		case buttonIDChatOpacityPlus:
+			var ok bool
+			a.chatOpacity, ok = stepOption01(a.chatOpacity, 0.05)
+			changed = changed || ok
+		case buttonIDChatScaleMinus:
+			var ok bool
+			a.chatScale, ok = stepOption01(a.chatScale, -0.05)
+			changed = changed || ok
+		case buttonIDChatScalePlus:
+			var ok bool
+			a.chatScale, ok = stepOption01(a.chatScale, 0.05)
+			changed = changed || ok
+		case buttonIDChatHeightFocusedMinus:
+			var ok bool
+			a.chatHeightFocused, ok = stepOption01(a.chatHeightFocused, -0.05)
+			changed = changed || ok
+		case buttonIDChatHeightFocusedPlus:
+			var ok bool
+			a.chatHeightFocused, ok = stepOption01(a.chatHeightFocused, 0.05)
+			changed = changed || ok
+		case buttonIDChatHeightUnfocusedMinus:
+			var ok bool
+			a.chatHeightUnfocused, ok = stepOption01(a.chatHeightUnfocused, -0.05)
+			changed = changed || ok
+		case buttonIDChatHeightUnfocusedPlus:
+			var ok bool
+			a.chatHeightUnfocused, ok = stepOption01(a.chatHeightUnfocused, 0.05)
+			changed = changed || ok
+		case buttonIDChatWidthMinus:
+			var ok bool
+			a.chatWidth, ok = stepOption01(a.chatWidth, -0.05)
+			changed = changed || ok
+		case buttonIDChatWidthPlus:
+			var ok bool
+			a.chatWidth, ok = stepOption01(a.chatWidth, 0.05)
+			changed = changed || ok
 		case buttonIDChatShowCape:
 			a.showCape = !a.showCape
 			changed = true
@@ -2678,9 +2768,7 @@ func (a *App) drawChatOptionsMenu() {
 	a.drawMenuBackground("Chat Settings")
 	a.updateChatOptionButtonsState()
 
-	if a.font != nil {
-		a.font.drawCenteredString("Multiplayer Settings", a.uiWidth()/2, a.uiHeight()/6+55, 0xFFFFFF)
-	}
+	a.drawChatOptionCaptions()
 	for _, b := range a.chatOptionButtons {
 		b.draw(a.font, a.texWidgets, a.mouseX, a.mouseY)
 	}
@@ -2689,6 +2777,20 @@ func (a *App) drawChatOptionsMenu() {
 	gl.Disable(gl.BLEND)
 	gl.Enable(gl.CULL_FACE)
 	gl.Enable(gl.DEPTH_TEST)
+}
+
+func (a *App) drawChatOptionCaptions() {
+	if a.font == nil {
+		return
+	}
+	uiW := a.uiWidth()
+	baseY := a.uiHeight() / 6
+	a.font.drawCenteredString(a.optionChatOpacityLabel(), uiW/2+80, baseY+24+6, 0xFFFFFF)
+	a.font.drawCenteredString(a.optionChatScaleLabel(), uiW/2+80, baseY+48+6, 0xFFFFFF)
+	a.font.drawCenteredString(a.optionChatHeightFocusedLabel(), uiW/2-80, baseY+72+6, 0xFFFFFF)
+	a.font.drawCenteredString(a.optionChatHeightUnfocusedLabel(), uiW/2+80, baseY+72+6, 0xFFFFFF)
+	a.font.drawCenteredString(a.optionChatWidthLabel(), uiW/2-80, baseY+96+6, 0xFFFFFF)
+	a.font.drawCenteredString("Multiplayer Settings", uiW/2, baseY+120+7, 0xFFFFFF)
 }
 
 func (a *App) drawResourcePackMenu() {

@@ -51,3 +51,36 @@ func TestPushChatHistoryLimit(t *testing.T) {
 		t.Fatalf("history cursor mismatch: got=%d want=100", a.chatHistPos)
 	}
 }
+
+func TestChatSizeMappingsMatchVanilla(t *testing.T) {
+	if got := chatWidthPixelsForValue(1.0); got != 320 {
+		t.Fatalf("chat width max mismatch: got=%d want=320", got)
+	}
+	if got := chatWidthPixelsForValue(0.0); got != 40 {
+		t.Fatalf("chat width min mismatch: got=%d want=40", got)
+	}
+	if got := chatHeightPixelsForValue(1.0); got != 180 {
+		t.Fatalf("chat height max mismatch: got=%d want=180", got)
+	}
+	if got := chatHeightPixelsForValue(0.0); got != 20 {
+		t.Fatalf("chat height min mismatch: got=%d want=20", got)
+	}
+	a := &App{
+		chatHeightFocused:   1.0,
+		chatHeightUnfocused: 0.44366196,
+	}
+	if got := a.chatVisibleLineCount(true); got != 20 {
+		t.Fatalf("focused chat line count mismatch: got=%d want=20", got)
+	}
+	if got := a.chatVisibleLineCount(false); got != 10 {
+		t.Fatalf("unfocused chat line count mismatch: got=%d want=10", got)
+	}
+}
+
+func TestChatFormattingStrip(t *testing.T) {
+	in := "\u00A7aGreen \u00A7lBold\u00A7r Done"
+	got := stripFormattingCodes(in)
+	if got != "Green Bold Done" {
+		t.Fatalf("formatting strip mismatch: got=%q want=%q", got, "Green Bold Done")
+	}
+}
