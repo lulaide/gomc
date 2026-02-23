@@ -1795,6 +1795,113 @@ func TestHandleSlashCommandXpTargetPlayer(t *testing.T) {
 	}
 }
 
+func TestHandleSlashCommandClearSelfClearsInventoryAndCursor(t *testing.T) {
+	srv := NewStatusServer(StatusConfig{})
+	var buf bytes.Buffer
+	session := newInteractionTestSession(srv, &buf)
+	session.clientUsername = "Steve"
+	session.inventory[36] = &protocol.ItemStack{ItemID: 1, StackSize: 2, ItemDamage: 0}
+	session.inventory[10] = &protocol.ItemStack{ItemID: 2, StackSize: 3, ItemDamage: 0}
+	session.cursorItem = &protocol.ItemStack{ItemID: 3, StackSize: 1, ItemDamage: 0}
+
+	srv.activeMu.Lock()
+	srv.activePlayers[session] = "Steve"
+	srv.activeOrder = []*loginSession{session}
+	srv.activeMu.Unlock()
+
+	if !session.handleSlashCommand("/clear") {
+		t.Fatal("handleSlashCommand returned false")
+	}
+
+	if session.inventory[36] != nil || session.inventory[10] != nil {
+		t.Fatalf("inventory should be cleared: slot36=%#v slot10=%#v", session.inventory[36], session.inventory[10])
+	}
+	if session.cursorItem != nil {
+		t.Fatalf("cursor item should be cleared: %#v", session.cursorItem)
+	}
+
+	foundChat := false
+	for {
+		packet, err := protocol.ReadPacket(&buf, protocol.DirectionClientbound)
+		if err != nil {
+			break
+		}
+		chat, ok := packet.(*protocol.Packet3Chat)
+		if !ok {
+			continue
+		}
+		if strings.Contains(chat.Message, "Cleared 6 items from Steve") {
+			foundChat = true
+			break
+		}
+	}
+	if !foundChat {
+		t.Fatal("expected clear command success chat not found")
+	}
+}
+
+func TestHandleSlashCommandClearTargetWithFilter(t *testing.T) {
+	srv := NewStatusServer(StatusConfig{})
+
+	var adminBuf bytes.Buffer
+	admin := newInteractionTestSession(srv, &adminBuf)
+	admin.clientUsername = "Admin"
+
+	var targetBuf bytes.Buffer
+	target := newInteractionTestSession(srv, &targetBuf)
+	target.clientUsername = "Alex"
+	target.inventory[36] = &protocol.ItemStack{ItemID: 1, StackSize: 5, ItemDamage: 0}
+	target.inventory[10] = &protocol.ItemStack{ItemID: 2, StackSize: 4, ItemDamage: 0}
+
+	srv.activeMu.Lock()
+	srv.activePlayers[admin] = "Admin"
+	srv.activePlayers[target] = "Alex"
+	srv.activeOrder = []*loginSession{admin, target}
+	srv.activeMu.Unlock()
+
+	if !admin.handleSlashCommand("/clear Alex 1") {
+		t.Fatal("handleSlashCommand returned false")
+	}
+
+	if target.inventory[36] != nil {
+		t.Fatalf("filtered clear should remove slot36 item: %#v", target.inventory[36])
+	}
+	if target.inventory[10] == nil || target.inventory[10].ItemID != 2 || target.inventory[10].StackSize != 4 {
+		t.Fatalf("filtered clear should keep non-matching item: %#v", target.inventory[10])
+	}
+
+	packet, err := protocol.ReadPacket(&adminBuf, protocol.DirectionClientbound)
+	if err != nil {
+		t.Fatalf("failed to read admin clear feedback: %v", err)
+	}
+	chat, ok := packet.(*protocol.Packet3Chat)
+	if !ok {
+		t.Fatalf("expected admin Packet3Chat, got %T", packet)
+	}
+	if !strings.Contains(chat.Message, "Cleared 5 items from Alex") {
+		t.Fatalf("unexpected clear feedback: %q", chat.Message)
+	}
+
+	gotSetSlot := false
+	for {
+		packet, err := protocol.ReadPacket(&targetBuf, protocol.DirectionClientbound)
+		if err != nil {
+			break
+		}
+		setSlot, ok := packet.(*protocol.Packet103SetSlot)
+		if !ok {
+			continue
+		}
+		if setSlot.ItemSlot == 36 && setSlot.ItemStack == nil {
+			gotSetSlot = true
+			break
+		}
+	}
+	if !gotSetSlot {
+		t.Fatal("expected target to receive cleared set-slot packet for slot 36")
+	}
+}
+
 func TestHandleChatBroadcastsLegacyPlainMessage(t *testing.T) {
 	srv := NewStatusServer(StatusConfig{})
 	sender := newInteractionTestSession(srv, io.Discard)

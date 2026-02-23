@@ -1480,6 +1480,71 @@ func (s *loginSession) handleSlashCommand(command string) bool {
 		return target.sendExperienceState()
 	}
 
+	if strings.EqualFold(args[0], "/clear") {
+		if len(args) > 4 {
+			s.sendSystemChat("Usage: /clear [player] [itemId] [damage]")
+			return true
+		}
+
+		target := s
+		targetName := strings.TrimSpace(s.clientUsername)
+		if len(args) >= 2 {
+			found := s.server.activeSessionByUsername(args[1])
+			if found == nil {
+				s.sendSystemChat("Player not found.")
+				return true
+			}
+			target = found
+			if name := strings.TrimSpace(found.clientUsername); name != "" {
+				targetName = name
+			}
+		}
+		if targetName == "" {
+			targetName = "player"
+		}
+
+		itemID := int16(-1)
+		if len(args) >= 3 {
+			item, err := strconv.Atoi(args[2])
+			if err != nil || item < 1 || item > 32767 {
+				s.sendSystemChat("Invalid item id")
+				return true
+			}
+			itemID = int16(item)
+		}
+
+		damage := int16(-1)
+		if len(args) >= 4 {
+			meta, err := strconv.Atoi(args[3])
+			if err != nil || meta < 0 || meta > 32767 {
+				s.sendSystemChat("Invalid damage")
+				return true
+			}
+			damage = int16(meta)
+		}
+
+		removed, changedSlots, cursorChanged := target.clearInventoryFiltered(itemID, damage)
+		if removed <= 0 {
+			s.sendSystemChat("No items were found to clear from " + targetName)
+			return true
+		}
+		for slot := 0; slot < playerWindowSlots; slot++ {
+			if !changedSlots[slot] {
+				continue
+			}
+			if !target.sendInventorySetSlot(slot) {
+				return false
+			}
+		}
+		if cursorChanged {
+			if !target.sendCursorSetSlot(nil) {
+				return false
+			}
+		}
+		s.sendSystemChat("Cleared " + strconv.Itoa(removed) + " items from " + targetName)
+		return true
+	}
+
 	if strings.EqualFold(args[0], "/kill") {
 		if !s.killPlayer() {
 			return false
@@ -1651,6 +1716,38 @@ func (s *loginSession) sendCursorSetSlot(stack *protocol.ItemStack) bool {
 		ItemSlot:  -1,
 		ItemStack: cloneItemStack(stack),
 	})
+}
+
+func (s *loginSession) clearInventoryFiltered(itemID, damage int16) (int, [playerWindowSlots]bool, bool) {
+	var changedSlots [playerWindowSlots]bool
+	removed := 0
+	cursorChanged := false
+
+	s.stateMu.Lock()
+	for i := 0; i < playerWindowSlots; i++ {
+		stack := s.inventory[i]
+		if stack == nil || stack.StackSize <= 0 {
+			continue
+		}
+		if itemID >= 0 && stack.ItemID != itemID {
+			continue
+		}
+		if damage >= 0 && stack.ItemDamage != damage {
+			continue
+		}
+		removed += int(stack.StackSize)
+		s.inventory[i] = nil
+		changedSlots[i] = true
+	}
+	if s.cursorItem != nil && s.cursorItem.StackSize > 0 {
+		if (itemID < 0 || s.cursorItem.ItemID == itemID) && (damage < 0 || s.cursorItem.ItemDamage == damage) {
+			removed += int(s.cursorItem.StackSize)
+			s.cursorItem = nil
+			cursorChanged = true
+		}
+	}
+	s.stateMu.Unlock()
+	return removed, changedSlots, cursorChanged
 }
 
 func (s *loginSession) addInventoryItem(itemID int16, count int, damage int16) int {
