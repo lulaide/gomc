@@ -28,6 +28,22 @@ func newInteractionTestSession(srv *StatusServer, writer io.Writer) *loginSessio
 	}
 }
 
+func countDroppedItemByID(srv *StatusServer, itemID int16) int {
+	if srv == nil {
+		return 0
+	}
+	count := 0
+	srv.droppedItemMu.Lock()
+	defer srv.droppedItemMu.Unlock()
+	for _, item := range srv.droppedItems {
+		if item == nil || item.ItemID != itemID || item.StackSize <= 0 {
+			continue
+		}
+		count += int(item.StackSize)
+	}
+	return count
+}
+
 func TestHandleBlockDigStatus2RemovesBlock(t *testing.T) {
 	srv := NewStatusServer(StatusConfig{})
 	session := newInteractionTestSession(srv, io.Discard)
@@ -3479,6 +3495,132 @@ func TestHandleUseEntityInteractSheepWithDyeOnShearedSheepDoesNothing(t *testing
 	}
 	if session.inventory[36] == nil || session.inventory[36].StackSize != 2 {
 		t.Fatalf("dye stack should not be consumed on sheared sheep: %#v", session.inventory[36])
+	}
+}
+
+func TestHandleUseEntityInteractPigWithSaddleSetsSaddledAndConsumes(t *testing.T) {
+	srv := NewStatusServer(StatusConfig{})
+	session := newInteractionTestSession(srv, io.Discard)
+	session.entityID = 409
+	session.playerHealth = 20
+	session.playerRegistered = true
+	session.heldItemSlot = 0
+	session.inventory[36] = &protocol.ItemStack{
+		ItemID:     itemIDSaddle,
+		StackSize:  1,
+		ItemDamage: 0,
+	}
+
+	mob := srv.spawnMob(&spawnListEntry{entityType: entityTypePig}, 0.5, 5.0, 2.5, 0)
+	if mob == nil {
+		t.Fatal("spawnMob returned nil")
+	}
+
+	if !session.handleUseEntity(&protocol.Packet7UseEntity{
+		PlayerEntityID: session.entityID,
+		TargetEntityID: mob.EntityID,
+		Action:         0,
+	}) {
+		t.Fatal("handleUseEntity returned false")
+	}
+
+	srv.mobMu.Lock()
+	livePig := srv.mobs[mob.EntityID]
+	srv.mobMu.Unlock()
+	if livePig == nil {
+		t.Fatal("expected pig to remain alive")
+	}
+	if !livePig.pigSaddled {
+		t.Fatal("expected pig to be saddled after interaction")
+	}
+	if session.inventory[36] != nil {
+		t.Fatalf("expected saddle consumed from held slot, got=%#v", session.inventory[36])
+	}
+}
+
+func TestLootingLevelFromItemStackReadsEnchantList(t *testing.T) {
+	enchList := nbt.NewListTag("ench")
+	entrySharpness := nbt.NewCompoundTag("")
+	entrySharpness.SetShort("id", 16)
+	entrySharpness.SetShort("lvl", 4)
+	enchList.AppendTag(entrySharpness)
+	entryLooting := nbt.NewCompoundTag("")
+	entryLooting.SetShort("id", int16(enchantIDLooting))
+	entryLooting.SetShort("lvl", 3)
+	enchList.AppendTag(entryLooting)
+	entryLootingLow := nbt.NewCompoundTag("")
+	entryLootingLow.SetShort("id", int16(enchantIDLooting))
+	entryLootingLow.SetShort("lvl", 1)
+	enchList.AppendTag(entryLootingLow)
+
+	tag := nbt.NewCompoundTag("")
+	tag.SetTag("ench", enchList)
+
+	stack := &protocol.ItemStack{
+		ItemID:     itemIDIronSword,
+		StackSize:  1,
+		ItemDamage: 0,
+		Tag:        tag,
+	}
+	if got := lootingLevelFromItemStack(stack); got != 3 {
+		t.Fatalf("looting level parse mismatch: got=%d want=3", got)
+	}
+	if got := lootingLevelFromItemStack(&protocol.ItemStack{ItemID: itemIDIronSword, StackSize: 1}); got != 0 {
+		t.Fatalf("expected zero looting for stack without ench tag, got=%d", got)
+	}
+}
+
+func TestHandleUseEntityAttackMobKillUsesLootingFromHeldWeapon(t *testing.T) {
+	srv := NewStatusServer(StatusConfig{})
+	srv.mobRand.SetSeed(101)
+	attacker := newInteractionTestSession(srv, io.Discard)
+	attacker.entityID = 410
+	attacker.playerRegistered = true
+	attacker.playerHealth = 20
+	attacker.heldItemSlot = 0
+
+	enchList := nbt.NewListTag("ench")
+	lootingEntry := nbt.NewCompoundTag("")
+	lootingEntry.SetShort("id", int16(enchantIDLooting))
+	lootingEntry.SetShort("lvl", 205)
+	enchList.AppendTag(lootingEntry)
+	tag := nbt.NewCompoundTag("")
+	tag.SetTag("ench", enchList)
+	attacker.inventory[36] = &protocol.ItemStack{
+		ItemID:     itemIDIronSword,
+		StackSize:  1,
+		ItemDamage: 0,
+		Tag:        tag,
+	}
+
+	srv.activeMu.Lock()
+	srv.activePlayers[attacker] = "attacker"
+	srv.activeOrder = []*loginSession{attacker}
+	srv.activeMu.Unlock()
+
+	mob := srv.spawnMob(&spawnListEntry{entityType: entityTypeZombie}, 0.5, 5.0, 2.5, 0)
+	if mob == nil {
+		t.Fatal("spawnMob returned nil")
+	}
+	srv.mobMu.Lock()
+	live := srv.mobs[mob.EntityID]
+	if live != nil {
+		live.Health = 1.0
+		live.zombieChild = false
+	}
+	srv.mobMu.Unlock()
+
+	if !attacker.handleUseEntity(&protocol.Packet7UseEntity{
+		PlayerEntityID: attacker.entityID,
+		TargetEntityID: mob.EntityID,
+		Action:         1,
+	}) {
+		t.Fatal("handleUseEntity returned false")
+	}
+
+	rareCount := countDroppedItemByID(srv, itemIDIronIngot) + countDroppedItemByID(srv, itemIDCarrot) + countDroppedItemByID(srv, itemIDPotato)
+	if rareCount != 1 {
+		t.Fatalf("expected one forced rare zombie drop from looting kill, got=%d", rareCount)
 	}
 }
 

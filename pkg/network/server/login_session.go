@@ -15,6 +15,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/lulaide/gomc/pkg/nbt"
 	"github.com/lulaide/gomc/pkg/network/crypt"
 	"github.com/lulaide/gomc/pkg/network/protocol"
 	"github.com/lulaide/gomc/pkg/world/block"
@@ -68,8 +69,10 @@ const (
 
 	itemIDBow          int16 = 261
 	itemIDArrow        int16 = 262
+	itemIDIronIngot    int16 = 265
 	itemIDBucketEmpty  int16 = 325
 	itemIDBucketMilk   int16 = 335
+	itemIDSaddle       int16 = 329
 	itemIDString       int16 = 287
 	itemIDFeather      int16 = 288
 	itemIDGunpowder    int16 = 289
@@ -99,6 +102,7 @@ const (
 	itemIDChickenCooked int16 = 366
 	itemIDRottenFlesh   int16 = 367
 	itemIDSpiderEye     int16 = 375
+	itemIDSkull         int16 = 397
 	itemIDDyePowder     int16 = 351
 	itemIDCarrot        int16 = 391
 	itemIDPotato        int16 = 392
@@ -111,6 +115,12 @@ const (
 const (
 	blockIDWool         int16 = 35
 	shearsMaxDurability int16 = 238
+)
+
+const (
+	// Translation reference:
+	// - net.minecraft.src.Enchantment#looting (effectId=21)
+	enchantIDLooting int = 21
 )
 
 type meleeItemProfile struct {
@@ -2140,6 +2150,50 @@ func cloneItemStack(stack *protocol.ItemStack) *protocol.ItemStack {
 	return &out
 }
 
+func intFromNBTNumericTag(tag nbt.Tag) (int, bool) {
+	switch t := tag.(type) {
+	case *nbt.ByteTag:
+		return int(t.Data), true
+	case *nbt.ShortTag:
+		return int(t.Data), true
+	case *nbt.IntTag:
+		return int(t.Data), true
+	case *nbt.LongTag:
+		return int(t.Data), true
+	default:
+		return 0, false
+	}
+}
+
+func lootingLevelFromItemStack(stack *protocol.ItemStack) int {
+	if stack == nil || stack.Tag == nil {
+		return 0
+	}
+	listTag, ok := stack.Tag.GetTag("ench").(*nbt.ListTag)
+	if !ok || listTag == nil {
+		return 0
+	}
+	maxLevel := 0
+	for i := 0; i < listTag.TagCount(); i++ {
+		entry, ok := listTag.TagAt(i).(*nbt.CompoundTag)
+		if !ok || entry == nil {
+			continue
+		}
+		enchID, okID := intFromNBTNumericTag(entry.GetTag("id"))
+		if !okID || enchID != enchantIDLooting {
+			continue
+		}
+		level, okLevel := intFromNBTNumericTag(entry.GetTag("lvl"))
+		if !okLevel || level <= 0 {
+			continue
+		}
+		if level > maxLevel {
+			maxLevel = level
+		}
+	}
+	return maxLevel
+}
+
 func toInventorySlice(arr [playerWindowSlots]*protocol.ItemStack) []*protocol.ItemStack {
 	out := make([]*protocol.ItemStack, playerWindowSlots)
 	for i := 0; i < playerWindowSlots; i++ {
@@ -3684,6 +3738,7 @@ func (s *loginSession) attackTargetMobWithCurrentItem(target *trackedMob) {
 		return
 	}
 	damage := float32(basePlayerDamage)
+	lootingLevel := 0
 	knockbackLevel := 0
 	attackerYaw := s.playerYaw
 	critical := s.playerFallDistance > 0 && !s.playerOnGround
@@ -3693,6 +3748,7 @@ func (s *loginSession) attackTargetMobWithCurrentItem(target *trackedMob) {
 		if profile, ok := meleeProfileForItemID(heldStack.ItemID); ok {
 			damage += profile.AttackModifier
 		}
+		lootingLevel = lootingLevelFromItemStack(heldStack)
 	}
 	if critical && damage > 0 {
 		damage *= 1.5
@@ -3733,7 +3789,7 @@ func (s *loginSession) attackTargetMobWithCurrentItem(target *trackedMob) {
 
 	if died {
 		s.server.broadcastMobEntityStatus(mob, 3)
-		s.server.killMob(mob, true)
+		s.server.killMob(mob, true, lootingLevel)
 	}
 }
 
@@ -3744,6 +3800,8 @@ func (s *loginSession) interactWithMob(target *trackedMob) bool {
 
 	handled := false
 	switch target.EntityType {
+	case entityTypePig:
+		handled = s.interactWithPig(target)
 	case entityTypeCow:
 		handled = s.interactWithCow(target)
 	case entityTypeSheep:
@@ -3753,6 +3811,22 @@ func (s *loginSession) interactWithMob(target *trackedMob) bool {
 		return true
 	}
 	return s.interactItemWithMob(target)
+}
+
+func (s *loginSession) interactWithPig(target *trackedMob) bool {
+	if target == nil {
+		return false
+	}
+
+	// Translation reference:
+	// - net.minecraft.src.EntityPig#interact(EntityPlayer)
+	// Riding itself is pending full mount control/state sync; keep vanilla consume behavior:
+	// if saddled, interaction is handled.
+	s.server.mobMu.Lock()
+	live := s.server.mobs[target.EntityID]
+	saddled := live != nil && live.EntityType == entityTypePig && live.pigSaddled
+	s.server.mobMu.Unlock()
+	return saddled
 }
 
 func (s *loginSession) interactWithCow(target *trackedMob) bool {
@@ -3900,9 +3974,12 @@ func (s *loginSession) interactItemWithMob(target *trackedMob) bool {
 	// Translation reference:
 	// - net.minecraft.src.EntityPlayer#interactWith(Entity)
 	// - net.minecraft.src.ItemDye#itemInteractionForEntity
+	// - net.minecraft.src.ItemSaddle#itemInteractionForEntity
 	var (
 		heldSlot   int
 		isCreative bool
+		itemID     int16
+		itemMeta   int16
 	)
 	s.stateMu.Lock()
 	heldSlot = s.heldWindowSlotLocked()
@@ -3911,18 +3988,48 @@ func (s *loginSession) interactItemWithMob(target *trackedMob) bool {
 		s.stateMu.Unlock()
 		return false
 	}
-	if stack.ItemID != itemIDDyePowder {
-		s.stateMu.Unlock()
-		return false
-	}
-	dyeMeta := int16(stack.ItemDamage & 15)
+	itemID = stack.ItemID
+	itemMeta = stack.ItemDamage
 	isCreative = s.gameType == 1
 	s.stateMu.Unlock()
 
-	if target.EntityType != entityTypeSheep {
-		return false
+	if itemID == itemIDSaddle && target.EntityType == entityTypePig {
+		changed := false
+		s.server.mobMu.Lock()
+		live := s.server.mobs[target.EntityID]
+		if live != nil && live.EntityType == entityTypePig && !live.pigSaddled {
+			live.pigSaddled = true
+			changed = true
+		}
+		s.server.mobMu.Unlock()
+		if !changed {
+			return false
+		}
+
+		if !isCreative {
+			slotChanged := false
+			s.stateMu.Lock()
+			stack := s.inventory[heldSlot]
+			if stack != nil && stack.StackSize > 0 && stack.ItemID == itemIDSaddle {
+				stack.StackSize--
+				slotChanged = true
+				if stack.StackSize <= 0 {
+					s.inventory[heldSlot] = nil
+				}
+			}
+			s.stateMu.Unlock()
+			if slotChanged {
+				_ = s.sendInventorySetSlot(heldSlot)
+			}
+		}
+		s.server.broadcastMobMetadata(target)
+		return true
 	}
 
+	if itemID != itemIDDyePowder || target.EntityType != entityTypeSheep {
+		return false
+	}
+	dyeMeta := int16(itemMeta & 15)
 	targetColor := int8(^dyeMeta & 15)
 	changed := false
 	s.server.mobMu.Lock()

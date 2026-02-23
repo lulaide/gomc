@@ -209,6 +209,7 @@ type trackedMob struct {
 	endermanStare  int
 	sheepColor     int8
 	sheepSheared   bool
+	pigSaddled     bool
 	skeletonType   int8
 	zombieChild    bool
 	zombieVillager bool
@@ -321,6 +322,16 @@ func (m *trackedMob) metadataWatchers() []protocol.WatchableObject {
 		value := m.sheepColor & 15
 		if m.sheepSheared {
 			value |= 16
+		}
+		metadata = append(metadata, protocol.WatchableObject{
+			ObjectType:  0,
+			DataValueID: 16,
+			Value:       value,
+		})
+	case entityTypePig:
+		value := int8(0)
+		if m.pigSaddled {
+			value = 1
 		}
 		metadata = append(metadata, protocol.WatchableObject{
 			ObjectType:  0,
@@ -440,12 +451,12 @@ func (s *StatusServer) tickSingleMob(mob *trackedMob) {
 	s.mobMu.Lock()
 	if mob.Health <= 0 {
 		s.mobMu.Unlock()
-		s.killMob(mob, false)
+		s.killMob(mob, false, 0)
 		return
 	}
 	if mob.CreatureType == creatureTypeMonster && s.currentDifficulty() == 0 {
 		s.mobMu.Unlock()
-		s.killMob(mob, false)
+		s.killMob(mob, false, 0)
 		return
 	}
 	if mob.HurtResistant > 0 {
@@ -460,7 +471,7 @@ func (s *StatusServer) tickSingleMob(mob *trackedMob) {
 			s.broadcastMobEntityStatus(mob, 2)
 		}
 		s.broadcastMobEntityStatus(mob, 3)
-		s.killMob(mob, false)
+		s.killMob(mob, false, 0)
 		return
 	}
 	if mob.attackCooldown > 0 {
@@ -1521,7 +1532,7 @@ func (s *StatusServer) broadcastMobEntityStatus(mob *trackedMob, status int8) {
 	s.broadcastEntityPacketToWatchers(packet, chunkX, chunkZ, nil)
 }
 
-func (s *StatusServer) killMob(mob *trackedMob, killedByPlayer bool) {
+func (s *StatusServer) killMob(mob *trackedMob, killedByPlayer bool, looting int) {
 	if mob == nil {
 		return
 	}
@@ -1530,7 +1541,7 @@ func (s *StatusServer) killMob(mob *trackedMob, killedByPlayer bool) {
 	splitSize := mob.slimeSize / 2
 	splitX, splitY, splitZ := mob.X, mob.Y, mob.Z
 
-	s.spawnMobDrops(mob, killedByPlayer, 0)
+	s.spawnMobDrops(mob, killedByPlayer, looting)
 	s.removeMob(mob)
 
 	if !shouldSplit || splitSize <= 0 {
@@ -1568,6 +1579,10 @@ func (s *StatusServer) spawnMobDrops(mob *trackedMob, killedByPlayer bool, looti
 	x, y, z := mob.X, mob.Y, mob.Z
 
 	s.mobMu.Lock()
+	if mob.EntityType == entityTypeZombie && mob.zombieChild {
+		s.mobMu.Unlock()
+		return
+	}
 	randInt := func(bound int) int {
 		if bound <= 0 {
 			return 0
@@ -1602,6 +1617,9 @@ func (s *StatusServer) spawnMobDrops(mob *trackedMob, killedByPlayer bool, looti
 		addDrops(itemIDBeefRaw, randInt(3)+1+randInt(looting+1), 0)
 	case entityTypePig:
 		addDrops(itemIDPorkRaw, randInt(3)+1+randInt(looting+1), 0)
+		if mob.pigSaddled {
+			addDrops(itemIDSaddle, 1, 0)
+		}
 	case entityTypeChicken:
 		addDrops(itemIDFeather, randInt(3)+randInt(looting+1), 0)
 		addDrops(itemIDChickenRaw, 1, 0)
@@ -1632,6 +1650,32 @@ func (s *StatusServer) spawnMobDrops(mob *trackedMob, killedByPlayer bool, looti
 	case entityTypeSlime:
 		if mob.slimeSize == 1 {
 			addDrops(itemIDSlimeBall, entityLivingDropCount(), 0)
+		}
+	}
+
+	if killedByPlayer {
+		// Translation reference:
+		// - net.minecraft.src.EntityLivingBase#onDeath(DamageSource)
+		//   int var5 = rand.nextInt(200) - looting; if (var5 < 5) dropRareDrop(...)
+		if randInt(200)-looting < 5 {
+			switch mob.EntityType {
+			case entityTypeZombie:
+				switch randInt(3) {
+				case 0:
+					addDrops(itemIDIronIngot, 1, 0)
+				case 1:
+					addDrops(itemIDCarrot, 1, 0)
+				default:
+					addDrops(itemIDPotato, 1, 0)
+				}
+			case entityTypeSkeleton:
+				if mob.skeletonType == 1 {
+					// Translation reference:
+					// - net.minecraft.src.EntitySkeleton#dropRareDrop(int)
+					// Skull metadata 1 = wither skeleton.
+					addDrops(itemIDSkull, 1, 1)
+				}
+			}
 		}
 	}
 	s.mobMu.Unlock()

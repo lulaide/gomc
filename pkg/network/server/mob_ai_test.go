@@ -490,7 +490,7 @@ func TestKillMobSplitsLargeSlime(t *testing.T) {
 		t.Fatal("spawnMob returned nil")
 	}
 
-	srv.killMob(mob, false)
+	srv.killMob(mob, false, 0)
 
 	srv.mobMu.Lock()
 	defer srv.mobMu.Unlock()
@@ -527,7 +527,7 @@ func TestKillMobSheepDropsSingleWoolWhenNotSheared(t *testing.T) {
 	}
 	srv.mobMu.Unlock()
 
-	srv.killMob(mob, true)
+	srv.killMob(mob, true, 0)
 
 	woolCount, woolDamages := countDroppedItemStacks(srv, blockIDWool)
 	if woolCount != 1 {
@@ -547,7 +547,7 @@ func TestKillMobCowDropsLeatherAndBeefWithinVanillaRanges(t *testing.T) {
 		t.Fatal("spawnMob returned nil")
 	}
 
-	srv.killMob(mob, true)
+	srv.killMob(mob, true, 0)
 
 	leatherCount, _ := countDroppedItemStacks(srv, itemIDLeather)
 	beefCount, _ := countDroppedItemStacks(srv, itemIDBeefRaw)
@@ -568,11 +568,127 @@ func TestKillMobSpiderWithoutPlayerKillDoesNotDropSpiderEye(t *testing.T) {
 		t.Fatal("spawnMob returned nil")
 	}
 
-	srv.killMob(mob, false)
+	srv.killMob(mob, false, 0)
 
 	eyeCount, _ := countDroppedItemStacks(srv, itemIDSpiderEye)
 	if eyeCount != 0 {
 		t.Fatalf("spider eye should require player kill flag: got=%d", eyeCount)
+	}
+}
+
+func TestKillMobPigDropsSaddleOnlyWhenSaddled(t *testing.T) {
+	srv := NewStatusServer(StatusConfig{})
+	srv.mobRand.SetSeed(41)
+
+	mob := srv.spawnMob(&spawnListEntry{entityType: entityTypePig}, 0.5, 5.0, 0.5, 0)
+	if mob == nil {
+		t.Fatal("spawnMob returned nil")
+	}
+	srv.mobMu.Lock()
+	live := srv.mobs[mob.EntityID]
+	if live != nil {
+		live.pigSaddled = true
+	}
+	srv.mobMu.Unlock()
+
+	srv.killMob(mob, true, 0)
+
+	saddleCount, _ := countDroppedItemStacks(srv, itemIDSaddle)
+	if saddleCount != 1 {
+		t.Fatalf("pig saddled drop mismatch: got=%d want=1", saddleCount)
+	}
+}
+
+func TestKillMobZombieRareDropRequiresPlayerKill(t *testing.T) {
+	const forcedRareLooting = 205
+
+	srvNoPlayer := NewStatusServer(StatusConfig{})
+	srvNoPlayer.mobRand.SetSeed(52)
+	noPlayerZombie := srvNoPlayer.spawnMob(&spawnListEntry{entityType: entityTypeZombie}, 0.5, 5.0, 0.5, 0)
+	if noPlayerZombie == nil {
+		t.Fatal("spawnMob returned nil for no-player branch")
+	}
+	srvNoPlayer.killMob(noPlayerZombie, false, forcedRareLooting)
+	noPlayerRare := 0
+	for _, itemID := range []int16{itemIDIronIngot, itemIDCarrot, itemIDPotato} {
+		count, _ := countDroppedItemStacks(srvNoPlayer, itemID)
+		noPlayerRare += count
+	}
+	if noPlayerRare != 0 {
+		t.Fatalf("zombie rare drop should require player kill flag: got=%d", noPlayerRare)
+	}
+
+	srvPlayer := NewStatusServer(StatusConfig{})
+	srvPlayer.mobRand.SetSeed(52)
+	playerZombie := srvPlayer.spawnMob(&spawnListEntry{entityType: entityTypeZombie}, 0.5, 5.0, 0.5, 0)
+	if playerZombie == nil {
+		t.Fatal("spawnMob returned nil for player branch")
+	}
+	srvPlayer.killMob(playerZombie, true, forcedRareLooting)
+	playerRare := 0
+	for _, itemID := range []int16{itemIDIronIngot, itemIDCarrot, itemIDPotato} {
+		count, _ := countDroppedItemStacks(srvPlayer, itemID)
+		playerRare += count
+	}
+	if playerRare != 1 {
+		t.Fatalf("zombie rare drop count mismatch: got=%d want=1", playerRare)
+	}
+}
+
+func TestKillMobWitherSkeletonRareDropSkullWhenRareRollPasses(t *testing.T) {
+	srv := NewStatusServer(StatusConfig{})
+	srv.mobRand.SetSeed(61)
+
+	mob := srv.spawnMob(&spawnListEntry{entityType: entityTypeSkeleton}, 0.5, 5.0, 0.5, 0)
+	if mob == nil {
+		t.Fatal("spawnMob returned nil")
+	}
+	srv.mobMu.Lock()
+	live := srv.mobs[mob.EntityID]
+	if live != nil {
+		live.skeletonType = 1
+	}
+	srv.mobMu.Unlock()
+
+	srv.killMob(mob, true, 205)
+
+	skullCount, skullDamages := countDroppedItemStacks(srv, itemIDSkull)
+	if skullCount != 1 {
+		t.Fatalf("wither skeleton skull drop mismatch: got=%d want=1", skullCount)
+	}
+	if len(skullDamages) != 1 || skullDamages[0] != 1 {
+		t.Fatalf("wither skeleton skull metadata mismatch: %#v", skullDamages)
+	}
+}
+
+func TestKillMobChildZombieDropsNothing(t *testing.T) {
+	srv := NewStatusServer(StatusConfig{})
+	srv.mobRand.SetSeed(73)
+
+	mob := srv.spawnMob(&spawnListEntry{entityType: entityTypeZombie}, 0.5, 5.0, 0.5, 0)
+	if mob == nil {
+		t.Fatal("spawnMob returned nil")
+	}
+	srv.mobMu.Lock()
+	live := srv.mobs[mob.EntityID]
+	if live != nil {
+		live.zombieChild = true
+	}
+	srv.mobMu.Unlock()
+
+	srv.killMob(mob, true, 205)
+
+	rottenCount, _ := countDroppedItemStacks(srv, itemIDRottenFlesh)
+	if rottenCount != 0 {
+		t.Fatalf("child zombie should not drop rotten flesh: got=%d", rottenCount)
+	}
+	rareCount := 0
+	for _, itemID := range []int16{itemIDIronIngot, itemIDCarrot, itemIDPotato} {
+		count, _ := countDroppedItemStacks(srv, itemID)
+		rareCount += count
+	}
+	if rareCount != 0 {
+		t.Fatalf("child zombie should not drop rare items: got=%d", rareCount)
 	}
 }
 
