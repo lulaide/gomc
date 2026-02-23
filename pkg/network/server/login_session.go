@@ -240,6 +240,10 @@ type loginSession struct {
 	playerDead         bool
 	playerSneaking     bool
 	playerSprinting    bool
+	playerInputStrafe  float32
+	playerInputForward float32
+	playerInputJump    bool
+	playerInputSneak   bool
 	playerUsingItem    bool
 	playerIsFlying     bool
 	playerItemUseCount int
@@ -400,6 +404,8 @@ func (s *loginSession) run() {
 			s.handleAnimation(p)
 		case *protocol.Packet19EntityAction:
 			s.handleEntityAction(p)
+		case *protocol.Packet27PlayerInput:
+			s.handlePlayerInput(p)
 		case *protocol.Packet16BlockItemSwitch:
 			s.handleHeldItemSwitch(p)
 		case *protocol.Packet101CloseWindow:
@@ -3621,6 +3627,26 @@ func (s *loginSession) handleEntityAction(packet *protocol.Packet19EntityAction)
 	if changed {
 		s.broadcastOwnEntityMetadata()
 	}
+}
+
+func (s *loginSession) handlePlayerInput(packet *protocol.Packet27PlayerInput) {
+	if packet == nil {
+		return
+	}
+
+	// Translation reference:
+	// - net.minecraft.src.NetServerHandler#func_110774_a(Packet27PlayerInput)
+	// - net.minecraft.src.EntityPlayerMP#setEntityActionState(float,float,boolean,boolean)
+	s.stateMu.Lock()
+	if packet.MoveStrafing >= -1.0 && packet.MoveStrafing <= 1.0 {
+		s.playerInputStrafe = packet.MoveStrafing
+	}
+	if packet.MoveForward >= -1.0 && packet.MoveForward <= 1.0 {
+		s.playerInputForward = packet.MoveForward
+	}
+	s.playerInputJump = packet.Jump
+	s.playerInputSneak = packet.Sneak
+	s.stateMu.Unlock()
 }
 
 func (s *loginSession) handleUseEntity(packet *protocol.Packet7UseEntity) bool {

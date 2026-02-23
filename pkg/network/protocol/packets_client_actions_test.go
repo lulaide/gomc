@@ -75,3 +75,28 @@ func TestPacket19EntityActionRoundTrip(t *testing.T) {
 		t.Fatalf("packet mismatch: %#v", out)
 	}
 }
+
+func TestPacket27PlayerInputRoundTrip(t *testing.T) {
+	in := &Packet27PlayerInput{
+		MoveStrafing: -0.75,
+		MoveForward:  1.0,
+		Jump:         true,
+		Sneak:        false,
+	}
+
+	var buf bytes.Buffer
+	if err := WritePacket(&buf, in); err != nil {
+		t.Fatalf("WritePacket failed: %v", err)
+	}
+	packet, err := ReadPacket(&buf, DirectionServerbound)
+	if err != nil {
+		t.Fatalf("ReadPacket failed: %v", err)
+	}
+	out, ok := packet.(*Packet27PlayerInput)
+	if !ok {
+		t.Fatalf("unexpected packet type: %T", packet)
+	}
+	if out.MoveStrafing != in.MoveStrafing || out.MoveForward != in.MoveForward || out.Jump != in.Jump || out.Sneak != in.Sneak {
+		t.Fatalf("packet mismatch: %#v", out)
+	}
+}

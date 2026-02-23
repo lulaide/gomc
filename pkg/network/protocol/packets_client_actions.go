@@ -112,9 +112,67 @@ func (p *Packet19EntityAction) WritePacketData(w *Writer) error {
 
 func (*Packet19EntityAction) PacketSize() int { return 9 }
 
+// Packet27PlayerInput translates net.minecraft.src.Packet27PlayerInput.
+type Packet27PlayerInput struct {
+	MoveStrafing float32
+	MoveForward  float32
+	Jump         bool
+	Sneak        bool
+}
+
+func (*Packet27PlayerInput) PacketID() uint8 { return 27 }
+
+func (p *Packet27PlayerInput) ReadPacketData(r *Reader) error {
+	moveStrafing, err := r.ReadFloat32()
+	if err != nil {
+		return err
+	}
+	moveForward, err := r.ReadFloat32()
+	if err != nil {
+		return err
+	}
+	jumpRaw, err := r.ReadUint8()
+	if err != nil {
+		return err
+	}
+	sneakRaw, err := r.ReadUint8()
+	if err != nil {
+		return err
+	}
+	p.MoveStrafing = moveStrafing
+	p.MoveForward = moveForward
+	p.Jump = jumpRaw != 0
+	p.Sneak = sneakRaw != 0
+	return nil
+}
+
+func (p *Packet27PlayerInput) WritePacketData(w *Writer) error {
+	if err := w.WriteFloat32(p.MoveStrafing); err != nil {
+		return err
+	}
+	if err := w.WriteFloat32(p.MoveForward); err != nil {
+		return err
+	}
+	var jump uint8
+	if p.Jump {
+		jump = 1
+	}
+	if err := w.WriteUint8(jump); err != nil {
+		return err
+	}
+	var sneak uint8
+	if p.Sneak {
+		sneak = 1
+	}
+	return w.WriteUint8(sneak)
+}
+
+func (*Packet27PlayerInput) PacketSize() int { return 10 }
+
 func init() {
 	// Translation target: Packet#addIdClassMapping for implemented client action packets.
 	_ = Register(7, false, true, func() Packet { return &Packet7UseEntity{} })
 	_ = Register(18, true, true, func() Packet { return &Packet18Animation{} })
 	_ = Register(19, false, true, func() Packet { return &Packet19EntityAction{} })
+	_ = Register(27, false, true, func() Packet { return &Packet27PlayerInput{} })
 }

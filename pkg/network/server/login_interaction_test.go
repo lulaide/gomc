@@ -3124,6 +3124,40 @@ func TestHandleEntityActionBroadcastsMetadataToWatchers(t *testing.T) {
 	}
 }
 
+func TestHandlePlayerInputStoresAndClampsMovementState(t *testing.T) {
+	srv := NewStatusServer(StatusConfig{})
+	session := newInteractionTestSession(srv, io.Discard)
+
+	session.handlePlayerInput(&protocol.Packet27PlayerInput{
+		MoveStrafing: 2.0,
+		MoveForward:  -3.0,
+		Jump:         true,
+		Sneak:        true,
+	})
+	if session.playerInputStrafe != 0 {
+		t.Fatalf("out-of-range strafe should be ignored, got=%f", session.playerInputStrafe)
+	}
+	if session.playerInputForward != 0 {
+		t.Fatalf("out-of-range forward should be ignored, got=%f", session.playerInputForward)
+	}
+	if !session.playerInputJump || !session.playerInputSneak {
+		t.Fatalf("expected jump/sneak states to update: jump=%t sneak=%t", session.playerInputJump, session.playerInputSneak)
+	}
+
+	session.handlePlayerInput(&protocol.Packet27PlayerInput{
+		MoveStrafing: -0.5,
+		MoveForward:  1.0,
+		Jump:         false,
+		Sneak:        false,
+	})
+	if session.playerInputStrafe != -0.5 || session.playerInputForward != 1.0 {
+		t.Fatalf("player input movement mismatch: strafe=%f forward=%f", session.playerInputStrafe, session.playerInputForward)
+	}
+	if session.playerInputJump || session.playerInputSneak {
+		t.Fatalf("expected jump/sneak false after update: jump=%t sneak=%t", session.playerInputJump, session.playerInputSneak)
+	}
+}
+
 func TestHandleUseEntityInvalidSelfAttackKicks(t *testing.T) {
 	srv := NewStatusServer(StatusConfig{})
 	var buf bytes.Buffer
