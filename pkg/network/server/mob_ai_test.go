@@ -124,6 +124,46 @@ func TestTickSingleMobPassiveWanders(t *testing.T) {
 	}
 }
 
+func TestTickSingleMobMountedPigUsesRiderInput(t *testing.T) {
+	srv := NewStatusServer(StatusConfig{})
+
+	rider := newInteractionTestSession(srv, io.Discard)
+	rider.entityID = 130
+	rider.playerRegistered = true
+	rider.playerDead = false
+	rider.playerYaw = 0
+	rider.playerInputForward = 1.0
+	rider.playerInputStrafe = 0.0
+
+	srv.activeMu.Lock()
+	srv.activePlayers[rider] = "rider"
+	srv.activeOrder = []*loginSession{rider}
+	srv.activeMu.Unlock()
+
+	pig := srv.spawnMob(&spawnListEntry{entityType: entityTypePig}, 0.5, 5.0, 0.5, 0)
+	if pig == nil {
+		t.Fatal("spawnMob returned nil")
+	}
+	srv.mobMu.Lock()
+	livePig := srv.mobs[pig.EntityID]
+	if livePig != nil {
+		livePig.pigSaddled = true
+	}
+	srv.mobMu.Unlock()
+
+	rider.stateMu.Lock()
+	rider.ridingEntityID = pig.EntityID
+	rider.stateMu.Unlock()
+
+	startZ := pig.Z
+	for i := 0; i < 20; i++ {
+		srv.tickSingleMob(pig)
+	}
+	if !(pig.Z > startZ) {
+		t.Fatalf("mounted pig should move forward from rider input: startZ=%.3f nowZ=%.3f", startZ, pig.Z)
+	}
+}
+
 func TestTryMoveLandMobCanStepUpOneBlock(t *testing.T) {
 	srv := NewStatusServer(StatusConfig{})
 	if !srv.world.setBlock(1, 5, 0, 1, 0) {

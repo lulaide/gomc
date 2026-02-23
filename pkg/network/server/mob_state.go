@@ -682,6 +682,26 @@ func (s *StatusServer) mobDesiredVelocityLocked(mob *trackedMob, target *loginSe
 		return 0, 0, 0
 	}
 
+	if mob.EntityType == entityTypePig && mob.pigSaddled {
+		strafe, forward, riderYaw, mounted := s.mountedPigInput(mob.EntityID)
+		if mounted {
+			// Translation reference:
+			// - net.minecraft.src.EntityPig#moveEntityWithHeading(float,float)
+			// Backward movement is reduced while mounted.
+			forwardF := float64(forward)
+			if forwardF < 0.0 {
+				forwardF *= 0.25
+			}
+			strafeF := float64(strafe) * 0.5
+			yawRad := float64(riderYaw) * math.Pi / 180.0
+			sinYaw := math.Sin(yawRad)
+			cosYaw := math.Cos(yawRad)
+			vx := (-sinYaw*forwardF + cosYaw*strafeF) * speed
+			vz := (cosYaw*forwardF + sinYaw*strafeF) * speed
+			return vx, 0.0, vz
+		}
+	}
+
 	if mob.CreatureType == creatureTypeMonster && target != nil {
 		tx, ty, tz := target.positionSnapshot()
 		dx := tx - mob.X
@@ -695,6 +715,28 @@ func (s *StatusServer) mobDesiredVelocityLocked(mob *trackedMob, target *loginSe
 	}
 
 	return s.mobWanderVelocityLocked(mob, speed)
+}
+
+func (s *StatusServer) mountedPigInput(mobEntityID int32) (strafe float32, forward float32, yaw float32, mounted bool) {
+	if mobEntityID == 0 {
+		return 0, 0, 0, false
+	}
+	for _, session := range s.activeSessions() {
+		if session == nil {
+			continue
+		}
+		session.stateMu.Lock()
+		match := session.ridingEntityID == mobEntityID && !session.playerDead
+		if match {
+			strafe = session.playerInputStrafe
+			forward = session.playerInputForward
+			yaw = session.playerYaw
+			session.stateMu.Unlock()
+			return strafe, forward, yaw, true
+		}
+		session.stateMu.Unlock()
+	}
+	return 0, 0, 0, false
 }
 
 func (s *StatusServer) mobWanderVelocityLocked(mob *trackedMob, speed float64) (float64, float64, float64) {
