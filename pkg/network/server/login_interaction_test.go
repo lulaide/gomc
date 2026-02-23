@@ -1882,6 +1882,167 @@ func TestHandleSlashCommandListIncludesPlayerNames(t *testing.T) {
 	}
 }
 
+func TestHandleSlashCommandSayBroadcastsAnnouncement(t *testing.T) {
+	srv := NewStatusServer(StatusConfig{})
+
+	var senderBuf bytes.Buffer
+	sender := newInteractionTestSession(srv, &senderBuf)
+	sender.clientUsername = "Steve"
+
+	var watcherBuf bytes.Buffer
+	watcher := newInteractionTestSession(srv, &watcherBuf)
+	watcher.clientUsername = "Alex"
+
+	srv.activeMu.Lock()
+	srv.activePlayers[sender] = "Steve"
+	srv.activePlayers[watcher] = "Alex"
+	srv.activeOrder = []*loginSession{sender, watcher}
+	srv.activeMu.Unlock()
+
+	if !sender.handleSlashCommand("/say hello world") {
+		t.Fatal("handleSlashCommand returned false")
+	}
+
+	for name, buf := range map[string]*bytes.Buffer{
+		"sender":  &senderBuf,
+		"watcher": &watcherBuf,
+	} {
+		packet, err := protocol.ReadPacket(buf, protocol.DirectionClientbound)
+		if err != nil {
+			t.Fatalf("%s failed to read announcement packet: %v", name, err)
+		}
+		chat, ok := packet.(*protocol.Packet3Chat)
+		if !ok {
+			t.Fatalf("%s expected Packet3Chat, got %T", name, packet)
+		}
+		if chat.Message != "[Steve] hello world" {
+			t.Fatalf("%s announcement mismatch: got=%q", name, chat.Message)
+		}
+	}
+}
+
+func TestHandleSlashCommandMeBroadcastsEmote(t *testing.T) {
+	srv := NewStatusServer(StatusConfig{})
+
+	var senderBuf bytes.Buffer
+	sender := newInteractionTestSession(srv, &senderBuf)
+	sender.clientUsername = "Steve"
+
+	var watcherBuf bytes.Buffer
+	watcher := newInteractionTestSession(srv, &watcherBuf)
+	watcher.clientUsername = "Alex"
+
+	srv.activeMu.Lock()
+	srv.activePlayers[sender] = "Steve"
+	srv.activePlayers[watcher] = "Alex"
+	srv.activeOrder = []*loginSession{sender, watcher}
+	srv.activeMu.Unlock()
+
+	if !sender.handleSlashCommand("/me waves") {
+		t.Fatal("handleSlashCommand returned false")
+	}
+
+	for name, buf := range map[string]*bytes.Buffer{
+		"sender":  &senderBuf,
+		"watcher": &watcherBuf,
+	} {
+		packet, err := protocol.ReadPacket(buf, protocol.DirectionClientbound)
+		if err != nil {
+			t.Fatalf("%s failed to read emote packet: %v", name, err)
+		}
+		chat, ok := packet.(*protocol.Packet3Chat)
+		if !ok {
+			t.Fatalf("%s expected Packet3Chat, got %T", name, packet)
+		}
+		if chat.Message != "* Steve waves" {
+			t.Fatalf("%s emote mismatch: got=%q", name, chat.Message)
+		}
+	}
+}
+
+func TestHandleSlashCommandTellSendsPrivateIncomingOutgoing(t *testing.T) {
+	srv := NewStatusServer(StatusConfig{})
+
+	var senderBuf bytes.Buffer
+	sender := newInteractionTestSession(srv, &senderBuf)
+	sender.clientUsername = "Steve"
+
+	var targetBuf bytes.Buffer
+	target := newInteractionTestSession(srv, &targetBuf)
+	target.clientUsername = "Alex"
+
+	var watcherBuf bytes.Buffer
+	watcher := newInteractionTestSession(srv, &watcherBuf)
+	watcher.clientUsername = "Watcher"
+
+	srv.activeMu.Lock()
+	srv.activePlayers[sender] = "Steve"
+	srv.activePlayers[target] = "Alex"
+	srv.activePlayers[watcher] = "Watcher"
+	srv.activeOrder = []*loginSession{sender, target, watcher}
+	srv.activeMu.Unlock()
+
+	if !sender.handleSlashCommand("/tell Alex hi there") {
+		t.Fatal("handleSlashCommand returned false")
+	}
+
+	packet, err := protocol.ReadPacket(&targetBuf, protocol.DirectionClientbound)
+	if err != nil {
+		t.Fatalf("failed to read target private message: %v", err)
+	}
+	incoming, ok := packet.(*protocol.Packet3Chat)
+	if !ok {
+		t.Fatalf("expected target Packet3Chat, got %T", packet)
+	}
+	if incoming.Message != "Steve whispers to you: hi there" {
+		t.Fatalf("incoming private message mismatch: got=%q", incoming.Message)
+	}
+
+	packet, err = protocol.ReadPacket(&senderBuf, protocol.DirectionClientbound)
+	if err != nil {
+		t.Fatalf("failed to read sender private confirmation: %v", err)
+	}
+	outgoing, ok := packet.(*protocol.Packet3Chat)
+	if !ok {
+		t.Fatalf("expected sender Packet3Chat, got %T", packet)
+	}
+	if outgoing.Message != "You whisper to Alex: hi there" {
+		t.Fatalf("outgoing private message mismatch: got=%q", outgoing.Message)
+	}
+
+	if _, err := protocol.ReadPacket(&watcherBuf, protocol.DirectionClientbound); err == nil {
+		t.Fatal("watcher should not receive private tell packets")
+	}
+}
+
+func TestHandleSlashCommandTellAliasesAndSelfTargetError(t *testing.T) {
+	srv := NewStatusServer(StatusConfig{})
+	var buf bytes.Buffer
+	session := newInteractionTestSession(srv, &buf)
+	session.clientUsername = "Steve"
+
+	srv.activeMu.Lock()
+	srv.activePlayers[session] = "Steve"
+	srv.activeOrder = []*loginSession{session}
+	srv.activeMu.Unlock()
+
+	if !session.handleSlashCommand("/w Steve hi") {
+		t.Fatal("handleSlashCommand returned false")
+	}
+
+	packet, err := protocol.ReadPacket(&buf, protocol.DirectionClientbound)
+	if err != nil {
+		t.Fatalf("failed to read self-target error packet: %v", err)
+	}
+	chat, ok := packet.(*protocol.Packet3Chat)
+	if !ok {
+		t.Fatalf("expected Packet3Chat, got %T", packet)
+	}
+	if chat.Message != "You can't send a private message to yourself!" {
+		t.Fatalf("self-target tell mismatch: got=%q", chat.Message)
+	}
+}
+
 func TestHandleSlashCommandXpAddsPointsAndSendsExperiencePacket(t *testing.T) {
 	srv := NewStatusServer(StatusConfig{})
 	var buf bytes.Buffer

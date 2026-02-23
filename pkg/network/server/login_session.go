@@ -1196,6 +1196,82 @@ func (s *loginSession) handleSlashCommand(command string) bool {
 		return true
 	}
 
+	if strings.EqualFold(args[0], "/say") {
+		// Translation target:
+		// - net.minecraft.src.CommandServerSay#processCommand
+		if len(args) < 2 {
+			s.sendSystemChat("Usage: /say <message ...>")
+			return true
+		}
+		message := strings.TrimSpace(strings.Join(args[1:], " "))
+		if message == "" {
+			s.sendSystemChat("Usage: /say <message ...>")
+			return true
+		}
+		senderName := strings.TrimSpace(s.clientUsername)
+		if senderName == "" {
+			senderName = "Server"
+		}
+		s.server.broadcastPacket(protocol.NewPacket3Chat("["+senderName+"] "+message, true))
+		return true
+	}
+
+	if strings.EqualFold(args[0], "/me") {
+		// Translation target:
+		// - net.minecraft.src.CommandServerEmote#processCommand
+		if len(args) < 2 {
+			s.sendSystemChat("Usage: /me <action ...>")
+			return true
+		}
+		action := strings.TrimSpace(strings.Join(args[1:], " "))
+		if action == "" {
+			s.sendSystemChat("Usage: /me <action ...>")
+			return true
+		}
+		senderName := strings.TrimSpace(s.clientUsername)
+		if senderName == "" {
+			senderName = "Player"
+		}
+		s.server.broadcastPacket(protocol.NewPacket3Chat("* "+senderName+" "+action, true))
+		return true
+	}
+
+	if strings.EqualFold(args[0], "/tell") || strings.EqualFold(args[0], "/w") || strings.EqualFold(args[0], "/msg") {
+		// Translation target:
+		// - net.minecraft.src.CommandServerMessage#processCommand
+		if len(args) < 3 {
+			s.sendSystemChat("Usage: /tell <player> <private message ...>")
+			return true
+		}
+		target := s.server.activeSessionByUsername(args[1])
+		if target == nil {
+			s.sendSystemChat("Player not found.")
+			return true
+		}
+		if target == s {
+			s.sendSystemChat("You can't send a private message to yourself!")
+			return true
+		}
+		message := strings.TrimSpace(strings.Join(args[2:], " "))
+		if message == "" {
+			s.sendSystemChat("Usage: /tell <player> <private message ...>")
+			return true
+		}
+		senderName := strings.TrimSpace(s.clientUsername)
+		if senderName == "" {
+			senderName = "Player"
+		}
+		targetName := strings.TrimSpace(target.clientUsername)
+		if targetName == "" {
+			targetName = "player"
+		}
+		if !target.sendPacket(protocol.NewPacket3Chat(senderName+" whispers to you: "+message, true)) {
+			return false
+		}
+		s.sendSystemChat("You whisper to " + targetName + ": " + message)
+		return true
+	}
+
 	if strings.EqualFold(args[0], "/tp") {
 		params := args[1:]
 		if len(params) < 1 {
