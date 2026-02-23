@@ -3322,6 +3322,84 @@ func TestHandleUseEntityInteractSheepShearsDropWoolAndDamageShears(t *testing.T)
 	}
 }
 
+func TestHandleUseEntityAttackDroppedItemKicksInvalidEntity(t *testing.T) {
+	srv := NewStatusServer(StatusConfig{})
+	var buf bytes.Buffer
+	session := newInteractionTestSession(srv, &buf)
+	session.entityID = 404
+	session.clientUsername = "self"
+	session.playerRegistered = true
+
+	dropped := srv.spawnDroppedItemAt(&protocol.ItemStack{
+		ItemID:     1,
+		StackSize:  1,
+		ItemDamage: 0,
+	}, 0.5, 5.0, 2.5, 0, 0, 0, 0)
+	if dropped == nil {
+		t.Fatal("spawnDroppedItemAt returned nil")
+	}
+
+	ok := session.handleUseEntity(&protocol.Packet7UseEntity{
+		PlayerEntityID: session.entityID,
+		TargetEntityID: dropped.EntityID,
+		Action:         1,
+	})
+	if ok {
+		t.Fatal("expected handleUseEntity to return false for dropped item attack")
+	}
+
+	packet, err := protocol.ReadPacket(&buf, protocol.DirectionClientbound)
+	if err != nil {
+		t.Fatalf("failed to read kick packet: %v", err)
+	}
+	kick, ok := packet.(*protocol.Packet255KickDisconnect)
+	if !ok {
+		t.Fatalf("expected Packet255KickDisconnect, got %T", packet)
+	}
+	if !strings.Contains(kick.Reason, "invalid entity") {
+		t.Fatalf("unexpected kick reason: %q", kick.Reason)
+	}
+}
+
+func TestHandleUseEntityAttackArrowKicksInvalidEntity(t *testing.T) {
+	srv := NewStatusServer(StatusConfig{})
+	var buf bytes.Buffer
+	session := newInteractionTestSession(srv, &buf)
+	session.entityID = 405
+	session.clientUsername = "self"
+	session.playerRegistered = true
+
+	arrow := &trackedProjectile{
+		EntityID: 9901,
+		Type:     entityTypeArrow,
+		SeenBy:   make(map[*loginSession]struct{}),
+	}
+	srv.projectileMu.Lock()
+	srv.projectiles[arrow.EntityID] = arrow
+	srv.projectileMu.Unlock()
+
+	ok := session.handleUseEntity(&protocol.Packet7UseEntity{
+		PlayerEntityID: session.entityID,
+		TargetEntityID: arrow.EntityID,
+		Action:         1,
+	})
+	if ok {
+		t.Fatal("expected handleUseEntity to return false for arrow attack")
+	}
+
+	packet, err := protocol.ReadPacket(&buf, protocol.DirectionClientbound)
+	if err != nil {
+		t.Fatalf("failed to read kick packet: %v", err)
+	}
+	kick, ok := packet.(*protocol.Packet255KickDisconnect)
+	if !ok {
+		t.Fatalf("expected Packet255KickDisconnect, got %T", packet)
+	}
+	if !strings.Contains(kick.Reason, "invalid entity") {
+		t.Fatalf("unexpected kick reason: %q", kick.Reason)
+	}
+}
+
 func TestHandleUseEntityAttackDamagesTargetAndSendsHealth(t *testing.T) {
 	srv := NewStatusServer(StatusConfig{})
 	attacker := newInteractionTestSession(srv, io.Discard)

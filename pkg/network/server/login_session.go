@@ -3581,6 +3581,10 @@ func (s *loginSession) handleUseEntity(packet *protocol.Packet7UseEntity) bool {
 	if targetPlayer == nil {
 		targetMob = s.server.mobByEntityID(packet.TargetEntityID)
 		if targetMob == nil {
+			if packet.Action == 1 && s.isInvalidAttackTargetEntity(packet.TargetEntityID) {
+				s.disconnect("Attempting to attack an invalid entity")
+				return false
+			}
 			return true
 		}
 	}
@@ -3630,6 +3634,35 @@ func (s *loginSession) handleUseEntity(packet *protocol.Packet7UseEntity) bool {
 	default:
 		return true
 	}
+}
+
+func (s *loginSession) isInvalidAttackTargetEntity(entityID int32) bool {
+	if entityID == 0 {
+		return false
+	}
+
+	s.stateMu.Lock()
+	selfEntityID := s.entityID
+	s.stateMu.Unlock()
+	if entityID == selfEntityID {
+		return true
+	}
+
+	s.server.droppedItemMu.Lock()
+	_, isDropped := s.server.droppedItems[entityID]
+	s.server.droppedItemMu.Unlock()
+	if isDropped {
+		return true
+	}
+
+	s.server.projectileMu.Lock()
+	projectile := s.server.projectiles[entityID]
+	s.server.projectileMu.Unlock()
+	if projectile != nil && projectile.Type == entityTypeArrow {
+		return true
+	}
+
+	return false
 }
 
 func (s *loginSession) attackTargetMobWithCurrentItem(target *trackedMob) {
