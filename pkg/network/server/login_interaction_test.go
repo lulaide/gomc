@@ -1957,6 +1957,29 @@ func TestHandleSlashCommandHelpByNameAndAlias(t *testing.T) {
 	}
 }
 
+func TestHandleSlashCommandSeedReportsWorldSeed(t *testing.T) {
+	srv := NewStatusServer(StatusConfig{})
+	srv.world.seed = 987654321
+	var buf bytes.Buffer
+	session := newInteractionTestSession(srv, &buf)
+
+	if !session.handleSlashCommand("/seed") {
+		t.Fatal("handleSlashCommand returned false")
+	}
+
+	packet, err := protocol.ReadPacket(&buf, protocol.DirectionClientbound)
+	if err != nil {
+		t.Fatalf("failed to read seed output: %v", err)
+	}
+	chat, ok := packet.(*protocol.Packet3Chat)
+	if !ok {
+		t.Fatalf("expected Packet3Chat, got %T", packet)
+	}
+	if chat.Message != "Seed: 987654321" {
+		t.Fatalf("seed output mismatch: got=%q", chat.Message)
+	}
+}
+
 func TestHandleSlashCommandSayBroadcastsAnnouncement(t *testing.T) {
 	srv := NewStatusServer(StatusConfig{})
 

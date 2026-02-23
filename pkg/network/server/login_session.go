@@ -1198,6 +1198,7 @@ func (s *loginSession) handleSlashCommand(command string) bool {
 			"list",
 			"me",
 			"say",
+			"seed",
 			"setblock",
 			"tell",
 			"time",
@@ -1213,6 +1214,7 @@ func (s *loginSession) handleSlashCommand(command string) bool {
 			"list":     "/list",
 			"me":       "/me <action ...>",
 			"say":      "/say <message ...>",
+			"seed":     "/seed",
 			"setblock": "/setblock <x> <y> <z> <id> [meta]",
 			"tell":     "/tell <player> <private message ...>",
 			"time":     "/time <set|add> <value>",
@@ -1264,6 +1266,13 @@ func (s *loginSession) handleSlashCommand(command string) bool {
 		} else {
 			s.sendSystemChat("Players online (" + strconv.Itoa(len(names)) + "): " + strings.Join(names, ", "))
 		}
+		return true
+	}
+
+	if strings.EqualFold(args[0], "/seed") {
+		// Translation target:
+		// - net.minecraft.src.CommandShowSeed#processCommand
+		s.sendSystemChat("Seed: " + strconv.FormatInt(s.server.world.seed, 10))
 		return true
 	}
 
