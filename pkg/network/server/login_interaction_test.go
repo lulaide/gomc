@@ -793,6 +793,57 @@ func TestHandleSlashCommandGamemodeSurvivalClearsFlyingState(t *testing.T) {
 	}
 }
 
+func TestHandleSlashCommandGamemodeWithTargetPlayer(t *testing.T) {
+	srv := NewStatusServer(StatusConfig{})
+
+	var adminBuf bytes.Buffer
+	admin := newInteractionTestSession(srv, &adminBuf)
+	admin.clientUsername = "Admin"
+
+	var targetBuf bytes.Buffer
+	target := newInteractionTestSession(srv, &targetBuf)
+	target.clientUsername = "Alex"
+	target.gameType = 1
+	target.playerIsFlying = true
+
+	srv.activeMu.Lock()
+	srv.activePlayers[admin] = "Admin"
+	srv.activePlayers[target] = "Alex"
+	srv.activeOrder = []*loginSession{admin, target}
+	srv.activeMu.Unlock()
+
+	if !admin.handleSlashCommand("/gamemode survival Alex") {
+		t.Fatal("handleSlashCommand returned false")
+	}
+
+	packet, err := protocol.ReadPacket(&targetBuf, protocol.DirectionClientbound)
+	if err != nil {
+		t.Fatalf("failed to read target abilities packet: %v", err)
+	}
+	abilities, ok := packet.(*protocol.Packet202PlayerAbilities)
+	if !ok {
+		t.Fatalf("expected target Packet202PlayerAbilities, got %T", packet)
+	}
+	if abilities.IsCreative || abilities.AllowFlying || abilities.IsFlying || abilities.DisableDamage {
+		t.Fatalf("target survival abilities mismatch: %#v", abilities)
+	}
+	if target.gameType != 0 || target.playerIsFlying {
+		t.Fatalf("target gamemode state mismatch: mode=%d flying=%t", target.gameType, target.playerIsFlying)
+	}
+
+	adminPacket, err := protocol.ReadPacket(&adminBuf, protocol.DirectionClientbound)
+	if err != nil {
+		t.Fatalf("failed to read admin feedback packet: %v", err)
+	}
+	chat, ok := adminPacket.(*protocol.Packet3Chat)
+	if !ok {
+		t.Fatalf("expected admin Packet3Chat, got %T", adminPacket)
+	}
+	if !strings.Contains(chat.Message, "Set Alex game mode to Survival Mode") {
+		t.Fatalf("unexpected admin gamemode feedback: %q", chat.Message)
+	}
+}
+
 func TestHandleSlashCommandKillSendsZeroHealth(t *testing.T) {
 	srv := NewStatusServer(StatusConfig{})
 	var buf bytes.Buffer
@@ -1440,6 +1491,108 @@ func TestHandleSlashCommandTpTeleportsAndBroadcasts(t *testing.T) {
 	}
 	if teleport.EntityID != 99 || teleport.XPosition != toPacketPosition(10) || teleport.YPosition != toPacketPosition(6) || teleport.ZPosition != toPacketPosition(10) {
 		t.Fatalf("teleport packet mismatch: %#v", teleport)
+	}
+}
+
+func TestHandleSlashCommandTpPlayerToPlayer(t *testing.T) {
+	srv := NewStatusServer(StatusConfig{})
+
+	var adminBuf bytes.Buffer
+	admin := newInteractionTestSession(srv, &adminBuf)
+	admin.clientUsername = "Admin"
+
+	var aliceBuf bytes.Buffer
+	alice := newInteractionTestSession(srv, &aliceBuf)
+	alice.clientUsername = "Alice"
+	alice.playerX = 1.5
+	alice.playerY = 5
+	alice.playerZ = 1.5
+
+	bob := newInteractionTestSession(srv, io.Discard)
+	bob.clientUsername = "Bob"
+	bob.playerX = 18.25
+	bob.playerY = 7
+	bob.playerZ = -4.75
+	bob.playerYaw = 35
+	bob.playerPitch = -10
+
+	srv.activeMu.Lock()
+	srv.activePlayers[admin] = "Admin"
+	srv.activePlayers[alice] = "Alice"
+	srv.activePlayers[bob] = "Bob"
+	srv.activeOrder = []*loginSession{admin, alice, bob}
+	srv.activeMu.Unlock()
+
+	if !admin.handleSlashCommand("/tp Alice Bob") {
+		t.Fatal("handleSlashCommand returned false")
+	}
+
+	packet, err := protocol.ReadPacket(&aliceBuf, protocol.DirectionClientbound)
+	if err != nil {
+		t.Fatalf("failed to read Alice teleport packet: %v", err)
+	}
+	move, ok := packet.(*protocol.Packet13PlayerLookMove)
+	if !ok {
+		t.Fatalf("expected Packet13PlayerLookMove for Alice, got %T", packet)
+	}
+	if move.XPosition != bob.playerX || move.Stance != bob.playerY || move.ZPosition != bob.playerZ {
+		t.Fatalf("alice teleport position mismatch: %#v", move)
+	}
+	if move.Yaw != bob.playerYaw || move.Pitch != bob.playerPitch {
+		t.Fatalf("alice teleport rotation mismatch: %#v", move)
+	}
+
+	adminPacket, err := protocol.ReadPacket(&adminBuf, protocol.DirectionClientbound)
+	if err != nil {
+		t.Fatalf("failed to read admin feedback packet: %v", err)
+	}
+	chat, ok := adminPacket.(*protocol.Packet3Chat)
+	if !ok {
+		t.Fatalf("expected admin Packet3Chat, got %T", adminPacket)
+	}
+	if !strings.Contains(chat.Message, "Teleported Alice to Bob") {
+		t.Fatalf("unexpected admin feedback: %q", chat.Message)
+	}
+}
+
+func TestHandleSlashCommandTpSupportsRelativeCoordinates(t *testing.T) {
+	srv := NewStatusServer(StatusConfig{})
+
+	admin := newInteractionTestSession(srv, io.Discard)
+	admin.clientUsername = "Admin"
+
+	var targetBuf bytes.Buffer
+	target := newInteractionTestSession(srv, &targetBuf)
+	target.clientUsername = "Target"
+	target.playerX = 2.5
+	target.playerY = 6.0
+	target.playerZ = -3.5
+	target.playerYaw = 12
+	target.playerPitch = -3
+
+	srv.activeMu.Lock()
+	srv.activePlayers[admin] = "Admin"
+	srv.activePlayers[target] = "Target"
+	srv.activeOrder = []*loginSession{admin, target}
+	srv.activeMu.Unlock()
+
+	if !admin.handleSlashCommand("/tp Target ~1 ~ ~-2") {
+		t.Fatal("handleSlashCommand returned false")
+	}
+
+	packet, err := protocol.ReadPacket(&targetBuf, protocol.DirectionClientbound)
+	if err != nil {
+		t.Fatalf("failed to read relative tp packet: %v", err)
+	}
+	move, ok := packet.(*protocol.Packet13PlayerLookMove)
+	if !ok {
+		t.Fatalf("expected Packet13PlayerLookMove, got %T", packet)
+	}
+	if move.XPosition != 3.5 || move.Stance != 6.0 || move.ZPosition != -5.5 {
+		t.Fatalf("relative tp mismatch: %#v", move)
+	}
+	if move.Yaw != 12 || move.Pitch != -3 {
+		t.Fatalf("relative tp rotation mismatch: %#v", move)
 	}
 }
 

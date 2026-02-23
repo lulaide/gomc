@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"crypto/rand"
 	"encoding/binary"
+	"fmt"
 	"io"
 	"math"
 	"net"
@@ -1196,39 +1197,80 @@ func (s *loginSession) handleSlashCommand(command string) bool {
 	}
 
 	if strings.EqualFold(args[0], "/tp") {
-		if len(args) != 4 {
+		params := args[1:]
+		if len(params) < 1 {
 			s.sendSystemChat("Usage: /tp <x> <y> <z>")
 			return true
 		}
-		x, err := strconv.ParseFloat(args[1], 64)
-		if err != nil {
-			s.sendSystemChat("Invalid X coordinate")
-			return true
+
+		target := s
+		if len(params) == 2 || len(params) == 4 {
+			found := s.server.activeSessionByUsername(params[0])
+			if found == nil {
+				s.sendSystemChat("Player not found.")
+				return true
+			}
+			target = found
 		}
-		y, err := strconv.ParseFloat(args[2], 64)
-		if err != nil {
-			s.sendSystemChat("Invalid Y coordinate")
-			return true
+
+		targetName := strings.TrimSpace(target.clientUsername)
+		if targetName == "" {
+			targetName = "player"
 		}
-		z, err := strconv.ParseFloat(args[3], 64)
-		if err != nil {
-			s.sendSystemChat("Invalid Z coordinate")
-			return true
-		}
-		if y < 0 || y >= buildLimit {
-			s.sendSystemChat("Y must be between 0 and 255")
-			return true
-		}
-		if math.Abs(x) > maxWorldCoordinate || math.Abs(z) > maxWorldCoordinate {
-			s.sendSystemChat("Coordinates out of world bounds")
+
+		if len(params) == 1 || len(params) == 2 {
+			dest := s.server.activeSessionByUsername(params[len(params)-1])
+			if dest == nil {
+				s.sendSystemChat("Player not found.")
+				return true
+			}
+			destX, destY, destZ, destYaw, destPitch := dest.positionRotationSnapshot()
+			if !target.setPlayerLocation(destX, destY, destZ, destYaw, destPitch, true) {
+				return false
+			}
+			destName := strings.TrimSpace(dest.clientUsername)
+			if destName == "" {
+				destName = "player"
+			}
+			s.sendSystemChat("Teleported " + targetName + " to " + destName)
 			return true
 		}
 
-		s.stateMu.Lock()
-		yaw := s.playerYaw
-		pitch := s.playerPitch
-		s.stateMu.Unlock()
-		return s.setPlayerLocation(x, y, z, yaw, pitch, true)
+		if len(params) == 3 || len(params) == 4 {
+			start := len(params) - 3
+			curX, curY, curZ, yaw, pitch := target.positionRotationSnapshot()
+			x, err := parseTeleportCoordinate(params[start], curX)
+			if err != nil {
+				s.sendSystemChat("Invalid X coordinate")
+				return true
+			}
+			y, err := parseTeleportCoordinate(params[start+1], curY)
+			if err != nil {
+				s.sendSystemChat("Invalid Y coordinate")
+				return true
+			}
+			z, err := parseTeleportCoordinate(params[start+2], curZ)
+			if err != nil {
+				s.sendSystemChat("Invalid Z coordinate")
+				return true
+			}
+			if y < 0 || y >= buildLimit {
+				s.sendSystemChat("Y must be between 0 and 255")
+				return true
+			}
+			if math.Abs(x) > maxWorldCoordinate || math.Abs(z) > maxWorldCoordinate {
+				s.sendSystemChat("Coordinates out of world bounds")
+				return true
+			}
+			if !target.setPlayerLocation(x, y, z, yaw, pitch, true) {
+				return false
+			}
+			s.sendSystemChat("Teleported " + targetName + " to " + strconv.FormatFloat(x, 'f', 3, 64) + " " + strconv.FormatFloat(y, 'f', 3, 64) + " " + strconv.FormatFloat(z, 'f', 3, 64))
+			return true
+		}
+
+		s.sendSystemChat("Usage: /tp <x> <y> <z>")
+		return true
 	}
 
 	if strings.EqualFold(args[0], "/give") {
@@ -1327,19 +1369,45 @@ func (s *loginSession) handleSlashCommand(command string) bool {
 			return true
 		}
 
-		s.stateMu.Lock()
-		s.gameType = mode
-		if mode != 1 {
-			s.playerIsFlying = false
+		target := s
+		targetName := strings.TrimSpace(s.clientUsername)
+		if len(args) >= 3 {
+			found := s.server.activeSessionByUsername(args[2])
+			if found == nil {
+				s.sendSystemChat("Player not found.")
+				return true
+			}
+			target = found
+			if name := strings.TrimSpace(found.clientUsername); name != "" {
+				targetName = name
+			}
 		}
-		s.stateMu.Unlock()
-		if !s.sendPacket(s.currentAbilitiesPacket()) {
+		if targetName == "" {
+			targetName = "player"
+		}
+
+		target.stateMu.Lock()
+		target.gameType = mode
+		target.playerFallDistance = 0
+		if mode != 1 {
+			target.playerIsFlying = false
+		}
+		target.stateMu.Unlock()
+		if !target.sendPacket(target.currentAbilitiesPacket()) {
 			return false
 		}
 		if mode == 1 {
-			s.sendSystemChat("Set own game mode to Creative Mode")
+			if target == s {
+				s.sendSystemChat("Set own game mode to Creative Mode")
+			} else {
+				s.sendSystemChat("Set " + targetName + " game mode to Creative Mode")
+			}
 		} else {
-			s.sendSystemChat("Set own game mode to Survival Mode")
+			if target == s {
+				s.sendSystemChat("Set own game mode to Survival Mode")
+			} else {
+				s.sendSystemChat("Set " + targetName + " game mode to Survival Mode")
+			}
 		}
 		return true
 	}
@@ -1478,6 +1546,24 @@ func (s *loginSession) handleSlashCommand(command string) bool {
 
 func (s *loginSession) sendSystemChat(text string) {
 	_ = s.sendPacket(protocol.NewPacket3Chat(text, true))
+}
+
+func parseTeleportCoordinate(token string, current float64) (float64, error) {
+	token = strings.TrimSpace(token)
+	if token == "" {
+		return 0, fmt.Errorf("empty coordinate")
+	}
+	if strings.HasPrefix(token, "~") {
+		if len(token) == 1 {
+			return current, nil
+		}
+		off, err := strconv.ParseFloat(token[1:], 64)
+		if err != nil {
+			return 0, err
+		}
+		return current + off, nil
+	}
+	return strconv.ParseFloat(token, 64)
 }
 
 func normalizeGameTypeValue(v int8) int8 {
@@ -2841,6 +2927,12 @@ func (s *loginSession) positionSnapshot() (float64, float64, float64) {
 	s.stateMu.Lock()
 	defer s.stateMu.Unlock()
 	return s.playerX, s.playerY, s.playerZ
+}
+
+func (s *loginSession) positionRotationSnapshot() (float64, float64, float64, float32, float32) {
+	s.stateMu.Lock()
+	defer s.stateMu.Unlock()
+	return s.playerX, s.playerY, s.playerZ, s.playerYaw, s.playerPitch
 }
 
 func (s *loginSession) handleAnimation(packet *protocol.Packet18Animation) {
