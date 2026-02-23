@@ -91,6 +91,7 @@ const (
 	itemIDChickenCooked int16 = 366
 	itemIDRottenFlesh   int16 = 367
 	itemIDSpiderEye     int16 = 375
+	itemIDDyePowder     int16 = 351
 	itemIDCarrot        int16 = 391
 	itemIDPotato        int16 = 392
 	itemIDBakedPotato   int16 = 393
@@ -3733,14 +3734,17 @@ func (s *loginSession) interactWithMob(target *trackedMob) bool {
 		return false
 	}
 
+	handled := false
 	switch target.EntityType {
 	case entityTypeCow:
-		return s.interactWithCow(target)
+		handled = s.interactWithCow(target)
 	case entityTypeSheep:
-		return s.interactWithSheep(target)
-	default:
-		return false
+		handled = s.interactWithSheep(target)
 	}
+	if handled {
+		return true
+	}
+	return s.interactItemWithMob(target)
 }
 
 func (s *loginSession) interactWithCow(target *trackedMob) bool {
@@ -3877,6 +3881,75 @@ func (s *loginSession) interactWithSheep(target *trackedMob) bool {
 			ItemDamage: woolColor,
 		}, x, y+1.0, z, m[0], m[1], m[2], entityDropPickupDelayTicks)
 	}
+	return true
+}
+
+func (s *loginSession) interactItemWithMob(target *trackedMob) bool {
+	if target == nil {
+		return false
+	}
+
+	// Translation reference:
+	// - net.minecraft.src.EntityPlayer#interactWith(Entity)
+	// - net.minecraft.src.ItemDye#itemInteractionForEntity
+	var (
+		heldSlot   int
+		isCreative bool
+	)
+	s.stateMu.Lock()
+	heldSlot = s.heldWindowSlotLocked()
+	stack := s.inventory[heldSlot]
+	if stack == nil || stack.StackSize <= 0 {
+		s.stateMu.Unlock()
+		return false
+	}
+	if stack.ItemID != itemIDDyePowder {
+		s.stateMu.Unlock()
+		return false
+	}
+	dyeMeta := int16(stack.ItemDamage & 15)
+	isCreative = s.gameType == 1
+	s.stateMu.Unlock()
+
+	if target.EntityType != entityTypeSheep {
+		return false
+	}
+
+	targetColor := int8(^dyeMeta & 15)
+	changed := false
+	s.server.mobMu.Lock()
+	live := s.server.mobs[target.EntityID]
+	if live != nil && live.EntityType == entityTypeSheep {
+		if !live.sheepSheared && live.sheepColor != targetColor {
+			live.sheepColor = targetColor
+			changed = true
+		}
+	}
+	s.server.mobMu.Unlock()
+
+	if !changed {
+		// ItemDye returns true for sheep targets even when no state change.
+		return true
+	}
+
+	if !isCreative {
+		slotChanged := false
+		s.stateMu.Lock()
+		stack := s.inventory[heldSlot]
+		if stack != nil && stack.StackSize > 0 && stack.ItemID == itemIDDyePowder && int16(stack.ItemDamage&15) == dyeMeta {
+			stack.StackSize--
+			slotChanged = true
+			if stack.StackSize <= 0 {
+				s.inventory[heldSlot] = nil
+			}
+		}
+		s.stateMu.Unlock()
+		if slotChanged {
+			_ = s.sendInventorySetSlot(heldSlot)
+		}
+	}
+
+	s.server.broadcastMobMetadata(target)
 	return true
 }
 

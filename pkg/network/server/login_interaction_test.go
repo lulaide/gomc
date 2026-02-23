@@ -3322,6 +3322,166 @@ func TestHandleUseEntityInteractSheepShearsDropWoolAndDamageShears(t *testing.T)
 	}
 }
 
+func TestHandleUseEntityInteractSheepWithDyeChangesColorAndConsumesInSurvival(t *testing.T) {
+	srv := NewStatusServer(StatusConfig{})
+	var buf bytes.Buffer
+	session := newInteractionTestSession(srv, &buf)
+	session.entityID = 406
+	session.playerHealth = 20
+	session.playerRegistered = true
+	session.heldItemSlot = 0
+	session.inventory[36] = &protocol.ItemStack{
+		ItemID:     itemIDDyePowder,
+		StackSize:  2,
+		ItemDamage: 0, // black dye -> wool color 15
+	}
+
+	mob := srv.spawnMob(&spawnListEntry{entityType: entityTypeSheep}, 0.5, 5.0, 2.5, 0)
+	if mob == nil {
+		t.Fatal("spawnMob returned nil")
+	}
+	srv.mobMu.Lock()
+	live := srv.mobs[mob.EntityID]
+	if live != nil {
+		live.sheepSheared = false
+		live.sheepColor = 0
+	}
+	srv.mobMu.Unlock()
+
+	if !session.handleUseEntity(&protocol.Packet7UseEntity{
+		PlayerEntityID: session.entityID,
+		TargetEntityID: mob.EntityID,
+		Action:         0,
+	}) {
+		t.Fatal("handleUseEntity returned false")
+	}
+
+	srv.mobMu.Lock()
+	live = srv.mobs[mob.EntityID]
+	srv.mobMu.Unlock()
+	if live == nil {
+		t.Fatal("expected sheep to remain alive")
+	}
+	if live.sheepColor != 15 {
+		t.Fatalf("dye color mapping mismatch: got=%d want=15", live.sheepColor)
+	}
+	if session.inventory[36] == nil || session.inventory[36].ItemID != itemIDDyePowder || session.inventory[36].StackSize != 1 {
+		t.Fatalf("dye stack mismatch after interaction: %#v", session.inventory[36])
+	}
+
+	packet, err := protocol.ReadPacket(&buf, protocol.DirectionClientbound)
+	if err != nil {
+		t.Fatalf("failed to read dye slot sync: %v", err)
+	}
+	slot, ok := packet.(*protocol.Packet103SetSlot)
+	if !ok {
+		t.Fatalf("expected Packet103SetSlot, got %T", packet)
+	}
+	if slot.ItemSlot != 36 || slot.ItemStack == nil || slot.ItemStack.ItemID != itemIDDyePowder || slot.ItemStack.StackSize != 1 {
+		t.Fatalf("dye slot sync mismatch: %#v", slot)
+	}
+}
+
+func TestHandleUseEntityInteractSheepWithDyeDoesNotConsumeInCreative(t *testing.T) {
+	srv := NewStatusServer(StatusConfig{})
+	var buf bytes.Buffer
+	session := newInteractionTestSession(srv, &buf)
+	session.entityID = 407
+	session.playerHealth = 20
+	session.playerRegistered = true
+	session.gameType = 1
+	session.heldItemSlot = 0
+	session.inventory[36] = &protocol.ItemStack{
+		ItemID:     itemIDDyePowder,
+		StackSize:  2,
+		ItemDamage: 14, // orange dye -> wool color 1
+	}
+
+	mob := srv.spawnMob(&spawnListEntry{entityType: entityTypeSheep}, 0.5, 5.0, 2.5, 0)
+	if mob == nil {
+		t.Fatal("spawnMob returned nil")
+	}
+	srv.mobMu.Lock()
+	live := srv.mobs[mob.EntityID]
+	if live != nil {
+		live.sheepSheared = false
+		live.sheepColor = 0
+	}
+	srv.mobMu.Unlock()
+
+	if !session.handleUseEntity(&protocol.Packet7UseEntity{
+		PlayerEntityID: session.entityID,
+		TargetEntityID: mob.EntityID,
+		Action:         0,
+	}) {
+		t.Fatal("handleUseEntity returned false")
+	}
+
+	srv.mobMu.Lock()
+	live = srv.mobs[mob.EntityID]
+	srv.mobMu.Unlock()
+	if live == nil {
+		t.Fatal("expected sheep to remain alive")
+	}
+	if live.sheepColor != 1 {
+		t.Fatalf("dye color mapping mismatch: got=%d want=1", live.sheepColor)
+	}
+	if session.inventory[36] == nil || session.inventory[36].StackSize != 2 {
+		t.Fatalf("creative dye should not be consumed: %#v", session.inventory[36])
+	}
+
+	if _, err := protocol.ReadPacket(&buf, protocol.DirectionClientbound); err == nil {
+		t.Fatal("did not expect inventory slot packet for creative dye interaction")
+	}
+}
+
+func TestHandleUseEntityInteractSheepWithDyeOnShearedSheepDoesNothing(t *testing.T) {
+	srv := NewStatusServer(StatusConfig{})
+	session := newInteractionTestSession(srv, io.Discard)
+	session.entityID = 408
+	session.playerHealth = 20
+	session.playerRegistered = true
+	session.heldItemSlot = 0
+	session.inventory[36] = &protocol.ItemStack{
+		ItemID:     itemIDDyePowder,
+		StackSize:  2,
+		ItemDamage: 4,
+	}
+
+	mob := srv.spawnMob(&spawnListEntry{entityType: entityTypeSheep}, 0.5, 5.0, 2.5, 0)
+	if mob == nil {
+		t.Fatal("spawnMob returned nil")
+	}
+	srv.mobMu.Lock()
+	live := srv.mobs[mob.EntityID]
+	if live != nil {
+		live.sheepSheared = true
+		live.sheepColor = 0
+	}
+	srv.mobMu.Unlock()
+
+	if !session.handleUseEntity(&protocol.Packet7UseEntity{
+		PlayerEntityID: session.entityID,
+		TargetEntityID: mob.EntityID,
+		Action:         0,
+	}) {
+		t.Fatal("handleUseEntity returned false")
+	}
+
+	srv.mobMu.Lock()
+	live = srv.mobs[mob.EntityID]
+	srv.mobMu.Unlock()
+	if live == nil {
+		t.Fatal("expected sheep to remain alive")
+	}
+	if live.sheepColor != 0 {
+		t.Fatalf("sheared sheep should not change dye color: got=%d want=0", live.sheepColor)
+	}
+	if session.inventory[36] == nil || session.inventory[36].StackSize != 2 {
+		t.Fatalf("dye stack should not be consumed on sheared sheep: %#v", session.inventory[36])
+	}
+}
+
 func TestHandleUseEntityAttackDroppedItemKicksInvalidEntity(t *testing.T) {
 	srv := NewStatusServer(StatusConfig{})
 	var buf bytes.Buffer
