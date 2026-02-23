@@ -1439,6 +1439,9 @@ func (a *App) applyMovementTick(
 	}
 
 	snapMove := a.session.Snapshot()
+	if snapMove.RidingEntityID > 0 {
+		_ = a.session.SendPlayerInput(float32(strafe), float32(forward), jumpPressed, sneakPressed)
+	}
 	grounded := a.playerGroundedAt(snapMove.PlayerX, snapMove.PlayerY, snapMove.PlayerZ)
 	a.tickSprintState(forward, sneakPressed, sprintPressed, grounded, allowFlight, snapMove.Food)
 

@@ -870,6 +870,27 @@ func TestSetSneakingWritesPacket19(t *testing.T) {
 	}
 }
 
+func TestSendPlayerInputWritesPacket27(t *testing.T) {
+	var out bytes.Buffer
+	s := newUnitTestSession(&out)
+
+	if err := s.SendPlayerInput(2.0, -3.0, true, false); err != nil {
+		t.Fatalf("SendPlayerInput failed: %v", err)
+	}
+
+	packet, err := protocol.ReadPacket(&out, protocol.DirectionServerbound)
+	if err != nil {
+		t.Fatalf("failed to read Packet27: %v", err)
+	}
+	input, ok := packet.(*protocol.Packet27PlayerInput)
+	if !ok {
+		t.Fatalf("expected Packet27PlayerInput, got %T", packet)
+	}
+	if input.MoveStrafing != 1.0 || input.MoveForward != -1.0 || !input.Jump || input.Sneak {
+		t.Fatalf("packet mismatch: %#v", input)
+	}
+}
+
 func TestSetFlyingWritesPacket202(t *testing.T) {
 	var out bytes.Buffer
 	s := newUnitTestSession(&out)
@@ -891,6 +912,35 @@ func TestSetFlyingWritesPacket202(t *testing.T) {
 	}
 	if !abilities.IsFlying || !abilities.AllowFlying || !abilities.IsCreative || !abilities.DisableDamage {
 		t.Fatalf("ability packet mismatch: %#v", abilities)
+	}
+}
+
+func TestHandlePacket39AttachEntityUpdatesPlayerRidingState(t *testing.T) {
+	s := newUnitTestSession(io.Discard)
+	s.entityID = 120
+
+	if err := s.handlePacket(&protocol.Packet39AttachEntity{
+		RidingEntityID:  120,
+		VehicleEntityID: 777,
+		AttachState:     0,
+	}); err != nil {
+		t.Fatalf("attach handle failed: %v", err)
+	}
+	snap := s.Snapshot()
+	if snap.RidingEntityID != 777 {
+		t.Fatalf("riding entity mismatch after attach: got=%d want=777", snap.RidingEntityID)
+	}
+
+	if err := s.handlePacket(&protocol.Packet39AttachEntity{
+		RidingEntityID:  120,
+		VehicleEntityID: -1,
+		AttachState:     0,
+	}); err != nil {
+		t.Fatalf("detach handle failed: %v", err)
+	}
+	snap = s.Snapshot()
+	if snap.RidingEntityID != 0 {
+		t.Fatalf("riding entity mismatch after detach: got=%d want=0", snap.RidingEntityID)
 	}
 }
 

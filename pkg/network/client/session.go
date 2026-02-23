@@ -144,8 +144,9 @@ type PlayerInfoSnapshot struct {
 
 // StateSnapshot mirrors live client session state for external rendering/UI loops.
 type StateSnapshot struct {
-	Username string
-	EntityID int32
+	Username       string
+	EntityID       int32
+	RidingEntityID int32
 
 	PlayerX      float64
 	PlayerY      float64
@@ -196,7 +197,8 @@ type Session struct {
 	writeMu sync.Mutex
 	stateMu sync.RWMutex
 
-	entityID int32
+	entityID       int32
+	ridingEntityID int32
 
 	playerX      float64
 	playerY      float64
@@ -588,6 +590,7 @@ func (s *Session) handlePacket(packet protocol.Packet) error {
 	case *protocol.Packet9Respawn:
 		s.stateMu.Lock()
 		s.entities = make(map[int32]*trackedEntity)
+		s.ridingEntityID = 0
 		s.gameType = p.GameType
 		s.dimension = p.RespawnDimension
 		s.hasSkyLight = p.RespawnDimension == 0
@@ -708,6 +711,9 @@ func (s *Session) handlePacket(packet protocol.Packet) error {
 	case *protocol.Packet29DestroyEntity:
 		s.stateMu.Lock()
 		for _, id := range p.EntityIDs {
+			if s.ridingEntityID == id {
+				s.ridingEntityID = 0
+			}
 			for _, ent := range s.entities {
 				if ent == nil {
 					continue
@@ -784,6 +790,13 @@ func (s *Session) handlePacket(packet protocol.Packet) error {
 		}
 	case *protocol.Packet39AttachEntity:
 		s.stateMu.Lock()
+		if p.RidingEntityID == s.entityID {
+			if p.VehicleEntityID > 0 {
+				s.ridingEntityID = p.VehicleEntityID
+			} else {
+				s.ridingEntityID = 0
+			}
+		}
 		if ent, ok := s.entities[p.RidingEntityID]; ok && ent != nil {
 			ent.Vehicle = p.VehicleEntityID
 		}
@@ -955,8 +968,9 @@ func (s *Session) Snapshot() StateSnapshot {
 	}
 
 	return StateSnapshot{
-		Username: s.username,
-		EntityID: s.entityID,
+		Username:       s.username,
+		EntityID:       s.entityID,
+		RidingEntityID: s.ridingEntityID,
 
 		PlayerX:      s.playerX,
 		PlayerY:      s.playerY,
@@ -1237,6 +1251,31 @@ func (s *Session) MoveRelative(dx, dy, dz float64) error {
 	packet.Pitch = pitch
 	packet.OnGround = onGround
 	return s.sendPacket(packet)
+}
+
+// SendPlayerInput sends Packet27 riding controls.
+//
+// Translation reference:
+// - net.minecraft.src.EntityClientPlayerMP#onUpdateWalkingPlayer()
+func (s *Session) SendPlayerInput(moveStrafing, moveForward float32, jump, sneak bool) error {
+	if moveStrafing > 1.0 {
+		moveStrafing = 1.0
+	}
+	if moveStrafing < -1.0 {
+		moveStrafing = -1.0
+	}
+	if moveForward > 1.0 {
+		moveForward = 1.0
+	}
+	if moveForward < -1.0 {
+		moveForward = -1.0
+	}
+	return s.sendPacket(&protocol.Packet27PlayerInput{
+		MoveStrafing: moveStrafing,
+		MoveForward:  moveForward,
+		Jump:         jump,
+		Sneak:        sneak,
+	})
 }
 
 // SendChat writes Packet3Chat to server.
