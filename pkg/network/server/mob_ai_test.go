@@ -50,6 +50,29 @@ func TestSpawnRandomCreaturePeacefulSkipsMonsters(t *testing.T) {
 	}
 }
 
+func TestTickSingleMobPeacefulDespawnsMonsterWithoutDrops(t *testing.T) {
+	srv := NewStatusServer(StatusConfig{})
+	srv.setDifficulty(0)
+	srv.mobRand.SetSeed(81)
+
+	mob := srv.spawnMob(&spawnListEntry{entityType: entityTypeZombie}, 0.5, 5.0, 0.5, 0)
+	if mob == nil {
+		t.Fatal("spawnMob returned nil")
+	}
+
+	srv.tickSingleMob(mob)
+
+	srv.mobMu.Lock()
+	_, alive := srv.mobs[mob.EntityID]
+	srv.mobMu.Unlock()
+	if alive {
+		t.Fatalf("expected peaceful monster despawn, entity still alive: %d", mob.EntityID)
+	}
+	if got, _ := countDroppedItemStacks(srv, itemIDRottenFlesh); got != 0 {
+		t.Fatalf("peaceful despawn should not drop items, rotten flesh=%d", got)
+	}
+}
+
 func TestTickSingleMobMonsterChasesPlayer(t *testing.T) {
 	srv := NewStatusServer(StatusConfig{})
 	target := newInteractionTestSession(srv, io.Discard)

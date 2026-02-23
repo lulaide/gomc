@@ -456,7 +456,10 @@ func (s *StatusServer) tickSingleMob(mob *trackedMob) {
 	}
 	if mob.CreatureType == creatureTypeMonster && s.currentDifficulty() == 0 {
 		s.mobMu.Unlock()
-		s.killMob(mob, false, 0)
+		// Translation reference:
+		// - net.minecraft.src.EntityMob#onUpdate()
+		// Peaceful despawn uses setDead() directly (no onDeath/drop pipeline).
+		s.removeMob(mob)
 		return
 	}
 	if mob.HurtResistant > 0 {
