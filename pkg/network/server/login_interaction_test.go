@@ -2233,6 +2233,153 @@ func TestHandleSlashCommandSpawnpointTargetCoordinates(t *testing.T) {
 	}
 }
 
+func TestHandleSlashCommandSaveOffAndOnToggleAutoSave(t *testing.T) {
+	srv := NewStatusServer(StatusConfig{})
+	var buf bytes.Buffer
+	session := newInteractionTestSession(srv, &buf)
+
+	if !session.handleSlashCommand("/save-off") {
+		t.Fatal("handleSlashCommand returned false for /save-off")
+	}
+	packet, err := protocol.ReadPacket(&buf, protocol.DirectionClientbound)
+	if err != nil {
+		t.Fatalf("failed to read /save-off output: %v", err)
+	}
+	chat, ok := packet.(*protocol.Packet3Chat)
+	if !ok {
+		t.Fatalf("expected Packet3Chat, got %T", packet)
+	}
+	if chat.Message != "Turned off world auto-saving" {
+		t.Fatalf("/save-off output mismatch: got=%q", chat.Message)
+	}
+	if srv.isAutoSaveEnabled() {
+		t.Fatal("auto-save should be disabled after /save-off")
+	}
+
+	buf.Reset()
+	if !session.handleSlashCommand("/save-off") {
+		t.Fatal("handleSlashCommand returned false for repeated /save-off")
+	}
+	packet, err = protocol.ReadPacket(&buf, protocol.DirectionClientbound)
+	if err != nil {
+		t.Fatalf("failed to read repeated /save-off output: %v", err)
+	}
+	chat, ok = packet.(*protocol.Packet3Chat)
+	if !ok {
+		t.Fatalf("expected Packet3Chat, got %T", packet)
+	}
+	if chat.Message != "Saving is already turned off." {
+		t.Fatalf("repeated /save-off output mismatch: got=%q", chat.Message)
+	}
+
+	buf.Reset()
+	if !session.handleSlashCommand("/save-on") {
+		t.Fatal("handleSlashCommand returned false for /save-on")
+	}
+	packet, err = protocol.ReadPacket(&buf, protocol.DirectionClientbound)
+	if err != nil {
+		t.Fatalf("failed to read /save-on output: %v", err)
+	}
+	chat, ok = packet.(*protocol.Packet3Chat)
+	if !ok {
+		t.Fatalf("expected Packet3Chat, got %T", packet)
+	}
+	if chat.Message != "Turned on world auto-saving" {
+		t.Fatalf("/save-on output mismatch: got=%q", chat.Message)
+	}
+	if !srv.isAutoSaveEnabled() {
+		t.Fatal("auto-save should be enabled after /save-on")
+	}
+
+	buf.Reset()
+	if !session.handleSlashCommand("/save-on") {
+		t.Fatal("handleSlashCommand returned false for repeated /save-on")
+	}
+	packet, err = protocol.ReadPacket(&buf, protocol.DirectionClientbound)
+	if err != nil {
+		t.Fatalf("failed to read repeated /save-on output: %v", err)
+	}
+	chat, ok = packet.(*protocol.Packet3Chat)
+	if !ok {
+		t.Fatalf("expected Packet3Chat, got %T", packet)
+	}
+	if chat.Message != "Saving is already turned on." {
+		t.Fatalf("repeated /save-on output mismatch: got=%q", chat.Message)
+	}
+}
+
+func TestHandleSlashCommandSaveAllPersistsWorldWhenAutoSaveOff(t *testing.T) {
+	worldDir := t.TempDir()
+	srv := NewStatusServer(StatusConfig{
+		PersistWorld: true,
+		WorldDir:     worldDir,
+	})
+
+	var buf bytes.Buffer
+	session := newInteractionTestSession(srv, &buf)
+	session.clientUsername = "Steve"
+	session.playerInitialized = true
+
+	srv.activeMu.Lock()
+	srv.activePlayers[session] = "Steve"
+	srv.activeOrder = []*loginSession{session}
+	srv.activeMu.Unlock()
+
+	if !srv.world.setBlock(7, 5, 7, 1, 4) {
+		t.Fatal("setBlock returned false")
+	}
+
+	if !session.handleSlashCommand("/save-off") {
+		t.Fatal("handleSlashCommand returned false for /save-off")
+	}
+	buf.Reset()
+
+	if !session.handleSlashCommand("/save-all") {
+		t.Fatal("handleSlashCommand returned false for /save-all")
+	}
+
+	first, err := protocol.ReadPacket(&buf, protocol.DirectionClientbound)
+	if err != nil {
+		t.Fatalf("failed to read /save-all start output: %v", err)
+	}
+	chat, ok := first.(*protocol.Packet3Chat)
+	if !ok {
+		t.Fatalf("expected Packet3Chat, got %T", first)
+	}
+	if chat.Message != "Saving..." {
+		t.Fatalf("/save-all start output mismatch: got=%q", chat.Message)
+	}
+
+	second, err := protocol.ReadPacket(&buf, protocol.DirectionClientbound)
+	if err != nil {
+		t.Fatalf("failed to read /save-all success output: %v", err)
+	}
+	chat, ok = second.(*protocol.Packet3Chat)
+	if !ok {
+		t.Fatalf("expected Packet3Chat, got %T", second)
+	}
+	if chat.Message != "Saved the world" {
+		t.Fatalf("/save-all success output mismatch: got=%q", chat.Message)
+	}
+
+	if err := srv.Close(); err != nil {
+		t.Fatalf("Close failed: %v", err)
+	}
+
+	srv2 := NewStatusServer(StatusConfig{
+		PersistWorld: true,
+		WorldDir:     worldDir,
+	})
+	defer func() {
+		_ = srv2.Close()
+	}()
+
+	blockID, meta := srv2.world.getBlock(7, 5, 7)
+	if blockID != 1 || meta != 4 {
+		t.Fatalf("persisted block mismatch after /save-all: got=(%d,%d) want=(1,4)", blockID, meta)
+	}
+}
+
 func TestHandleSlashCommandSayBroadcastsAnnouncement(t *testing.T) {
 	srv := NewStatusServer(StatusConfig{})
 

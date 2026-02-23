@@ -1273,6 +1273,9 @@ func (s *loginSession) handleSlashCommand(command string) bool {
 			"kill",
 			"list",
 			"me",
+			"save-all",
+			"save-off",
+			"save-on",
 			"say",
 			"seed",
 			"spawnpoint",
@@ -1291,6 +1294,9 @@ func (s *loginSession) handleSlashCommand(command string) bool {
 			"kill":       "/kill",
 			"list":       "/list",
 			"me":         "/me <action ...>",
+			"save-all":   "/save-all",
+			"save-off":   "/save-off",
+			"save-on":    "/save-on",
 			"say":        "/say <message ...>",
 			"seed":       "/seed",
 			"spawnpoint": "/spawnpoint OR /spawnpoint <player> OR /spawnpoint <player> <x> <y> <z>",
@@ -1419,6 +1425,56 @@ func (s *loginSession) handleSlashCommand(command string) bool {
 			targetName = "player"
 		}
 		s.sendSystemChat(fmt.Sprintf("Set %s's spawn point to (%d, %d, %d)", targetName, spawnX, spawnY, spawnZ))
+		return true
+	}
+
+	if strings.EqualFold(args[0], "/save-off") {
+		// Translation target:
+		// - net.minecraft.src.CommandServerSaveOff#processCommand
+		if !s.server.isAutoSaveEnabled() {
+			s.sendSystemChat("Saving is already turned off.")
+			return true
+		}
+		s.server.setAutoSaveEnabled(false)
+		s.sendSystemChat("Turned off world auto-saving")
+		return true
+	}
+
+	if strings.EqualFold(args[0], "/save-on") {
+		// Translation target:
+		// - net.minecraft.src.CommandServerSaveOn#processCommand
+		if s.server.isAutoSaveEnabled() {
+			s.sendSystemChat("Saving is already turned on.")
+			return true
+		}
+		s.server.setAutoSaveEnabled(true)
+		s.sendSystemChat("Turned on world auto-saving")
+		return true
+	}
+
+	if strings.EqualFold(args[0], "/save-all") {
+		// Translation target:
+		// - net.minecraft.src.CommandServerSaveAll#processCommand
+		s.sendSystemChat("Saving...")
+
+		if s.server.cfg.PersistWorld {
+			for _, session := range s.server.activeSessions() {
+				if session == nil || !session.playerInitialized {
+					continue
+				}
+				username := strings.TrimSpace(session.clientUsername)
+				if username == "" {
+					continue
+				}
+				_ = s.server.savePlayerState(username, session.snapshotPersistedState())
+			}
+		}
+
+		if err := s.server.SaveWorldAll(); err != nil {
+			s.sendSystemChat("Saving failed: " + err.Error())
+			return true
+		}
+		s.sendSystemChat("Saved the world")
 		return true
 	}
 

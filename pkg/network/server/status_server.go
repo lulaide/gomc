@@ -39,6 +39,7 @@ type StatusServer struct {
 	worldTime       atomic.Int64
 	difficulty      atomic.Int32
 	defaultGameType atomic.Int32
+	autoSaveEnabled atomic.Bool
 
 	privateKey   *rsa.PrivateKey
 	publicKeyDER []byte
@@ -122,6 +123,7 @@ func NewStatusServer(cfg StatusConfig) *StatusServer {
 	s.nextEntityID.Store(1)
 	s.difficulty.Store(1) // easy
 	s.defaultGameType.Store(0)
+	s.autoSaveEnabled.Store(true)
 	return s
 }
 
@@ -183,6 +185,14 @@ func (s *StatusServer) setDifficulty(v int8) int8 {
 	return v
 }
 
+func (s *StatusServer) isAutoSaveEnabled() bool {
+	return s.autoSaveEnabled.Load()
+}
+
+func (s *StatusServer) setAutoSaveEnabled(enabled bool) {
+	s.autoSaveEnabled.Store(enabled)
+}
+
 func (s *StatusServer) AdvanceWorldTime(ticks int64) {
 	if ticks <= 0 {
 		return
@@ -224,6 +234,9 @@ func (s *StatusServer) TickChunkInhabitedTime() {
 }
 
 func (s *StatusServer) SaveWorldDirty() error {
+	if !s.isAutoSaveEnabled() {
+		return nil
+	}
 	return s.world.saveDirty(s.worldAge.Load())
 }
 
@@ -363,6 +376,16 @@ func (s *StatusServer) activeSessionsExcept(except *loginSession) []*loginSessio
 		if session == except {
 			continue
 		}
+		targets = append(targets, session)
+	}
+	s.activeMu.RUnlock()
+	return targets
+}
+
+func (s *StatusServer) activeSessions() []*loginSession {
+	s.activeMu.RLock()
+	targets := make([]*loginSession, 0, len(s.activePlayers))
+	for session := range s.activePlayers {
 		targets = append(targets, session)
 	}
 	s.activeMu.RUnlock()

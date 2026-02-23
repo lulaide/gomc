@@ -105,6 +105,38 @@ func TestStatusServerSaveWorldDirtyPersistsBlocks(t *testing.T) {
 	}
 }
 
+func TestStatusServerSaveWorldDirtySkippedWhenAutoSaveDisabled(t *testing.T) {
+	worldDir := t.TempDir()
+	srv := NewStatusServer(StatusConfig{
+		PersistWorld: true,
+		WorldDir:     worldDir,
+	})
+	srv.setAutoSaveEnabled(false)
+
+	if !srv.world.setBlock(4, 5, 4, 1, 1) {
+		t.Fatal("setBlock returned false")
+	}
+	if err := srv.SaveWorldDirty(); err != nil {
+		t.Fatalf("SaveWorldDirty failed: %v", err)
+	}
+	if err := srv.world.closeStorage(); err != nil {
+		t.Fatalf("closeStorage failed: %v", err)
+	}
+
+	srv2 := NewStatusServer(StatusConfig{
+		PersistWorld: true,
+		WorldDir:     worldDir,
+	})
+	defer func() {
+		_ = srv2.Close()
+	}()
+
+	blockID, meta := srv2.world.getBlock(4, 5, 4)
+	if blockID == 1 && meta == 1 {
+		t.Fatalf("block should not persist while auto-save disabled: got=(%d,%d)", blockID, meta)
+	}
+}
+
 func TestFindChunksForSpawningSendsMobSpawnPacket(t *testing.T) {
 	srv := NewStatusServer(StatusConfig{})
 	srv.mobRand.SetSeed(1)
