@@ -3783,7 +3783,9 @@ func (s *loginSession) attackTargetMobWithCurrentItem(target *trackedMob) {
 	lootingLevel := 0
 	knockbackLevel := 0
 	attackerYaw := s.playerYaw
-	critical := s.playerFallDistance > 0 && !s.playerOnGround
+	// Translated subset from EntityPlayer#attackTargetEntityWithCurrentItem critical gate:
+	// fallDistance > 0 && !onGround && ridingEntity == null
+	critical := s.playerFallDistance > 0 && !s.playerOnGround && s.ridingEntityID == 0
 	heldSlot := s.heldWindowSlotLocked()
 	heldStack := cloneItemStack(s.inventory[heldSlot])
 	if heldStack != nil {
@@ -4183,7 +4185,9 @@ func (s *loginSession) attackTargetPlayerWithCurrentItem(target *loginSession) {
 	damage := float32(basePlayerDamage)
 	knockbackLevel := 0
 	attackerYaw := s.playerYaw
-	critical := s.playerFallDistance > 0 && !s.playerOnGround
+	// Translated subset from EntityPlayer#attackTargetEntityWithCurrentItem critical gate:
+	// fallDistance > 0 && !onGround && ridingEntity == null
+	critical := s.playerFallDistance > 0 && !s.playerOnGround && s.ridingEntityID == 0
 	heldSlot := s.heldWindowSlotLocked()
 	heldStack := cloneItemStack(s.inventory[heldSlot])
 	if heldStack != nil {
@@ -4193,7 +4197,7 @@ func (s *loginSession) attackTargetPlayerWithCurrentItem(target *loginSession) {
 	}
 	if critical && damage > 0 {
 		// Translated subset from EntityPlayer#attackTargetEntityWithCurrentItem critical gate.
-		// World checks (ladder/water/blindness/riding) are pending until movement status parity is implemented.
+		// World checks (ladder/water/blindness) are pending until movement status parity is implemented.
 		damage *= 1.5
 	}
 	if s.playerSprinting {

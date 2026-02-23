@@ -4192,6 +4192,86 @@ func TestHandleUseEntityAttackCriticalDamageWhenFalling(t *testing.T) {
 	}
 }
 
+func TestHandleUseEntityAttackMountedDoesNotCritPlayer(t *testing.T) {
+	srv := NewStatusServer(StatusConfig{})
+	attacker := newInteractionTestSession(srv, io.Discard)
+	attacker.entityID = 192
+	attacker.clientUsername = "attacker"
+	attacker.playerHealth = 20
+	attacker.playerRegistered = true
+	attacker.playerOnGround = false
+	attacker.playerFallDistance = 0.7
+	attacker.ridingEntityID = 777
+
+	target := newInteractionTestSession(srv, io.Discard)
+	target.entityID = 193
+	target.clientUsername = "target"
+	target.playerHealth = 20
+	target.playerRegistered = true
+
+	srv.activeMu.Lock()
+	srv.activePlayers[attacker] = "attacker"
+	srv.activePlayers[target] = "target"
+	srv.activeOrder = []*loginSession{attacker, target}
+	srv.activeMu.Unlock()
+
+	ok := attacker.handleUseEntity(&protocol.Packet7UseEntity{
+		PlayerEntityID: attacker.entityID,
+		TargetEntityID: target.entityID,
+		Action:         1,
+	})
+	if !ok {
+		t.Fatal("handleUseEntity returned false")
+	}
+
+	if target.playerHealth != 19 {
+		t.Fatalf("mounted attack should not crit player: got=%f want=19", target.playerHealth)
+	}
+}
+
+func TestHandleUseEntityAttackMountedDoesNotCritMob(t *testing.T) {
+	srv := NewStatusServer(StatusConfig{})
+	attacker := newInteractionTestSession(srv, io.Discard)
+	attacker.entityID = 194
+	attacker.playerHealth = 20
+	attacker.playerRegistered = true
+	attacker.playerOnGround = false
+	attacker.playerFallDistance = 0.7
+	attacker.ridingEntityID = 778
+
+	srv.activeMu.Lock()
+	srv.activePlayers[attacker] = "attacker"
+	srv.activeOrder = []*loginSession{attacker}
+	srv.activeMu.Unlock()
+
+	mob := srv.spawnMob(&spawnListEntry{entityType: entityTypeZombie}, 0.5, 5.0, 2.5, 0)
+	if mob == nil {
+		t.Fatal("spawnMob returned nil")
+	}
+	startHealth := mob.Health
+
+	ok := attacker.handleUseEntity(&protocol.Packet7UseEntity{
+		PlayerEntityID: attacker.entityID,
+		TargetEntityID: mob.EntityID,
+		Action:         1,
+	})
+	if !ok {
+		t.Fatal("handleUseEntity returned false")
+	}
+
+	srv.mobMu.Lock()
+	updated := srv.mobs[mob.EntityID]
+	srv.mobMu.Unlock()
+	if updated == nil {
+		t.Fatal("expected mob alive after mounted hit")
+	}
+
+	want := startHealth - float32(basePlayerDamage)
+	if math.Abs(float64(updated.Health-want)) > 1.0e-6 {
+		t.Fatalf("mounted attack should not crit mob: got=%.2f want=%.2f", updated.Health, want)
+	}
+}
+
 func TestHandleUseEntityAttackRespectsHurtResistantCooldown(t *testing.T) {
 	srv := NewStatusServer(StatusConfig{})
 	attacker := newInteractionTestSession(srv, io.Discard)
