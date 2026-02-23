@@ -11,6 +11,7 @@ const (
 	entityTypeDroppedItem int8 = 2
 
 	droppedItemPickupDelayTicks = 40
+	entityDropPickupDelayTicks  = 10
 	droppedItemLifetimeTicks    = 6000
 	droppedItemCreativeAgeTicks = 4800
 
@@ -185,6 +186,42 @@ func (s *StatusServer) spawnDroppedItemFromPlayer(player *loginSession, stack *p
 	if creativeDespawn {
 		item.AgeTicks = droppedItemCreativeAgeTicks
 	}
+
+	s.droppedItemMu.Lock()
+	s.droppedItems[entityID] = item
+	s.droppedItemMu.Unlock()
+
+	s.updateDroppedItemVisibility(item, nil, true)
+	return item
+}
+
+func (s *StatusServer) spawnDroppedItemAt(stack *protocol.ItemStack, x, y, z, motionX, motionY, motionZ float64, pickupDelay int) *trackedDroppedItem {
+	if stack == nil || stack.ItemID <= 0 || stack.StackSize <= 0 {
+		return nil
+	}
+	if pickupDelay < 0 {
+		pickupDelay = 0
+	}
+
+	entityID := s.nextEntityID.Add(1)
+	item := &trackedDroppedItem{
+		EntityID:           entityID,
+		ItemID:             stack.ItemID,
+		ItemDamage:         stack.ItemDamage,
+		StackSize:          stack.StackSize,
+		X:                  x,
+		Y:                  y,
+		Z:                  z,
+		MotionX:            motionX,
+		MotionY:            motionY,
+		MotionZ:            motionZ,
+		DelayBeforeCanPick: pickupDelay,
+		SeenBy:             make(map[*loginSession]struct{}),
+	}
+	item.lastSentX = toPacketPosition(item.X)
+	item.lastSentY = toPacketPosition(item.Y)
+	item.lastSentZ = toPacketPosition(item.Z)
+	item.lastSentInitialized = true
 
 	s.droppedItemMu.Lock()
 	s.droppedItems[entityID] = item

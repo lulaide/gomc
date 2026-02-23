@@ -72,6 +72,7 @@ const (
 	itemIDBucketMilk   int16 = 335
 	itemIDGlassBottle  int16 = 374
 	itemIDPotion       int16 = 373
+	itemIDShears       int16 = 359
 	itemIDBowlEmpty    int16 = 281
 	itemIDMushroomStew int16 = 282
 
@@ -96,6 +97,11 @@ const (
 	itemIDPoisonPotato  int16 = 394
 	itemIDGoldenCarrot  int16 = 396
 	itemIDPumpkinPie    int16 = 400
+)
+
+const (
+	blockIDWool         int16 = 35
+	shearsMaxDurability int16 = 238
 )
 
 type meleeItemProfile struct {
@@ -3603,7 +3609,9 @@ func (s *loginSession) handleUseEntity(packet *protocol.Packet7UseEntity) bool {
 
 	switch packet.Action {
 	case 0:
-		// Translation target: EntityPlayer.interactWith(Entity) path is pending.
+		if targetMob != nil {
+			s.interactWithMob(targetMob)
+		}
 		return true
 	case 1:
 		if targetPlayer == s {
@@ -3686,6 +3694,158 @@ func (s *loginSession) attackTargetMobWithCurrentItem(target *trackedMob) {
 		s.server.broadcastMobEntityStatus(mob, 3)
 		s.server.killMob(mob)
 	}
+}
+
+func (s *loginSession) interactWithMob(target *trackedMob) bool {
+	if target == nil {
+		return false
+	}
+
+	switch target.EntityType {
+	case entityTypeCow:
+		return s.interactWithCow(target)
+	case entityTypeSheep:
+		return s.interactWithSheep(target)
+	default:
+		return false
+	}
+}
+
+func (s *loginSession) interactWithCow(target *trackedMob) bool {
+	// Translation reference:
+	// - net.minecraft.src.EntityCow#interact(EntityPlayer)
+	var (
+		heldSlot   int
+		consumeOne bool
+		isCreative bool
+	)
+	s.stateMu.Lock()
+	heldSlot = s.heldWindowSlotLocked()
+	stack := s.inventory[heldSlot]
+	if stack == nil || stack.StackSize <= 0 || stack.ItemID != itemIDBucketEmpty {
+		s.stateMu.Unlock()
+		return false
+	}
+	isCreative = s.gameType == 1
+	if isCreative {
+		s.stateMu.Unlock()
+		return false
+	}
+	if stack.StackSize == 1 {
+		s.inventory[heldSlot] = &protocol.ItemStack{
+			ItemID:     itemIDBucketMilk,
+			StackSize:  1,
+			ItemDamage: 0,
+		}
+	} else {
+		stack.StackSize--
+		consumeOne = true
+	}
+	s.stateMu.Unlock()
+
+	_ = s.sendInventorySetSlot(heldSlot)
+	if !consumeOne {
+		return true
+	}
+
+	remaining := s.addInventoryItem(itemIDBucketMilk, 1, 0)
+	if remaining > 0 {
+		s.server.spawnDroppedItemFromPlayer(s, &protocol.ItemStack{
+			ItemID:     itemIDBucketMilk,
+			StackSize:  int8(remaining),
+			ItemDamage: 0,
+		}, false, false)
+	}
+	return true
+}
+
+func (s *loginSession) interactWithSheep(target *trackedMob) bool {
+	// Translation reference:
+	// - net.minecraft.src.EntitySheep#interact(EntityPlayer)
+	var (
+		heldSlot   int
+		isCreative bool
+	)
+	s.stateMu.Lock()
+	heldSlot = s.heldWindowSlotLocked()
+	stack := s.inventory[heldSlot]
+	if stack == nil || stack.StackSize <= 0 || stack.ItemID != itemIDShears {
+		s.stateMu.Unlock()
+		return false
+	}
+	isCreative = s.gameType == 1
+	s.stateMu.Unlock()
+
+	var (
+		live       *trackedMob
+		woolColor  int16
+		dropCount  int
+		x          float64
+		y          float64
+		z          float64
+		dropMotion [][3]float64
+	)
+	s.server.mobMu.Lock()
+	live = s.server.mobs[target.EntityID]
+	if live == nil || live.EntityType != entityTypeSheep || live.sheepSheared {
+		s.server.mobMu.Unlock()
+		return false
+	}
+	live.sheepSheared = true
+	x = live.X
+	y = live.Y
+	z = live.Z
+	woolColor = int16(live.sheepColor & 15)
+	dropCount = 1 + int(s.server.mobRand.NextInt(3))
+	dropMotion = make([][3]float64, dropCount)
+	for i := 0; i < dropCount; i++ {
+		dropMotion[i][1] = float64(s.server.mobRand.NextFloat()) * 0.05
+		dropMotion[i][0] = float64(s.server.mobRand.NextFloat()-s.server.mobRand.NextFloat()) * 0.1
+		dropMotion[i][2] = float64(s.server.mobRand.NextFloat()-s.server.mobRand.NextFloat()) * 0.1
+	}
+	s.server.mobMu.Unlock()
+
+	slotChanged := false
+	if !isCreative {
+		s.stateMu.Lock()
+		stack := s.inventory[heldSlot]
+		if stack != nil && stack.StackSize > 0 && stack.ItemID == itemIDShears {
+			stack.ItemDamage++
+			slotChanged = true
+			if stack.ItemDamage >= shearsMaxDurability {
+				stack.StackSize--
+				if stack.StackSize <= 0 {
+					s.inventory[heldSlot] = nil
+				} else {
+					stack.ItemDamage = 0
+				}
+			}
+		}
+		s.stateMu.Unlock()
+	}
+	if slotChanged {
+		_ = s.sendInventorySetSlot(heldSlot)
+	}
+
+	s.server.broadcastMobMetadata(live)
+	s.server.broadcastEntityPacketToWatchers(&protocol.Packet62LevelSound{
+		SoundName: "mob.sheep.shear",
+		EffectX:   int32(math.Floor(x * 8.0)),
+		EffectY:   int32(math.Floor(y * 8.0)),
+		EffectZ:   int32(math.Floor(z * 8.0)),
+		Volume:    1.0,
+		Pitch:     63,
+	}, chunkCoordFromPos(x), chunkCoordFromPos(z), nil)
+
+	for i := 0; i < dropCount; i++ {
+		m := dropMotion[i]
+		s.server.spawnDroppedItemAt(&protocol.ItemStack{
+			ItemID:     blockIDWool,
+			StackSize:  1,
+			ItemDamage: woolColor,
+		}, x, y+1.0, z, m[0], m[1], m[2], entityDropPickupDelayTicks)
+	}
+	return true
 }
 
 func (s *loginSession) attackTargetPlayerWithCurrentItem(target *loginSession) {

@@ -3143,6 +3143,185 @@ func TestHandleUseEntityInvalidSelfAttackKicks(t *testing.T) {
 	}
 }
 
+func TestHandleUseEntityInteractCowWithBucketReplacesHeldBucket(t *testing.T) {
+	srv := NewStatusServer(StatusConfig{})
+	var buf bytes.Buffer
+	session := newInteractionTestSession(srv, &buf)
+	session.entityID = 401
+	session.playerHealth = 20
+	session.playerRegistered = true
+	session.heldItemSlot = 0
+	session.inventory[36] = &protocol.ItemStack{
+		ItemID:     itemIDBucketEmpty,
+		StackSize:  1,
+		ItemDamage: 0,
+	}
+
+	mob := srv.spawnMob(&spawnListEntry{entityType: entityTypeCow}, 0.5, 5.0, 2.5, 0)
+	if mob == nil {
+		t.Fatal("spawnMob returned nil")
+	}
+
+	ok := session.handleUseEntity(&protocol.Packet7UseEntity{
+		PlayerEntityID: session.entityID,
+		TargetEntityID: mob.EntityID,
+		Action:         0,
+	})
+	if !ok {
+		t.Fatal("handleUseEntity returned false")
+	}
+
+	held := session.inventory[36]
+	if held == nil || held.ItemID != itemIDBucketMilk || held.StackSize != 1 {
+		t.Fatalf("held item mismatch after milk interaction: %#v", held)
+	}
+
+	packet, err := protocol.ReadPacket(&buf, protocol.DirectionClientbound)
+	if err != nil {
+		t.Fatalf("failed to read slot sync: %v", err)
+	}
+	slot, ok := packet.(*protocol.Packet103SetSlot)
+	if !ok {
+		t.Fatalf("expected Packet103SetSlot, got %T", packet)
+	}
+	if slot.ItemSlot != 36 || slot.ItemStack == nil || slot.ItemStack.ItemID != itemIDBucketMilk || slot.ItemStack.StackSize != 1 {
+		t.Fatalf("slot sync mismatch: %#v", slot)
+	}
+}
+
+func TestHandleUseEntityInteractCowDropsMilkBucketWhenInventoryFull(t *testing.T) {
+	srv := NewStatusServer(StatusConfig{})
+	session := newInteractionTestSession(srv, io.Discard)
+	session.entityID = 402
+	session.playerHealth = 20
+	session.playerRegistered = true
+	session.heldItemSlot = 0
+
+	for i := 0; i < playerWindowSlots; i++ {
+		session.inventory[i] = &protocol.ItemStack{
+			ItemID:     1,
+			StackSize:  64,
+			ItemDamage: 0,
+		}
+	}
+	session.inventory[36] = &protocol.ItemStack{
+		ItemID:     itemIDBucketEmpty,
+		StackSize:  2,
+		ItemDamage: 0,
+	}
+
+	mob := srv.spawnMob(&spawnListEntry{entityType: entityTypeCow}, 0.5, 5.0, 2.5, 0)
+	if mob == nil {
+		t.Fatal("spawnMob returned nil")
+	}
+
+	if !session.handleUseEntity(&protocol.Packet7UseEntity{
+		PlayerEntityID: session.entityID,
+		TargetEntityID: mob.EntityID,
+		Action:         0,
+	}) {
+		t.Fatal("handleUseEntity returned false")
+	}
+
+	held := session.inventory[36]
+	if held == nil || held.ItemID != itemIDBucketEmpty || held.StackSize != 1 {
+		t.Fatalf("held item mismatch after milk interaction: %#v", held)
+	}
+
+	srv.droppedItemMu.Lock()
+	defer srv.droppedItemMu.Unlock()
+	if len(srv.droppedItems) != 1 {
+		t.Fatalf("expected one dropped item when inventory full, got=%d", len(srv.droppedItems))
+	}
+	for _, item := range srv.droppedItems {
+		if item == nil {
+			continue
+		}
+		if item.ItemID != itemIDBucketMilk || item.StackSize != 1 {
+			t.Fatalf("dropped item mismatch: %#v", item)
+		}
+	}
+}
+
+func TestHandleUseEntityInteractSheepShearsDropWoolAndDamageShears(t *testing.T) {
+	srv := NewStatusServer(StatusConfig{})
+	srv.mobRand.SetSeed(1)
+	var buf bytes.Buffer
+	session := newInteractionTestSession(srv, &buf)
+	session.entityID = 403
+	session.playerHealth = 20
+	session.playerRegistered = true
+	session.heldItemSlot = 0
+	session.inventory[36] = &protocol.ItemStack{
+		ItemID:     itemIDShears,
+		StackSize:  1,
+		ItemDamage: 0,
+	}
+
+	mob := srv.spawnMob(&spawnListEntry{entityType: entityTypeSheep}, 0.5, 5.0, 2.5, 0)
+	if mob == nil {
+		t.Fatal("spawnMob returned nil")
+	}
+
+	if !session.handleUseEntity(&protocol.Packet7UseEntity{
+		PlayerEntityID: session.entityID,
+		TargetEntityID: mob.EntityID,
+		Action:         0,
+	}) {
+		t.Fatal("handleUseEntity returned false")
+	}
+
+	if session.inventory[36] == nil || session.inventory[36].ItemID != itemIDShears || session.inventory[36].ItemDamage != 1 {
+		t.Fatalf("shears durability mismatch: %#v", session.inventory[36])
+	}
+
+	srv.mobMu.Lock()
+	liveSheep := srv.mobs[mob.EntityID]
+	srv.mobMu.Unlock()
+	if liveSheep == nil {
+		t.Fatal("expected sheep to remain alive")
+	}
+	if !liveSheep.sheepSheared {
+		t.Fatal("expected sheep to be sheared after interaction")
+	}
+
+	srv.droppedItemMu.Lock()
+	dropCount := len(srv.droppedItems)
+	for _, item := range srv.droppedItems {
+		if item == nil {
+			continue
+		}
+		if item.ItemID != blockIDWool {
+			t.Fatalf("unexpected dropped item id: got=%d want=%d", item.ItemID, blockIDWool)
+		}
+		if item.ItemDamage != int16(liveSheep.sheepColor&15) {
+			t.Fatalf("unexpected wool metadata: got=%d want=%d", item.ItemDamage, liveSheep.sheepColor&15)
+		}
+	}
+	srv.droppedItemMu.Unlock()
+
+	if dropCount < 1 || dropCount > 3 {
+		t.Fatalf("wool drop count mismatch: got=%d want=1..3", dropCount)
+	}
+
+	foundSlotSync := false
+	for {
+		packet, err := protocol.ReadPacket(&buf, protocol.DirectionClientbound)
+		if err != nil {
+			break
+		}
+		if slot, ok := packet.(*protocol.Packet103SetSlot); ok {
+			if slot.ItemSlot == 36 && slot.ItemStack != nil && slot.ItemStack.ItemID == itemIDShears && slot.ItemStack.ItemDamage == 1 {
+				foundSlotSync = true
+				break
+			}
+		}
+	}
+	if !foundSlotSync {
+		t.Fatal("expected shears durability slot sync packet")
+	}
+}
+
 func TestHandleUseEntityAttackDamagesTargetAndSendsHealth(t *testing.T) {
 	srv := NewStatusServer(StatusConfig{})
 	attacker := newInteractionTestSession(srv, io.Discard)
