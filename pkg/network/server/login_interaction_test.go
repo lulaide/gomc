@@ -1882,6 +1882,81 @@ func TestHandleSlashCommandListIncludesPlayerNames(t *testing.T) {
 	}
 }
 
+func TestHandleSlashCommandHelpPageIncludesHeaderEntriesAndFooter(t *testing.T) {
+	srv := NewStatusServer(StatusConfig{})
+	var buf bytes.Buffer
+	session := newInteractionTestSession(srv, &buf)
+
+	if !session.handleSlashCommand("/help") {
+		t.Fatal("handleSlashCommand returned false")
+	}
+
+	var lines []string
+	for {
+		packet, err := protocol.ReadPacket(&buf, protocol.DirectionClientbound)
+		if err != nil {
+			break
+		}
+		chat, ok := packet.(*protocol.Packet3Chat)
+		if !ok {
+			continue
+		}
+		lines = append(lines, chat.Message)
+	}
+	if len(lines) < 3 {
+		t.Fatalf("help output too short: %v", lines)
+	}
+	if lines[0] != "--- Showing help page 1 of 2 (/help <page>) ---" {
+		t.Fatalf("help header mismatch: got=%q", lines[0])
+	}
+	if lines[1] != "/clear <player> [item] [data]" {
+		t.Fatalf("first help entry mismatch: got=%q", lines[1])
+	}
+	if lines[7] != "/me <action ...>" {
+		t.Fatalf("last page-1 entry mismatch: got=%q", lines[7])
+	}
+	if lines[len(lines)-1] != "Tip: Use the <tab> key while typing a command to auto-complete the command or its arguments" {
+		t.Fatalf("help footer mismatch: got=%q", lines[len(lines)-1])
+	}
+}
+
+func TestHandleSlashCommandHelpByNameAndAlias(t *testing.T) {
+	srv := NewStatusServer(StatusConfig{})
+	var buf bytes.Buffer
+	session := newInteractionTestSession(srv, &buf)
+
+	if !session.handleSlashCommand("/help tp") {
+		t.Fatal("handleSlashCommand returned false for /help tp")
+	}
+	packet, err := protocol.ReadPacket(&buf, protocol.DirectionClientbound)
+	if err != nil {
+		t.Fatalf("failed to read /help tp output: %v", err)
+	}
+	chat, ok := packet.(*protocol.Packet3Chat)
+	if !ok {
+		t.Fatalf("expected Packet3Chat, got %T", packet)
+	}
+	if chat.Message != "/tp [target player] <destination player> OR /tp [target player] <x> <y> <z>" {
+		t.Fatalf("help by name mismatch: got=%q", chat.Message)
+	}
+
+	buf.Reset()
+	if !session.handleSlashCommand("/? 2") {
+		t.Fatal("handleSlashCommand returned false for /? 2")
+	}
+	packet, err = protocol.ReadPacket(&buf, protocol.DirectionClientbound)
+	if err != nil {
+		t.Fatalf("failed to read /? page output: %v", err)
+	}
+	chat, ok = packet.(*protocol.Packet3Chat)
+	if !ok {
+		t.Fatalf("expected Packet3Chat, got %T", packet)
+	}
+	if chat.Message != "--- Showing help page 2 of 2 (/help <page>) ---" {
+		t.Fatalf("help alias header mismatch: got=%q", chat.Message)
+	}
+}
+
 func TestHandleSlashCommandSayBroadcastsAnnouncement(t *testing.T) {
 	srv := NewStatusServer(StatusConfig{})
 

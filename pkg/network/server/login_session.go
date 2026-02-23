@@ -1186,6 +1186,77 @@ func (s *loginSession) handleSlashCommand(command string) bool {
 		return true
 	}
 
+	if strings.EqualFold(args[0], "/help") || args[0] == "/?" {
+		// Translation target:
+		// - net.minecraft.src.CommandHelp#processCommand
+		helpCommands := []string{
+			"clear",
+			"gamemode",
+			"give",
+			"help",
+			"kill",
+			"list",
+			"me",
+			"say",
+			"setblock",
+			"tell",
+			"time",
+			"tp",
+			"xp",
+		}
+		commandUsage := map[string]string{
+			"clear":    "/clear <player> [item] [data]",
+			"gamemode": "/gamemode <mode> [player]",
+			"give":     "/give <player> <item> [amount] [data]",
+			"help":     "/help [page|command name]",
+			"kill":     "/kill",
+			"list":     "/list",
+			"me":       "/me <action ...>",
+			"say":      "/say <message ...>",
+			"setblock": "/setblock <x> <y> <z> <id> [meta]",
+			"tell":     "/tell <player> <private message ...>",
+			"time":     "/time <set|add> <value>",
+			"tp":       "/tp [target player] <destination player> OR /tp [target player] <x> <y> <z>",
+			"xp":       "/xp <amount> [player] OR /xp <amount>L [player]",
+		}
+		pageSize := 7
+		totalPages := (len(helpCommands) + pageSize - 1) / pageSize
+		pageIndex := 0
+		if len(args) >= 2 {
+			query := strings.TrimSpace(args[1])
+			if p, err := strconv.Atoi(query); err == nil {
+				if p < 1 || p > totalPages {
+					s.sendSystemChat("Usage: /help [page|command name]")
+					return true
+				}
+				pageIndex = p - 1
+			} else {
+				query = strings.TrimPrefix(strings.ToLower(query), "/")
+				usage, ok := commandUsage[query]
+				if !ok {
+					s.sendSystemChat("Unknown command.")
+					return true
+				}
+				s.sendSystemChat(usage)
+				return true
+			}
+		}
+
+		s.sendSystemChat(fmt.Sprintf("--- Showing help page %d of %d (/help <page>) ---", pageIndex+1, totalPages))
+		start := pageIndex * pageSize
+		end := start + pageSize
+		if end > len(helpCommands) {
+			end = len(helpCommands)
+		}
+		for i := start; i < end; i++ {
+			s.sendSystemChat(commandUsage[helpCommands[i]])
+		}
+		if pageIndex == 0 {
+			s.sendSystemChat("Tip: Use the <tab> key while typing a command to auto-complete the command or its arguments")
+		}
+		return true
+	}
+
 	if strings.EqualFold(args[0], "/list") {
 		names := s.server.activePlayerNames()
 		if len(names) == 0 {
