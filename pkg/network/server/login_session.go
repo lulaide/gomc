@@ -1086,9 +1086,13 @@ func (s *loginSession) initializePlayerConnection() bool {
 			return false
 		}
 		if spawn := ref.Session.buildNamedEntitySpawnPacket(); spawn != nil {
+			attach := ref.Session.buildAttachEntityPacket()
 			existingChunkX, existingChunkZ := ref.Session.currentChunkCoords()
 			if s.isWatchingChunk(existingChunkX, existingChunkZ) {
 				if !s.sendPacket(spawn) {
+					return false
+				}
+				if attach != nil && !s.sendPacket(attach) {
 					return false
 				}
 				ref.Session.markSeenBy(s, true)
@@ -1103,6 +1107,7 @@ func (s *loginSession) initializePlayerConnection() bool {
 		Ping:        1000,
 	})
 	if spawn := s.buildNamedEntitySpawnPacket(); spawn != nil {
+		attach := s.buildAttachEntityPacket()
 		targets := s.server.activeSessionsExcept(s)
 		for _, target := range targets {
 			if !target.isWatchingChunk(s.managedChunkX, s.managedChunkZ) {
@@ -1110,6 +1115,9 @@ func (s *loginSession) initializePlayerConnection() bool {
 			}
 			if !target.sendPacket(spawn) {
 				continue
+			}
+			if attach != nil {
+				_ = target.sendPacket(attach)
 			}
 			s.markSeenBy(target, true)
 		}
@@ -4650,6 +4658,19 @@ func (s *loginSession) buildNamedEntitySpawnPacket() *protocol.Packet20NamedEnti
 	}
 }
 
+func (s *loginSession) buildAttachEntityPacket() *protocol.Packet39AttachEntity {
+	s.stateMu.Lock()
+	defer s.stateMu.Unlock()
+	if s.entityID == 0 || s.ridingEntityID == 0 {
+		return nil
+	}
+	return &protocol.Packet39AttachEntity{
+		RidingEntityID:  s.entityID,
+		VehicleEntityID: s.ridingEntityID,
+		AttachState:     0,
+	}
+}
+
 func (s *loginSession) updateTrackedViewers(entityChunkX, entityChunkZ int32, movementPacket protocol.Packet, headRotationPacket protocol.Packet) {
 	if !s.playerRegistered || s.entityID == 0 {
 		return
@@ -4657,6 +4678,7 @@ func (s *loginSession) updateTrackedViewers(entityChunkX, entityChunkZ int32, mo
 
 	targets := s.server.activeSessionsExcept(s)
 	spawnPacket := s.buildNamedEntitySpawnPacket()
+	attachPacket := s.buildAttachEntityPacket()
 	destroyPacket := &protocol.Packet29DestroyEntity{EntityIDs: []int32{s.entityID}}
 
 	for _, target := range targets {
@@ -4666,6 +4688,9 @@ func (s *loginSession) updateTrackedViewers(entityChunkX, entityChunkZ int32, mo
 		switch {
 		case shouldSee && !wasSeen:
 			if spawnPacket != nil && target.sendPacket(spawnPacket) {
+				if attachPacket != nil {
+					_ = target.sendPacket(attachPacket)
+				}
 				s.markSeenBy(target, true)
 			}
 		case !shouldSee && wasSeen:
@@ -4698,6 +4723,9 @@ func (s *loginSession) refreshVisibleEntitiesForSelf() {
 		case shouldSee && !wasSeen:
 			if spawn := other.buildNamedEntitySpawnPacket(); spawn != nil {
 				if s.sendPacket(spawn) {
+					if attach := other.buildAttachEntityPacket(); attach != nil {
+						_ = s.sendPacket(attach)
+					}
 					other.markSeenBy(s, true)
 				}
 			}

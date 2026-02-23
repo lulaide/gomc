@@ -3646,6 +3646,108 @@ func TestHandleEntityActionSneakDismountsAndSendsDetachPacket(t *testing.T) {
 	}
 }
 
+func TestUpdateTrackedViewersNewWatcherGetsAttachForMountedPlayer(t *testing.T) {
+	srv := NewStatusServer(StatusConfig{})
+
+	actor := newInteractionTestSession(srv, io.Discard)
+	actor.clientUsername = "actor"
+	actor.entityID = 700
+	actor.playerRegistered = true
+	actor.ridingEntityID = 9001
+
+	var watcherBuf bytes.Buffer
+	watcher := newInteractionTestSession(srv, &watcherBuf)
+	watcher.clientUsername = "watcher"
+	watcher.entityID = 701
+	watcher.playerRegistered = true
+
+	srv.activeMu.Lock()
+	srv.activePlayers[actor] = "actor"
+	srv.activePlayers[watcher] = "watcher"
+	srv.activeOrder = []*loginSession{actor, watcher}
+	srv.activeMu.Unlock()
+
+	actor.updateTrackedViewers(0, 0, nil, nil)
+
+	first, err := protocol.ReadPacket(&watcherBuf, protocol.DirectionClientbound)
+	if err != nil {
+		t.Fatalf("expected spawn packet for new watcher: %v", err)
+	}
+	spawn, ok := first.(*protocol.Packet20NamedEntitySpawn)
+	if !ok {
+		t.Fatalf("expected Packet20NamedEntitySpawn, got %T", first)
+	}
+	if spawn.EntityID != actor.entityID {
+		t.Fatalf("spawn entity mismatch: got=%d want=%d", spawn.EntityID, actor.entityID)
+	}
+
+	second, err := protocol.ReadPacket(&watcherBuf, protocol.DirectionClientbound)
+	if err != nil {
+		t.Fatalf("expected attach packet for mounted player: %v", err)
+	}
+	attach, ok := second.(*protocol.Packet39AttachEntity)
+	if !ok {
+		t.Fatalf("expected Packet39AttachEntity, got %T", second)
+	}
+	if attach.RidingEntityID != actor.entityID || attach.VehicleEntityID != actor.ridingEntityID || attach.AttachState != 0 {
+		t.Fatalf("attach packet mismatch: %#v", attach)
+	}
+	if !actor.hasSeenBy(watcher) {
+		t.Fatal("expected actor seenBy map to include watcher after spawn")
+	}
+}
+
+func TestRefreshVisibleEntitiesForSelfSendsAttachForMountedPlayer(t *testing.T) {
+	srv := NewStatusServer(StatusConfig{})
+
+	var viewerBuf bytes.Buffer
+	viewer := newInteractionTestSession(srv, &viewerBuf)
+	viewer.clientUsername = "viewer"
+	viewer.entityID = 710
+	viewer.playerRegistered = true
+
+	other := newInteractionTestSession(srv, io.Discard)
+	other.clientUsername = "other"
+	other.entityID = 711
+	other.playerRegistered = true
+	other.ridingEntityID = 9010
+
+	srv.activeMu.Lock()
+	srv.activePlayers[viewer] = "viewer"
+	srv.activePlayers[other] = "other"
+	srv.activeOrder = []*loginSession{viewer, other}
+	srv.activeMu.Unlock()
+
+	viewer.refreshVisibleEntitiesForSelf()
+
+	first, err := protocol.ReadPacket(&viewerBuf, protocol.DirectionClientbound)
+	if err != nil {
+		t.Fatalf("expected spawn packet from refreshVisibleEntitiesForSelf: %v", err)
+	}
+	spawn, ok := first.(*protocol.Packet20NamedEntitySpawn)
+	if !ok {
+		t.Fatalf("expected Packet20NamedEntitySpawn, got %T", first)
+	}
+	if spawn.EntityID != other.entityID {
+		t.Fatalf("spawn entity mismatch: got=%d want=%d", spawn.EntityID, other.entityID)
+	}
+
+	second, err := protocol.ReadPacket(&viewerBuf, protocol.DirectionClientbound)
+	if err != nil {
+		t.Fatalf("expected attach packet from refreshVisibleEntitiesForSelf: %v", err)
+	}
+	attach, ok := second.(*protocol.Packet39AttachEntity)
+	if !ok {
+		t.Fatalf("expected Packet39AttachEntity, got %T", second)
+	}
+	if attach.RidingEntityID != other.entityID || attach.VehicleEntityID != other.ridingEntityID || attach.AttachState != 0 {
+		t.Fatalf("attach packet mismatch: %#v", attach)
+	}
+	if !other.hasSeenBy(viewer) {
+		t.Fatal("expected other seenBy map to include viewer after spawn")
+	}
+}
+
 func TestLootingLevelFromItemStackReadsEnchantList(t *testing.T) {
 	enchList := nbt.NewListTag("ench")
 	entrySharpness := nbt.NewCompoundTag("")
