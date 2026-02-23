@@ -5,7 +5,9 @@ package gui
 import (
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"runtime"
 	"sort"
 	"strconv"
 	"strings"
@@ -26,6 +28,8 @@ const (
 	menuScreenMultiplayer
 	menuScreenOptions
 	menuScreenLanguage
+	menuScreenChatOptions
+	menuScreenResourcePacks
 	menuScreenVideo
 	menuScreenControls
 	menuScreenKeyBindings
@@ -103,6 +107,16 @@ const (
 	buttonIDLanguageForceUnicode = 1552
 	buttonIDLanguageDone         = 1599
 
+	buttonIDChatVisibility  = 1561
+	buttonIDChatColors      = 1562
+	buttonIDChatLinks       = 1563
+	buttonIDChatLinksPrompt = 1564
+	buttonIDChatShowCape    = 1565
+	buttonIDChatDone        = 1569
+
+	buttonIDResourceOpenFolder = 1571
+	buttonIDResourceDone       = 1572
+
 	buttonIDVideoGraphics    = 1601
 	buttonIDVideoClouds      = 1602
 	buttonIDVideoRDMinus     = 1603
@@ -149,6 +163,8 @@ func (a *App) initAllMenuButtons() {
 	a.initMultiButtons()
 	a.initOptionButtons()
 	a.initLanguageButtons()
+	a.initChatOptionButtons()
+	a.initResourceButtons()
 	a.initVideoButtons()
 	a.initControlButtons()
 	a.initKeyBindingButtons()
@@ -161,6 +177,8 @@ func (a *App) initAllMenuButtons() {
 	a.updateSingleButtonsState()
 	a.updateOptionButtonsState()
 	a.updateLanguageButtonsState()
+	a.updateChatOptionButtonsState()
+	a.updateResourceButtonsState()
 	a.updateVideoButtonsState()
 	a.updateControlButtonsState()
 	a.updateKeyBindingButtonsState()
@@ -235,6 +253,27 @@ func (a *App) initLanguageButtons() {
 		newButton(buttonIDLanguageForceUnicode, w/2-75, baseY, 150, 20, "Force Unicode Font: OFF"),
 		newButton(buttonIDLanguageEnglish, w/2-100, baseY+36, 200, 20, "English (US)"),
 		newButton(buttonIDLanguageDone, w/2-100, h-38, 200, 20, "Done"),
+	}
+}
+
+func (a *App) initChatOptionButtons() {
+	w, h := a.uiWidth(), a.uiHeight()
+	baseY := h / 6
+	a.chatOptionButtons = []*guiButton{
+		newButton(buttonIDChatVisibility, w/2-155, baseY, 150, 20, "Chat: Shown"),
+		newButton(buttonIDChatColors, w/2+5, baseY, 150, 20, "Colors: ON"),
+		newButton(buttonIDChatLinks, w/2-155, baseY+24, 150, 20, "Web Links: ON"),
+		newButton(buttonIDChatLinksPrompt, w/2+5, baseY+24, 150, 20, "Prompt on Links: ON"),
+		newButton(buttonIDChatShowCape, w/2-155, baseY+72, 150, 20, "Show Cape: ON"),
+		newButton(buttonIDChatDone, w/2-100, h/6+168, 200, 20, "Done"),
+	}
+}
+
+func (a *App) initResourceButtons() {
+	w, h := a.uiWidth(), a.uiHeight()
+	a.resourceButtons = []*guiButton{
+		newButton(buttonIDResourceOpenFolder, w/2-154, h-48, 150, 20, "Open resource pack folder"),
+		newButton(buttonIDResourceDone, w/2+4, h-48, 150, 20, "Done"),
 	}
 }
 
@@ -477,6 +516,65 @@ func (a *App) updateLanguageButtonsState() {
 				b.Label = langLabel
 			}
 		case buttonIDLanguageDone:
+			b.Label = "Done"
+		}
+	}
+}
+
+func chatVisibilityLabel(mode int) string {
+	switch clampInt(mode, 0, 2) {
+	case 1:
+		return "System"
+	case 2:
+		return "Hidden"
+	default:
+		return "Shown"
+	}
+}
+
+func onOffLabel(v bool) string {
+	if v {
+		return "ON"
+	}
+	return "OFF"
+}
+
+func (a *App) updateChatOptionButtonsState() {
+	for _, b := range a.chatOptionButtons {
+		if b == nil {
+			continue
+		}
+		b.Visible = true
+		b.Enabled = true
+		switch b.ID {
+		case buttonIDChatVisibility:
+			b.Label = "Chat: " + chatVisibilityLabel(a.chatVisibility)
+		case buttonIDChatColors:
+			b.Label = "Colors: " + onOffLabel(a.chatColours)
+		case buttonIDChatLinks:
+			b.Label = "Web Links: " + onOffLabel(a.chatLinks)
+		case buttonIDChatLinksPrompt:
+			b.Label = "Prompt on Links: " + onOffLabel(a.chatLinksPrompt)
+			b.Enabled = a.chatLinks
+		case buttonIDChatShowCape:
+			b.Label = "Show Cape: " + onOffLabel(a.showCape)
+		case buttonIDChatDone:
+			b.Label = "Done"
+		}
+	}
+}
+
+func (a *App) updateResourceButtonsState() {
+	for _, b := range a.resourceButtons {
+		if b == nil {
+			continue
+		}
+		b.Visible = true
+		b.Enabled = true
+		switch b.ID {
+		case buttonIDResourceOpenFolder:
+			b.Label = "Open resource pack folder"
+		case buttonIDResourceDone:
 			b.Label = "Done"
 		}
 	}
@@ -841,6 +939,10 @@ func (a *App) currentMenuButtons() []*guiButton {
 		return a.optionButtons
 	case menuScreenLanguage:
 		return a.languageButtons
+	case menuScreenChatOptions:
+		return a.chatOptionButtons
+	case menuScreenResourcePacks:
+		return a.resourceButtons
 	case menuScreenVideo:
 		return a.videoButtons
 	case menuScreenControls:
@@ -1210,9 +1312,15 @@ func (a *App) handleMenuButton(id int) bool {
 				changed = true
 			}
 		case buttonIDOptionMultiplayer:
-			a.menuStatus = "Multiplayer Settings screen is not implemented yet."
+			a.chatOptionReturn = menuScreenOptions
+			a.menuScreen = menuScreenChatOptions
+			a.menuStatus = ""
+			a.updateChatOptionButtonsState()
 		case buttonIDOptionResource:
-			a.menuStatus = "Resource Packs screen is not implemented yet."
+			a.resourceReturn = menuScreenOptions
+			a.menuScreen = menuScreenResourcePacks
+			a.menuStatus = ""
+			a.updateResourceButtonsState()
 		}
 		a.updateOptionButtonsState()
 		a.updateVideoButtonsState()
@@ -1235,6 +1343,47 @@ func (a *App) handleMenuButton(id int) bool {
 			a.saveOptionsFile()
 		}
 		a.updateLanguageButtonsState()
+	case menuScreenChatOptions:
+		changed := false
+		switch id {
+		case buttonIDChatDone, buttonIDMenuBack:
+			a.menuScreen = a.chatOptionReturn
+			a.menuStatus = ""
+		case buttonIDChatVisibility:
+			a.chatVisibility = (a.chatVisibility + 1) % 3
+			changed = true
+		case buttonIDChatColors:
+			a.chatColours = !a.chatColours
+			changed = true
+		case buttonIDChatLinks:
+			a.chatLinks = !a.chatLinks
+			changed = true
+		case buttonIDChatLinksPrompt:
+			if a.chatLinks {
+				a.chatLinksPrompt = !a.chatLinksPrompt
+				changed = true
+			}
+		case buttonIDChatShowCape:
+			a.showCape = !a.showCape
+			changed = true
+		}
+		if changed {
+			a.saveOptionsFile()
+		}
+		a.updateChatOptionButtonsState()
+	case menuScreenResourcePacks:
+		switch id {
+		case buttonIDResourceDone, buttonIDMenuBack:
+			a.menuScreen = a.resourceReturn
+			a.menuStatus = ""
+		case buttonIDResourceOpenFolder:
+			if err := a.openResourcePackFolder(); err != nil {
+				a.menuStatus = fmt.Sprintf("Open folder failed: %v", err)
+			} else {
+				a.menuStatus = "Opened resource pack folder."
+			}
+		}
+		a.updateResourceButtonsState()
 	case menuScreenVideo:
 		changed := false
 		switch id {
@@ -2079,6 +2228,37 @@ func (a *App) handleSingleWorldListClick(mx, my int) bool {
 	return true
 }
 
+func (a *App) resourcePackDir() string {
+	assetsRoot := filepath.Clean(a.assetsRoot)
+	if strings.EqualFold(filepath.Base(assetsRoot), "minecraft") {
+		assetsDir := filepath.Dir(assetsRoot)
+		if strings.EqualFold(filepath.Base(assetsDir), "assets") {
+			return filepath.Join(filepath.Dir(assetsDir), "resourcepacks")
+		}
+	}
+	if strings.TrimSpace(a.optionsPath) != "" {
+		return filepath.Join(filepath.Dir(a.optionsPath), "resourcepacks")
+	}
+	return "resourcepacks"
+}
+
+func (a *App) openResourcePackFolder() error {
+	dir := a.resourcePackDir()
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return err
+	}
+	var cmd *exec.Cmd
+	switch runtime.GOOS {
+	case "windows":
+		cmd = exec.Command("explorer", dir)
+	case "darwin":
+		cmd = exec.Command("open", dir)
+	default:
+		cmd = exec.Command("xdg-open", dir)
+	}
+	return cmd.Start()
+}
+
 func (a *App) drawMenuScreen() {
 	switch a.menuScreen {
 	case menuScreenSingleplayer:
@@ -2089,6 +2269,10 @@ func (a *App) drawMenuScreen() {
 		a.drawOptionsMenu()
 	case menuScreenLanguage:
 		a.drawLanguageMenu()
+	case menuScreenChatOptions:
+		a.drawChatOptionsMenu()
+	case menuScreenResourcePacks:
+		a.drawResourcePackMenu()
 	case menuScreenVideo:
 		a.drawVideoMenu()
 	case menuScreenControls:
@@ -2136,6 +2320,14 @@ func (a *App) handleMenuEscape() bool {
 		return true
 	case menuScreenLanguage:
 		a.menuScreen = a.languageReturn
+		a.menuStatus = ""
+		return true
+	case menuScreenChatOptions:
+		a.menuScreen = a.chatOptionReturn
+		a.menuStatus = ""
+		return true
+	case menuScreenResourcePacks:
+		a.menuScreen = a.resourceReturn
 		a.menuStatus = ""
 		return true
 	case menuScreenMain:
@@ -2417,6 +2609,40 @@ func (a *App) drawLanguageMenu() {
 		a.font.drawCenteredString("Select language", a.uiWidth()/2, a.uiHeight()/6+6, 0xA0A0A0)
 	}
 	for _, b := range a.languageButtons {
+		b.draw(a.font, a.texWidgets, a.mouseX, a.mouseY)
+	}
+
+	a.drawMenuStatusLine()
+	gl.Disable(gl.BLEND)
+	gl.Enable(gl.CULL_FACE)
+	gl.Enable(gl.DEPTH_TEST)
+}
+
+func (a *App) drawChatOptionsMenu() {
+	a.drawMenuBackground("Chat Settings")
+	a.updateChatOptionButtonsState()
+
+	if a.font != nil {
+		a.font.drawCenteredString("Multiplayer Settings", a.uiWidth()/2, a.uiHeight()/6+55, 0xFFFFFF)
+	}
+	for _, b := range a.chatOptionButtons {
+		b.draw(a.font, a.texWidgets, a.mouseX, a.mouseY)
+	}
+
+	a.drawMenuStatusLine()
+	gl.Disable(gl.BLEND)
+	gl.Enable(gl.CULL_FACE)
+	gl.Enable(gl.DEPTH_TEST)
+}
+
+func (a *App) drawResourcePackMenu() {
+	a.drawMenuBackground("Resource Packs")
+	a.updateResourceButtonsState()
+
+	if a.font != nil {
+		a.font.drawCenteredString("Open the folder to add resource packs.", a.uiWidth()/2, a.uiHeight()-26, 0x808080)
+	}
+	for _, b := range a.resourceButtons {
 		b.draw(a.font, a.texWidgets, a.mouseX, a.mouseY)
 	}
 

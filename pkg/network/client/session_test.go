@@ -1113,3 +1113,24 @@ func TestHandlePacket18AnimationEmitsEvent(t *testing.T) {
 		t.Fatalf("expected positive swing progress, got %.3f", out[0].SwingProgress)
 	}
 }
+
+func TestSendClientInfoWritesPacket204(t *testing.T) {
+	var out bytes.Buffer
+	s := newUnitTestSession(&out)
+
+	if err := s.SendClientInfo("en_US", 1, 2, true, 3, false); err != nil {
+		t.Fatalf("SendClientInfo failed: %v", err)
+	}
+
+	packet, err := protocol.ReadPacket(&out, protocol.DirectionServerbound)
+	if err != nil {
+		t.Fatalf("failed to read Packet204: %v", err)
+	}
+	info, ok := packet.(*protocol.Packet204ClientInfo)
+	if !ok {
+		t.Fatalf("expected Packet204ClientInfo, got %T", packet)
+	}
+	if info.Language != "en_US" || info.RenderDistance != 1 || info.ChatVisible != 2 || !info.ChatColours || info.GameDifficulty != 3 || info.ShowCape {
+		t.Fatalf("packet mismatch: %#v", info)
+	}
+}

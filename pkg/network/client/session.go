@@ -1106,6 +1106,28 @@ func (s *Session) SetLocalOnGround(onGround bool) {
 	s.stateMu.Unlock()
 }
 
+// SendClientInfo sends Packet204 client settings update.
+//
+// Translation references:
+// - net.minecraft.src.GameSettings#sendSettingsToServer()
+// - net.minecraft.src.Packet204ClientInfo
+func (s *Session) SendClientInfo(language string, renderDistance, chatVisible int8, chatColours bool, difficulty int8, showCape bool) error {
+	if strings.TrimSpace(language) == "" {
+		language = "en_US"
+	}
+	if chatVisible < 0 || chatVisible > 2 {
+		chatVisible = 0
+	}
+	return s.sendPacket(&protocol.Packet204ClientInfo{
+		Language:       language,
+		RenderDistance: renderDistance,
+		ChatVisible:    chatVisible,
+		ChatColours:    chatColours,
+		GameDifficulty: difficulty,
+		ShowCape:       showCape,
+	})
+}
+
 // SelectHotbar sends Packet16 to switch currently held slot (0..8).
 func (s *Session) SelectHotbar(slot int16) error {
 	if slot < 0 || slot >= hotbarCount {

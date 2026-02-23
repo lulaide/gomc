@@ -343,6 +343,12 @@ func TestOptionsFileLoadAndSave(t *testing.T) {
 		"bobView:false",
 		"lang:en_US",
 		"forceUnicodeFont:true",
+		"chatVisibility:2",
+		"chatColors:false",
+		"chatLinks:false",
+		"chatLinksPrompt:false",
+		"serverTextures:false",
+		"showCape:false",
 		"mouseSensitivity:0.30",
 		"fpsLimit:2",
 		"difficulty:3",
@@ -401,6 +407,24 @@ func TestOptionsFileLoadAndSave(t *testing.T) {
 	if !a.forceUnicodeFont {
 		t.Fatal("loaded forceUnicodeFont should be true")
 	}
+	if a.chatVisibility != 2 {
+		t.Fatalf("loaded chatVisibility mismatch: got=%d want=2", a.chatVisibility)
+	}
+	if a.chatColours {
+		t.Fatal("loaded chatColors should be false")
+	}
+	if a.chatLinks {
+		t.Fatal("loaded chatLinks should be false")
+	}
+	if a.chatLinksPrompt {
+		t.Fatal("loaded chatLinksPrompt should be false")
+	}
+	if a.serverTextures {
+		t.Fatal("loaded serverTextures should be false")
+	}
+	if a.showCape {
+		t.Fatal("loaded showCape should be false")
+	}
 	if a.limitFramerateMode != 2 {
 		t.Fatalf("loaded fpsLimit mismatch: got=%d want=2", a.limitFramerateMode)
 	}
@@ -427,6 +451,12 @@ func TestOptionsFileLoadAndSave(t *testing.T) {
 	a.mouseSens = 0.5
 	a.languageCode = "en_US"
 	a.forceUnicodeFont = false
+	a.chatVisibility = 1
+	a.chatColours = true
+	a.chatLinks = true
+	a.chatLinksPrompt = true
+	a.serverTextures = true
+	a.showCape = true
 	a.limitFramerateMode = 0
 	a.optionDifficulty = 0
 	a.fancyGraphics = true
@@ -449,6 +479,12 @@ func TestOptionsFileLoadAndSave(t *testing.T) {
 		"bobView:true",
 		"lang:en_US",
 		"forceUnicodeFont:false",
+		"chatVisibility:1",
+		"chatColors:true",
+		"chatLinks:true",
+		"chatLinksPrompt:true",
+		"serverTextures:true",
+		"showCape:true",
 		"mouseSensitivity:0.500000",
 		"fpsLimit:0",
 		"difficulty:0",

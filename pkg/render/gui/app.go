@@ -226,6 +226,8 @@ type App struct {
 	multiButtons       []*guiButton
 	optionButtons      []*guiButton
 	languageButtons    []*guiButton
+	chatOptionButtons  []*guiButton
+	resourceButtons    []*guiButton
 	videoButtons       []*guiButton
 	controlButtons     []*guiButton
 	keyBindButtons     []*guiButton
@@ -236,8 +238,16 @@ type App struct {
 	singleWorldMeta    map[string]singleWorldMeta
 	selectedWorld      int
 	languageReturn     menuScreen
+	chatOptionReturn   menuScreen
+	resourceReturn     menuScreen
 	menuStatus         string
 	optionDifficulty   int
+	chatVisibility     int
+	chatColours        bool
+	chatLinks          bool
+	chatLinksPrompt    bool
+	showCape           bool
+	serverTextures     bool
 	createWorldName    string
 	createWorldSeed    string
 	createWorldMode    int
@@ -439,11 +449,19 @@ func Run(session *netclient.Session, cfg Config) error {
 		assetsRoot:         discoverAssetsRoot(),
 		optionsKV:          make(map[string]string),
 		languageCode:       "en_US",
+		chatVisibility:     0,
+		chatColours:        true,
+		chatLinks:          true,
+		chatLinksPrompt:    true,
+		showCape:           true,
+		serverTextures:     true,
 		eventsCh:           session.Events(),
 		mainMenu:           cfg.StartInMainMenu,
 		pauseScreen:        pauseScreenMain,
 		menuScreen:         menuScreenMain,
 		languageReturn:     menuScreenMain,
+		chatOptionReturn:   menuScreenOptions,
+		resourceReturn:     menuScreenOptions,
 		keyBindCapture:     -1,
 		selectedWorld:      -1,
 		singleWorldMeta:    make(map[string]singleWorldMeta),
@@ -7141,6 +7159,30 @@ func (a *App) loadOptionsFile() {
 			if v, parseErr := strconv.ParseBool(value); parseErr == nil {
 				a.forceUnicodeFont = v
 			}
+		case "chatVisibility":
+			if v, parseErr := strconv.Atoi(value); parseErr == nil {
+				a.chatVisibility = clampInt(v, 0, 2)
+			}
+		case "chatColors":
+			if v, parseErr := strconv.ParseBool(value); parseErr == nil {
+				a.chatColours = v
+			}
+		case "chatLinks":
+			if v, parseErr := strconv.ParseBool(value); parseErr == nil {
+				a.chatLinks = v
+			}
+		case "chatLinksPrompt":
+			if v, parseErr := strconv.ParseBool(value); parseErr == nil {
+				a.chatLinksPrompt = v
+			}
+		case "serverTextures":
+			if v, parseErr := strconv.ParseBool(value); parseErr == nil {
+				a.serverTextures = v
+			}
+		case "showCape":
+			if v, parseErr := strconv.ParseBool(value); parseErr == nil {
+				a.showCape = v
+			}
 		case "mouseSensitivity":
 			if v, parseErr := strconv.ParseFloat(value, 64); parseErr == nil {
 				a.mouseSens = clampFloat64(v, 0.0, 1.0)
@@ -7200,6 +7242,12 @@ func (a *App) saveOptionsFile() {
 		a.optionsKV["lang"] = "en_US"
 	}
 	a.optionsKV["forceUnicodeFont"] = strconv.FormatBool(a.forceUnicodeFont)
+	a.optionsKV["chatVisibility"] = strconv.Itoa(clampInt(a.chatVisibility, 0, 2))
+	a.optionsKV["chatColors"] = strconv.FormatBool(a.chatColours)
+	a.optionsKV["chatLinks"] = strconv.FormatBool(a.chatLinks)
+	a.optionsKV["chatLinksPrompt"] = strconv.FormatBool(a.chatLinksPrompt)
+	a.optionsKV["serverTextures"] = strconv.FormatBool(a.serverTextures)
+	a.optionsKV["showCape"] = strconv.FormatBool(a.showCape)
 	a.optionsKV["mouseSensitivity"] = strconv.FormatFloat(clampFloat64(a.mouseSens, 0.0, 1.0), 'f', 6, 64)
 	a.optionsKV["fpsLimit"] = strconv.Itoa(clampInt(a.limitFramerateMode, 0, 2))
 	a.optionsKV["difficulty"] = strconv.Itoa(a.optionDifficulty & 3)
@@ -7250,6 +7298,26 @@ func (a *App) saveOptionsFile() {
 		fmt.Printf("gui options warning: replace options failed: %v\n", err)
 		return
 	}
+
+	a.sendClientSettingsToServer()
+}
+
+func (a *App) sendClientSettingsToServer() {
+	if a.session == nil {
+		return
+	}
+	lang := strings.TrimSpace(a.languageCode)
+	if lang == "" {
+		lang = "en_US"
+	}
+	_ = a.session.SendClientInfo(
+		lang,
+		int8(normalizeRenderDistanceMode(a.renderDistance)),
+		int8(clampInt(a.chatVisibility, 0, 2)),
+		a.chatColours,
+		int8(a.optionDifficulty&3),
+		a.showCape,
+	)
 }
 
 func discoverAssetsRoot() string {
