@@ -349,6 +349,8 @@ func TestOptionsFileLoadAndSave(t *testing.T) {
 		"chatLinksPrompt:false",
 		"serverTextures:false",
 		"showCape:false",
+		"snooperEnabled:false",
+		"touchscreen:true",
 		"mouseSensitivity:0.30",
 		"fpsLimit:2",
 		"difficulty:3",
@@ -425,6 +427,12 @@ func TestOptionsFileLoadAndSave(t *testing.T) {
 	if a.showCape {
 		t.Fatal("loaded showCape should be false")
 	}
+	if a.snooperEnabled {
+		t.Fatal("loaded snooperEnabled should be false")
+	}
+	if !a.touchscreen {
+		t.Fatal("loaded touchscreen should be true")
+	}
 	if a.limitFramerateMode != 2 {
 		t.Fatalf("loaded fpsLimit mismatch: got=%d want=2", a.limitFramerateMode)
 	}
@@ -457,6 +465,8 @@ func TestOptionsFileLoadAndSave(t *testing.T) {
 	a.chatLinksPrompt = true
 	a.serverTextures = true
 	a.showCape = true
+	a.snooperEnabled = true
+	a.touchscreen = false
 	a.limitFramerateMode = 0
 	a.optionDifficulty = 0
 	a.fancyGraphics = true
@@ -485,6 +495,8 @@ func TestOptionsFileLoadAndSave(t *testing.T) {
 		"chatLinksPrompt:true",
 		"serverTextures:true",
 		"showCape:true",
+		"snooperEnabled:true",
+		"touchscreen:false",
 		"mouseSensitivity:0.500000",
 		"fpsLimit:0",
 		"difficulty:0",

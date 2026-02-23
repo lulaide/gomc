@@ -70,12 +70,13 @@ func TestMainMenuOptionControlsOpensControlsScreen(t *testing.T) {
 
 func TestControlsMenuUpdatesMouseSettings(t *testing.T) {
 	a := &App{
-		guiW:       854,
-		guiH:       480,
-		mainMenu:   true,
-		menuScreen: menuScreenControls,
-		mouseSens:  0.20,
-		optionsKV:  make(map[string]string),
+		guiW:        854,
+		guiH:        480,
+		mainMenu:    true,
+		menuScreen:  menuScreenControls,
+		mouseSens:   0.20,
+		touchscreen: false,
+		optionsKV:   make(map[string]string),
 		optionsPath: filepath.Join(
 			t.TempDir(),
 			"options.txt",
@@ -92,6 +93,11 @@ func TestControlsMenuUpdatesMouseSettings(t *testing.T) {
 	_ = a.handleMenuButton(buttonIDControlInvert)
 	if !a.invertMouse {
 		t.Fatal("controls invert button should toggle invertMouse on")
+	}
+
+	_ = a.handleMenuButton(buttonIDControlTouchscreen)
+	if !a.touchscreen {
+		t.Fatal("controls touchscreen button should toggle touchscreen on")
 	}
 
 	_ = a.handleMenuButton(buttonIDControlDone)

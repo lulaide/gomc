@@ -169,6 +169,7 @@ func TestPauseOptionsOpenLanguageChatAndResourceSubscreens(t *testing.T) {
 		mainMenu:        false,
 		pauseScreen:     pauseScreenOptions,
 		languageCode:    "en_US",
+		snooperEnabled:  true,
 		chatVisibility:  0,
 		chatColours:     true,
 		chatLinks:       true,
@@ -187,6 +188,19 @@ func TestPauseOptionsOpenLanguageChatAndResourceSubscreens(t *testing.T) {
 	a.handlePauseLanguageButton(buttonIDLanguageDone)
 	if a.pauseScreen != pauseScreenOptions {
 		t.Fatalf("pause language done should return to options: got=%d want=%d", a.pauseScreen, pauseScreenOptions)
+	}
+
+	a.handlePauseOptionButton(buttonIDOptionSnooper)
+	if a.pauseScreen != pauseScreenSnooper {
+		t.Fatalf("pause options snooper should open snooper screen: got=%d want=%d", a.pauseScreen, pauseScreenSnooper)
+	}
+	a.handlePauseSnooperButton(buttonIDSnooperToggle)
+	if a.snooperEnabled {
+		t.Fatal("pause snooper toggle should flip to false")
+	}
+	a.handlePauseSnooperButton(buttonIDSnooperDone)
+	if a.pauseScreen != pauseScreenOptions {
+		t.Fatalf("pause snooper done should return to options: got=%d want=%d", a.pauseScreen, pauseScreenOptions)
 	}
 
 	a.handlePauseOptionButton(buttonIDOptionMultiplayer)

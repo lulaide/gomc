@@ -30,6 +30,7 @@ const (
 	menuScreenLanguage
 	menuScreenChatOptions
 	menuScreenResourcePacks
+	menuScreenSnooper
 	menuScreenVideo
 	menuScreenControls
 	menuScreenKeyBindings
@@ -117,6 +118,9 @@ const (
 	buttonIDResourceOpenFolder = 1571
 	buttonIDResourceDone       = 1572
 
+	buttonIDSnooperToggle = 1581
+	buttonIDSnooperDone   = 1582
+
 	buttonIDVideoGraphics    = 1601
 	buttonIDVideoClouds      = 1602
 	buttonIDVideoRDMinus     = 1603
@@ -165,6 +169,7 @@ func (a *App) initAllMenuButtons() {
 	a.initLanguageButtons()
 	a.initChatOptionButtons()
 	a.initResourceButtons()
+	a.initSnooperButtons()
 	a.initVideoButtons()
 	a.initControlButtons()
 	a.initKeyBindingButtons()
@@ -179,6 +184,7 @@ func (a *App) initAllMenuButtons() {
 	a.updateLanguageButtonsState()
 	a.updateChatOptionButtonsState()
 	a.updateResourceButtonsState()
+	a.updateSnooperButtonsState()
 	a.updateVideoButtonsState()
 	a.updateControlButtonsState()
 	a.updateKeyBindingButtonsState()
@@ -274,6 +280,14 @@ func (a *App) initResourceButtons() {
 	a.resourceButtons = []*guiButton{
 		newButton(buttonIDResourceOpenFolder, w/2-154, h-48, 150, 20, "Open resource pack folder"),
 		newButton(buttonIDResourceDone, w/2+4, h-48, 150, 20, "Done"),
+	}
+}
+
+func (a *App) initSnooperButtons() {
+	w, h := a.uiWidth(), a.uiHeight()
+	a.snooperButtons = []*guiButton{
+		newButton(buttonIDSnooperToggle, w/2-75, h/6+20, 150, 20, "Snooper: ON"),
+		newButton(buttonIDSnooperDone, w/2-100, h/6+168, 200, 20, "Done"),
 	}
 }
 
@@ -630,8 +644,8 @@ func (a *App) updateControlButtonsState() {
 			b.Label = "Key Bindings..."
 			b.Enabled = true
 		case buttonIDControlTouchscreen:
-			b.Label = "Touchscreen Mode"
-			b.Enabled = false
+			b.Label = a.optionTouchscreenLabel()
+			b.Enabled = true
 		case buttonIDControlSensMinus:
 			b.Enabled = a.mouseSens > 0.0
 		case buttonIDControlSensPlus:
@@ -641,6 +655,26 @@ func (a *App) updateControlButtonsState() {
 			b.Enabled = true
 		case buttonIDControlDone:
 			b.Enabled = true
+		}
+	}
+}
+
+func (a *App) updateSnooperButtonsState() {
+	for _, b := range a.snooperButtons {
+		if b == nil {
+			continue
+		}
+		b.Visible = true
+		b.Enabled = true
+		switch b.ID {
+		case buttonIDSnooperToggle:
+			if a.snooperEnabled {
+				b.Label = "Snooper: ON"
+			} else {
+				b.Label = "Snooper: OFF"
+			}
+		case buttonIDSnooperDone:
+			b.Label = "Done"
 		}
 	}
 }
@@ -943,6 +977,8 @@ func (a *App) currentMenuButtons() []*guiButton {
 		return a.chatOptionButtons
 	case menuScreenResourcePacks:
 		return a.resourceButtons
+	case menuScreenSnooper:
+		return a.snooperButtons
 	case menuScreenVideo:
 		return a.videoButtons
 	case menuScreenControls:
@@ -1290,7 +1326,10 @@ func (a *App) handleMenuButton(id int) bool {
 			}
 		case buttonIDOptionSnooper:
 			if a.mainMenu {
-				a.menuStatus = "Snooper Settings are not implemented yet."
+				a.snooperReturn = menuScreenOptions
+				a.menuScreen = menuScreenSnooper
+				a.menuStatus = ""
+				a.updateSnooperButtonsState()
 			} else {
 				a.cloudsEnabled = !a.cloudsEnabled
 				changed = true
@@ -1384,6 +1423,16 @@ func (a *App) handleMenuButton(id int) bool {
 			}
 		}
 		a.updateResourceButtonsState()
+	case menuScreenSnooper:
+		switch id {
+		case buttonIDSnooperDone, buttonIDMenuBack:
+			a.menuScreen = a.snooperReturn
+			a.menuStatus = ""
+		case buttonIDSnooperToggle:
+			a.snooperEnabled = !a.snooperEnabled
+			a.saveOptionsFile()
+		}
+		a.updateSnooperButtonsState()
 	case menuScreenVideo:
 		changed := false
 		switch id {
@@ -1465,7 +1514,8 @@ func (a *App) handleMenuButton(id int) bool {
 			a.clearKeyPressQueue()
 			a.menuStatus = ""
 		case buttonIDControlTouchscreen:
-			a.menuStatus = "Touchscreen mode is not available on desktop."
+			a.touchscreen = !a.touchscreen
+			changed = true
 		}
 		a.updateControlButtonsState()
 		a.updateKeyBindingButtonsState()
@@ -2273,6 +2323,8 @@ func (a *App) drawMenuScreen() {
 		a.drawChatOptionsMenu()
 	case menuScreenResourcePacks:
 		a.drawResourcePackMenu()
+	case menuScreenSnooper:
+		a.drawSnooperMenu()
 	case menuScreenVideo:
 		a.drawVideoMenu()
 	case menuScreenControls:
@@ -2328,6 +2380,10 @@ func (a *App) handleMenuEscape() bool {
 		return true
 	case menuScreenResourcePacks:
 		a.menuScreen = a.resourceReturn
+		a.menuStatus = ""
+		return true
+	case menuScreenSnooper:
+		a.menuScreen = a.snooperReturn
 		a.menuStatus = ""
 		return true
 	case menuScreenMain:
@@ -2643,6 +2699,23 @@ func (a *App) drawResourcePackMenu() {
 		a.font.drawCenteredString("Open the folder to add resource packs.", a.uiWidth()/2, a.uiHeight()-26, 0x808080)
 	}
 	for _, b := range a.resourceButtons {
+		b.draw(a.font, a.texWidgets, a.mouseX, a.mouseY)
+	}
+
+	a.drawMenuStatusLine()
+	gl.Disable(gl.BLEND)
+	gl.Enable(gl.CULL_FACE)
+	gl.Enable(gl.DEPTH_TEST)
+}
+
+func (a *App) drawSnooperMenu() {
+	a.drawMenuBackground("Snooper Settings")
+	a.updateSnooperButtonsState()
+
+	if a.font != nil {
+		a.font.drawCenteredString("Allow the game to send usage statistics.", a.uiWidth()/2, a.uiHeight()/6+48, 0x808080)
+	}
+	for _, b := range a.snooperButtons {
 		b.draw(a.font, a.texWidgets, a.mouseX, a.mouseY)
 	}
 

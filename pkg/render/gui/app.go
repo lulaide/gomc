@@ -74,6 +74,7 @@ type pauseScreen int
 const (
 	pauseScreenMain pauseScreen = iota
 	pauseScreenOptions
+	pauseScreenSnooper
 	pauseScreenVideo
 	pauseScreenControls
 	pauseScreenKeyBindings
@@ -231,6 +232,7 @@ type App struct {
 	languageButtons    []*guiButton
 	chatOptionButtons  []*guiButton
 	resourceButtons    []*guiButton
+	snooperButtons     []*guiButton
 	videoButtons       []*guiButton
 	controlButtons     []*guiButton
 	keyBindButtons     []*guiButton
@@ -243,6 +245,7 @@ type App struct {
 	languageReturn     menuScreen
 	chatOptionReturn   menuScreen
 	resourceReturn     menuScreen
+	snooperReturn      menuScreen
 	menuStatus         string
 	optionDifficulty   int
 	chatVisibility     int
@@ -251,6 +254,8 @@ type App struct {
 	chatLinksPrompt    bool
 	showCape           bool
 	serverTextures     bool
+	snooperEnabled     bool
+	touchscreen        bool
 	createWorldName    string
 	createWorldSeed    string
 	createWorldMode    int
@@ -458,6 +463,8 @@ func Run(session *netclient.Session, cfg Config) error {
 		chatLinksPrompt:    true,
 		showCape:           true,
 		serverTextures:     true,
+		snooperEnabled:     true,
+		touchscreen:        false,
 		eventsCh:           session.Events(),
 		mainMenu:           cfg.StartInMainMenu,
 		pauseScreen:        pauseScreenMain,
@@ -465,6 +472,7 @@ func Run(session *netclient.Session, cfg Config) error {
 		languageReturn:     menuScreenMain,
 		chatOptionReturn:   menuScreenOptions,
 		resourceReturn:     menuScreenOptions,
+		snooperReturn:      menuScreenOptions,
 		keyBindCapture:     -1,
 		selectedWorld:      -1,
 		singleWorldMeta:    make(map[string]singleWorldMeta),
@@ -1090,7 +1098,7 @@ func (a *App) handleInput(deltaSeconds float64) bool {
 				a.pauseScreen = pauseScreenMain
 			} else if a.pauseScreen == pauseScreenKeyBindings {
 				a.pauseScreen = pauseScreenControls
-			} else if a.pauseScreen == pauseScreenVideo || a.pauseScreen == pauseScreenControls || a.pauseScreen == pauseScreenSounds || a.pauseScreen == pauseScreenLanguage || a.pauseScreen == pauseScreenChatOptions || a.pauseScreen == pauseScreenResourcePacks {
+			} else if a.pauseScreen == pauseScreenSnooper || a.pauseScreen == pauseScreenVideo || a.pauseScreen == pauseScreenControls || a.pauseScreen == pauseScreenSounds || a.pauseScreen == pauseScreenLanguage || a.pauseScreen == pauseScreenChatOptions || a.pauseScreen == pauseScreenResourcePacks {
 				a.pauseScreen = pauseScreenOptions
 			} else {
 				a.setPaused(false)
@@ -1154,6 +1162,8 @@ func (a *App) handleInput(deltaSeconds float64) bool {
 				}
 				if a.pauseScreen == pauseScreenOptions {
 					a.handlePauseOptionButton(b.ID)
+				} else if a.pauseScreen == pauseScreenSnooper {
+					a.handlePauseSnooperButton(b.ID)
 				} else if a.pauseScreen == pauseScreenLanguage {
 					a.handlePauseLanguageButton(b.ID)
 				} else if a.pauseScreen == pauseScreenChatOptions {
@@ -1555,6 +1565,9 @@ func (a *App) currentPauseButtons() []*guiButton {
 	if a.pauseScreen == pauseScreenOptions {
 		return a.pauseOptionButtons
 	}
+	if a.pauseScreen == pauseScreenSnooper {
+		return a.snooperButtons
+	}
 	if a.pauseScreen == pauseScreenLanguage {
 		return a.languageButtons
 	}
@@ -1622,7 +1635,8 @@ func (a *App) handlePauseOptionButton(id int) {
 		a.keyBindCapture = -1
 		a.menuStatus = ""
 	case buttonIDOptionSnooper:
-		a.menuStatus = "Snooper Settings are not implemented yet."
+		a.pauseScreen = pauseScreenSnooper
+		a.menuStatus = ""
 	case buttonIDOptionMultiplayer:
 		a.pauseScreen = pauseScreenChatOptions
 		a.menuStatus = ""
@@ -1634,6 +1648,7 @@ func (a *App) handlePauseOptionButton(id int) {
 	a.updateLanguageButtonsState()
 	a.updateChatOptionButtonsState()
 	a.updateResourceButtonsState()
+	a.updateSnooperButtonsState()
 	a.updateVideoButtonsState()
 	a.updateControlButtonsState()
 	a.updateSoundButtonsState()
@@ -1656,6 +1671,22 @@ func (a *App) handlePauseLanguageButton(id int) {
 		changed = true
 	}
 	a.updateLanguageButtonsState()
+	if changed {
+		a.saveOptionsFile()
+	}
+}
+
+func (a *App) handlePauseSnooperButton(id int) {
+	changed := false
+	switch id {
+	case buttonIDSnooperDone, buttonIDMenuBack:
+		a.pauseScreen = pauseScreenOptions
+		a.menuStatus = ""
+	case buttonIDSnooperToggle:
+		a.snooperEnabled = !a.snooperEnabled
+		changed = true
+	}
+	a.updateSnooperButtonsState()
 	if changed {
 		a.saveOptionsFile()
 	}
@@ -1788,7 +1819,8 @@ func (a *App) handlePauseControlButton(id int) {
 		a.clearKeyPressQueue()
 		a.menuStatus = ""
 	case buttonIDControlTouchscreen:
-		a.menuStatus = "Touchscreen mode is not available on desktop."
+		a.touchscreen = !a.touchscreen
+		changed = true
 	}
 	a.updateControlButtonsState()
 	a.updateKeyBindingButtonsState()
@@ -2235,6 +2267,7 @@ func (a *App) initPauseOptionsButtons() {
 	a.initLanguageButtons()
 	a.initChatOptionButtons()
 	a.initResourceButtons()
+	a.initSnooperButtons()
 	a.initVideoButtons()
 	a.initControlButtons()
 	a.initKeyBindingButtons()
@@ -2243,6 +2276,7 @@ func (a *App) initPauseOptionsButtons() {
 	a.updateLanguageButtonsState()
 	a.updateChatOptionButtonsState()
 	a.updateResourceButtonsState()
+	a.updateSnooperButtonsState()
 	a.updateVideoButtonsState()
 	a.updateControlButtonsState()
 	a.updateKeyBindingButtonsState()
@@ -3184,6 +3218,13 @@ func (a *App) optionInvertMouseLabel() string {
 		return "Invert Mouse: ON"
 	}
 	return "Invert Mouse: OFF"
+}
+
+func (a *App) optionTouchscreenLabel() string {
+	if a.touchscreen {
+		return "Touchscreen Mode: ON"
+	}
+	return "Touchscreen Mode: OFF"
 }
 
 func (a *App) optionGraphicsLabel() string {
@@ -5989,6 +6030,8 @@ func (a *App) drawPauseMenu() {
 		title := "Game menu"
 		if a.pauseScreen == pauseScreenOptions {
 			title = "Options"
+		} else if a.pauseScreen == pauseScreenSnooper {
+			title = "Snooper Settings"
 		} else if a.pauseScreen == pauseScreenLanguage {
 			title = "Language"
 		} else if a.pauseScreen == pauseScreenChatOptions {
@@ -6010,7 +6053,9 @@ func (a *App) drawPauseMenu() {
 	for _, b := range a.currentPauseButtons() {
 		b.draw(a.font, a.texWidgets, a.mouseX, a.mouseY)
 	}
-	if a.pauseScreen == pauseScreenLanguage && a.font != nil {
+	if a.pauseScreen == pauseScreenSnooper && a.font != nil {
+		a.font.drawCenteredString("Allow the game to send usage statistics.", uiW/2, uiH/6+48, 0x808080)
+	} else if a.pauseScreen == pauseScreenLanguage && a.font != nil {
 		a.font.drawCenteredString("Select language", uiW/2, uiH/6+6, 0xA0A0A0)
 	} else if a.pauseScreen == pauseScreenChatOptions && a.font != nil {
 		a.font.drawCenteredString("Multiplayer Settings", uiW/2, uiH/6+55, 0xFFFFFF)
@@ -7293,6 +7338,14 @@ func (a *App) loadOptionsFile() {
 			if v, parseErr := strconv.ParseBool(value); parseErr == nil {
 				a.showCape = v
 			}
+		case "snooperEnabled":
+			if v, parseErr := strconv.ParseBool(value); parseErr == nil {
+				a.snooperEnabled = v
+			}
+		case "touchscreen":
+			if v, parseErr := strconv.ParseBool(value); parseErr == nil {
+				a.touchscreen = v
+			}
 		case "mouseSensitivity":
 			if v, parseErr := strconv.ParseFloat(value, 64); parseErr == nil {
 				a.mouseSens = clampFloat64(v, 0.0, 1.0)
@@ -7358,6 +7411,8 @@ func (a *App) saveOptionsFile() {
 	a.optionsKV["chatLinksPrompt"] = strconv.FormatBool(a.chatLinksPrompt)
 	a.optionsKV["serverTextures"] = strconv.FormatBool(a.serverTextures)
 	a.optionsKV["showCape"] = strconv.FormatBool(a.showCape)
+	a.optionsKV["snooperEnabled"] = strconv.FormatBool(a.snooperEnabled)
+	a.optionsKV["touchscreen"] = strconv.FormatBool(a.touchscreen)
 	a.optionsKV["mouseSensitivity"] = strconv.FormatFloat(clampFloat64(a.mouseSens, 0.0, 1.0), 'f', 6, 64)
 	a.optionsKV["fpsLimit"] = strconv.Itoa(clampInt(a.limitFramerateMode, 0, 2))
 	a.optionsKV["difficulty"] = strconv.Itoa(a.optionDifficulty & 3)

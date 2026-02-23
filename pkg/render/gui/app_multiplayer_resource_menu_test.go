@@ -98,3 +98,43 @@ func TestOptionsResourcePacksOpensAndReturns(t *testing.T) {
 		t.Fatalf("escape should return to options: got=%d want=%d", a.menuScreen, menuScreenOptions)
 	}
 }
+
+func TestOptionsSnooperOpensAndToggles(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "options.txt")
+	a := &App{
+		guiW:           854,
+		guiH:           480,
+		mainMenu:       true,
+		menuScreen:     menuScreenOptions,
+		snooperEnabled: true,
+		optionsPath:    path,
+		optionsKV:      make(map[string]string),
+		languageCode:   "en_US",
+	}
+	a.initOptionButtons()
+	a.initSnooperButtons()
+	a.updateOptionButtonsState()
+	a.updateSnooperButtonsState()
+
+	_ = a.handleMenuButton(buttonIDOptionSnooper)
+	if a.menuScreen != menuScreenSnooper {
+		t.Fatalf("snooper option should open snooper screen: got=%d want=%d", a.menuScreen, menuScreenSnooper)
+	}
+
+	_ = a.handleMenuButton(buttonIDSnooperToggle)
+	if a.snooperEnabled {
+		t.Fatal("snooper toggle should flip to false")
+	}
+	_ = a.handleMenuButton(buttonIDSnooperDone)
+	if a.menuScreen != menuScreenOptions {
+		t.Fatalf("snooper done should return to options: got=%d want=%d", a.menuScreen, menuScreenOptions)
+	}
+
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read options after snooper save failed: %v", err)
+	}
+	if !strings.Contains(string(raw), "snooperEnabled:false") {
+		t.Fatalf("saved options missing snooperEnabled:false:\n%s", string(raw))
+	}
+}
