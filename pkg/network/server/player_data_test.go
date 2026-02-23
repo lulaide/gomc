@@ -29,6 +29,11 @@ func TestPlayerDataStateRoundTrip(t *testing.T) {
 	state.ExperienceTot = 345
 	state.GameType = 1
 	state.HeldSlot = 2
+	state.HasSpawn = true
+	state.SpawnX = 123
+	state.SpawnY = 71
+	state.SpawnZ = -41
+	state.SpawnForced = true
 	state.Inventory[38] = &protocol.ItemStack{
 		ItemID:     1,
 		StackSize:  7,
@@ -58,6 +63,9 @@ func TestPlayerDataStateRoundTrip(t *testing.T) {
 	}
 	if loaded.GameType != 1 || loaded.HeldSlot != 2 {
 		t.Fatalf("mode/slot mismatch: got=(%d,%d)", loaded.GameType, loaded.HeldSlot)
+	}
+	if !loaded.HasSpawn || !loaded.SpawnForced || loaded.SpawnX != 123 || loaded.SpawnY != 71 || loaded.SpawnZ != -41 {
+		t.Fatalf("spawn mismatch: got=(has=%t forced=%t x=%d y=%d z=%d)", loaded.HasSpawn, loaded.SpawnForced, loaded.SpawnX, loaded.SpawnY, loaded.SpawnZ)
 	}
 	if loaded.Inventory[38] == nil || loaded.Inventory[38].ItemID != 1 || loaded.Inventory[38].StackSize != 7 || loaded.Inventory[38].ItemDamage != 3 {
 		t.Fatalf("inventory slot mismatch: %#v", loaded.Inventory[38])

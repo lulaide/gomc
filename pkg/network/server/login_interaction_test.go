@@ -989,6 +989,26 @@ func TestHandleRespawnCommandUsesServerDifficulty(t *testing.T) {
 	}
 }
 
+func TestHandleRespawnCommandUsesForcedPlayerSpawnpoint(t *testing.T) {
+	srv := NewStatusServer(StatusConfig{})
+	var buf bytes.Buffer
+	session := newInteractionTestSession(srv, &buf)
+	session.playerDead = true
+	session.gameType = 0
+	session.playerSpawnSet = true
+	session.playerSpawnForced = true
+	session.playerSpawnX = 10
+	session.playerSpawnY = 40
+	session.playerSpawnZ = 10
+
+	if !session.handleRespawnCommand() {
+		t.Fatal("handleRespawnCommand returned false")
+	}
+	if math.Abs(session.playerX-10.5) > 1e-6 || math.Abs(session.playerY-40.1) > 1e-6 || math.Abs(session.playerZ-10.5) > 1e-6 {
+		t.Fatalf("respawn location mismatch: got=(%.3f,%.3f,%.3f) want=(10.5,40.1,10.5)", session.playerX, session.playerY, session.playerZ)
+	}
+}
+
 func TestHandleSlashCommandGamemodeCreativeSendsAbilities(t *testing.T) {
 	srv := NewStatusServer(StatusConfig{})
 	var buf bytes.Buffer
@@ -2088,6 +2108,22 @@ func TestHandleSlashCommandHelpByNameAndAlias(t *testing.T) {
 	}
 
 	buf.Reset()
+	if !session.handleSlashCommand("/help spawnpoint") {
+		t.Fatal("handleSlashCommand returned false for /help spawnpoint")
+	}
+	packet, err = protocol.ReadPacket(&buf, protocol.DirectionClientbound)
+	if err != nil {
+		t.Fatalf("failed to read /help spawnpoint output: %v", err)
+	}
+	chat, ok = packet.(*protocol.Packet3Chat)
+	if !ok {
+		t.Fatalf("expected Packet3Chat, got %T", packet)
+	}
+	if chat.Message != "/spawnpoint OR /spawnpoint <player> OR /spawnpoint <player> <x> <y> <z>" {
+		t.Fatalf("help by name mismatch for spawnpoint: got=%q", chat.Message)
+	}
+
+	buf.Reset()
 	if !session.handleSlashCommand("/? 2") {
 		t.Fatal("handleSlashCommand returned false for /? 2")
 	}
@@ -2124,6 +2160,76 @@ func TestHandleSlashCommandSeedReportsWorldSeed(t *testing.T) {
 	}
 	if chat.Message != "Seed: 987654321" {
 		t.Fatalf("seed output mismatch: got=%q", chat.Message)
+	}
+}
+
+func TestHandleSlashCommandSpawnpointSelfUsesPlayerCoordinates(t *testing.T) {
+	srv := NewStatusServer(StatusConfig{})
+	var buf bytes.Buffer
+	session := newInteractionTestSession(srv, &buf)
+	session.clientUsername = "Steve"
+	session.playerX = 10.99
+	session.playerY = 64.6
+	session.playerZ = -4.2
+
+	if !session.handleSlashCommand("/spawnpoint") {
+		t.Fatal("handleSlashCommand returned false")
+	}
+	if !session.playerSpawnSet || !session.playerSpawnForced {
+		t.Fatalf("spawn flags mismatch: set=%t forced=%t", session.playerSpawnSet, session.playerSpawnForced)
+	}
+	if session.playerSpawnX != 10 || session.playerSpawnY != 65 || session.playerSpawnZ != -5 {
+		t.Fatalf("spawn coordinates mismatch: got=(%d,%d,%d) want=(10,65,-5)", session.playerSpawnX, session.playerSpawnY, session.playerSpawnZ)
+	}
+
+	packet, err := protocol.ReadPacket(&buf, protocol.DirectionClientbound)
+	if err != nil {
+		t.Fatalf("failed to read spawnpoint output: %v", err)
+	}
+	chat, ok := packet.(*protocol.Packet3Chat)
+	if !ok {
+		t.Fatalf("expected Packet3Chat, got %T", packet)
+	}
+	if chat.Message != "Set Steve's spawn point to (10, 65, -5)" {
+		t.Fatalf("spawnpoint output mismatch: got=%q", chat.Message)
+	}
+}
+
+func TestHandleSlashCommandSpawnpointTargetCoordinates(t *testing.T) {
+	srv := NewStatusServer(StatusConfig{})
+	var adminBuf bytes.Buffer
+	admin := newInteractionTestSession(srv, &adminBuf)
+	admin.clientUsername = "Admin"
+
+	target := newInteractionTestSession(srv, io.Discard)
+	target.clientUsername = "Alex"
+
+	srv.activeMu.Lock()
+	srv.activePlayers[admin] = "Admin"
+	srv.activePlayers[target] = "Alex"
+	srv.activeOrder = []*loginSession{admin, target}
+	srv.activeMu.Unlock()
+
+	if !admin.handleSlashCommand("/spawnpoint Alex 123 70 -41") {
+		t.Fatal("handleSlashCommand returned false")
+	}
+	if !target.playerSpawnSet || !target.playerSpawnForced {
+		t.Fatalf("target spawn flags mismatch: set=%t forced=%t", target.playerSpawnSet, target.playerSpawnForced)
+	}
+	if target.playerSpawnX != 123 || target.playerSpawnY != 70 || target.playerSpawnZ != -41 {
+		t.Fatalf("target spawn coordinates mismatch: got=(%d,%d,%d) want=(123,70,-41)", target.playerSpawnX, target.playerSpawnY, target.playerSpawnZ)
+	}
+
+	packet, err := protocol.ReadPacket(&adminBuf, protocol.DirectionClientbound)
+	if err != nil {
+		t.Fatalf("failed to read spawnpoint output: %v", err)
+	}
+	chat, ok := packet.(*protocol.Packet3Chat)
+	if !ok {
+		t.Fatalf("expected Packet3Chat, got %T", packet)
+	}
+	if chat.Message != "Set Alex's spawn point to (123, 70, -41)" {
+		t.Fatalf("spawnpoint output mismatch: got=%q", chat.Message)
 	}
 }
 

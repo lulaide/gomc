@@ -235,6 +235,11 @@ type loginSession struct {
 	clientLocale                           string
 	heldItemSlot                           int16
 	gameType                               int8
+	playerSpawnSet                         bool
+	playerSpawnForced                      bool
+	playerSpawnX                           int32
+	playerSpawnY                           int32
+	playerSpawnZ                           int32
 	inventory                              [playerWindowSlots]*protocol.ItemStack
 	cursorItem                             *protocol.ItemStack
 
@@ -422,6 +427,11 @@ func (s *loginSession) snapshotPersistedState() persistedPlayerState {
 	state.ExperienceTot = s.playerExpTotal
 	state.GameType = s.gameType
 	state.HeldSlot = s.heldItemSlot
+	state.HasSpawn = s.playerSpawnSet
+	state.SpawnForced = s.playerSpawnForced
+	state.SpawnX = s.playerSpawnX
+	state.SpawnY = s.playerSpawnY
+	state.SpawnZ = s.playerSpawnZ
 	state.Inventory = cloneInventoryArray(s.inventory)
 	s.stateMu.Unlock()
 
@@ -741,7 +751,7 @@ func (s *loginSession) handleRespawnCommand() bool {
 		return false
 	}
 
-	spawnX, spawnY, spawnZ := s.server.world.safePlayerSpawnPosition()
+	spawnX, spawnY, spawnZ := s.respawnPosition()
 	if !s.setPlayerLocation(spawnX, spawnY, spawnZ, 0, 0, true) {
 		return false
 	}
@@ -771,6 +781,65 @@ func (s *loginSession) handleRespawnCommand() bool {
 	}
 	worldAge, worldTime := s.server.CurrentWorldTime()
 	return s.sendPacket(protocol.NewPacket4UpdateTime(worldAge, worldTime, true))
+}
+
+func (s *loginSession) respawnPosition() (float64, float64, float64) {
+	worldX, worldY, worldZ := s.server.world.safePlayerSpawnPosition()
+
+	s.stateMu.Lock()
+	hasSpawn := s.playerSpawnSet
+	spawnForced := s.playerSpawnForced
+	spawnX := s.playerSpawnX
+	spawnY := s.playerSpawnY
+	spawnZ := s.playerSpawnZ
+	s.stateMu.Unlock()
+	if !hasSpawn {
+		return worldX, worldY, worldZ
+	}
+
+	x := float64(spawnX) + 0.5
+	y := float64(spawnY) + 0.1
+	z := float64(spawnZ) + 0.5
+	if s.isValidRespawnPosition(x, y, z, spawnForced) {
+		return x, y, z
+	}
+	return worldX, worldY, worldZ
+}
+
+func (s *loginSession) isValidRespawnPosition(x, y, z float64, spawnForced bool) bool {
+	if math.IsNaN(x) || math.IsNaN(y) || math.IsNaN(z) {
+		return false
+	}
+	if math.IsInf(x, 0) || math.IsInf(y, 0) || math.IsInf(z, 0) {
+		return false
+	}
+
+	blockX := int(math.Floor(x))
+	blockY := int(math.Floor(y))
+	blockZ := int(math.Floor(z))
+	if blockY < 0 || blockY > buildLimit {
+		return false
+	}
+
+	feetID, _ := s.server.world.getBlock(blockX, blockY, blockZ)
+	headID, _ := s.server.world.getBlock(blockX, blockY+1, blockZ)
+	if block.BlocksMovement(feetID) || block.IsLiquid(feetID) {
+		return false
+	}
+	if block.BlocksMovement(headID) || block.IsLiquid(headID) {
+		return false
+	}
+	if spawnForced {
+		return true
+	}
+	if blockY <= 0 {
+		return false
+	}
+	belowID, _ := s.server.world.getBlock(blockX, blockY-1, blockZ)
+	if !block.BlocksMovement(belowID) {
+		return false
+	}
+	return true
 }
 
 func (s *loginSession) killPlayer() bool {
@@ -954,6 +1023,11 @@ func (s *loginSession) initializePlayerConnection() bool {
 	s.hurtResistantTime = 0
 	s.lastDamage = 0
 	s.heldItemSlot = loadedState.HeldSlot
+	s.playerSpawnSet = loadedState.HasSpawn
+	s.playerSpawnForced = loadedState.SpawnForced
+	s.playerSpawnX = loadedState.SpawnX
+	s.playerSpawnY = loadedState.SpawnY
+	s.playerSpawnZ = loadedState.SpawnZ
 	s.inventory = cloneInventoryArray(loadedState.Inventory)
 	s.managedChunkX = chunkCoordFromPos(loadedState.X)
 	s.managedChunkZ = chunkCoordFromPos(loadedState.Z)
@@ -1201,6 +1275,7 @@ func (s *loginSession) handleSlashCommand(command string) bool {
 			"me",
 			"say",
 			"seed",
+			"spawnpoint",
 			"setblock",
 			"tell",
 			"time",
@@ -1218,6 +1293,7 @@ func (s *loginSession) handleSlashCommand(command string) bool {
 			"me":         "/me <action ...>",
 			"say":        "/say <message ...>",
 			"seed":       "/seed",
+			"spawnpoint": "/spawnpoint OR /spawnpoint <player> OR /spawnpoint <player> <x> <y> <z>",
 			"setblock":   "/setblock <x> <y> <z> <id> [meta]",
 			"tell":       "/tell <player> <private message ...>",
 			"time":       "/time <set|add> <value>",
@@ -1276,6 +1352,73 @@ func (s *loginSession) handleSlashCommand(command string) bool {
 		// Translation target:
 		// - net.minecraft.src.CommandShowSeed#processCommand
 		s.sendSystemChat("Seed: " + strconv.FormatInt(s.server.world.seed, 10))
+		return true
+	}
+
+	if strings.EqualFold(args[0], "/spawnpoint") {
+		// Translation target:
+		// - net.minecraft.src.CommandSetSpawnpoint#processCommand
+		usage := "Usage: /spawnpoint OR /spawnpoint <player> OR /spawnpoint <player> <x> <y> <z>"
+		if len(args) != 1 && len(args) != 2 && len(args) != 5 {
+			s.sendSystemChat(usage)
+			return true
+		}
+
+		target := s
+		if len(args) >= 2 {
+			found := s.server.activeSessionByUsername(args[1])
+			if found == nil {
+				s.sendSystemChat("Player not found.")
+				return true
+			}
+			target = found
+		}
+
+		var (
+			spawnX int32
+			spawnY int32
+			spawnZ int32
+		)
+		if len(args) == 5 {
+			const coordinateBound = 30000000
+			x, err := strconv.Atoi(args[2])
+			if err != nil || x < -coordinateBound || x > coordinateBound {
+				s.sendSystemChat(usage)
+				return true
+			}
+			y, err := strconv.Atoi(args[3])
+			if err != nil || y < 0 || y > buildLimit {
+				s.sendSystemChat(usage)
+				return true
+			}
+			z, err := strconv.Atoi(args[4])
+			if err != nil || z < -coordinateBound || z > coordinateBound {
+				s.sendSystemChat(usage)
+				return true
+			}
+			spawnX = int32(x)
+			spawnY = int32(y)
+			spawnZ = int32(z)
+		} else {
+			posX, posY, posZ, _, _ := target.positionRotationSnapshot()
+			spawnX = int32(math.Floor(posX))
+			spawnY = int32(math.Floor(posY + 0.5))
+			spawnZ = int32(math.Floor(posZ))
+		}
+
+		target.stateMu.Lock()
+		target.playerSpawnSet = true
+		target.playerSpawnForced = true
+		target.playerSpawnX = spawnX
+		target.playerSpawnY = spawnY
+		target.playerSpawnZ = spawnZ
+		target.stateMu.Unlock()
+
+		targetName := strings.TrimSpace(target.clientUsername)
+		if targetName == "" {
+			targetName = "player"
+		}
+		s.sendSystemChat(fmt.Sprintf("Set %s's spawn point to (%d, %d, %d)", targetName, spawnX, spawnY, spawnZ))
 		return true
 	}
 

@@ -26,8 +26,13 @@ type persistedPlayerState struct {
 	ExperienceLvl int32
 	ExperienceTot int32
 
-	GameType int8
-	HeldSlot int16
+	GameType    int8
+	HeldSlot    int16
+	HasSpawn    bool
+	SpawnX      int32
+	SpawnY      int32
+	SpawnZ      int32
+	SpawnForced bool
 
 	Inventory [playerWindowSlots]*protocol.ItemStack
 }
@@ -50,6 +55,11 @@ func defaultPersistedPlayerState() persistedPlayerState {
 		ExperienceTot: 0,
 		GameType:      0,
 		HeldSlot:      0,
+		HasSpawn:      false,
+		SpawnX:        0,
+		SpawnY:        0,
+		SpawnZ:        0,
+		SpawnForced:   false,
 	}
 }
 
@@ -180,6 +190,12 @@ func stateToNBT(state persistedPlayerState) *nbt.CompoundTag {
 	root.SetInteger("XpTotal", state.ExperienceTot)
 	root.SetInteger("playerGameType", int32(state.GameType))
 	root.SetInteger("SelectedItemSlot", int32(state.HeldSlot))
+	if state.HasSpawn {
+		root.SetInteger("SpawnX", state.SpawnX)
+		root.SetInteger("SpawnY", state.SpawnY)
+		root.SetInteger("SpawnZ", state.SpawnZ)
+		root.SetBoolean("SpawnForced", state.SpawnForced)
+	}
 
 	inv := nbt.NewListTag("Inventory")
 	for slot := 0; slot < playerWindowSlots; slot++ {
@@ -230,6 +246,13 @@ func stateFromNBT(root *nbt.CompoundTag) persistedPlayerState {
 	state.ExperienceTot = tagAsInt32(root.GetTag("XpTotal"), state.ExperienceTot)
 	state.GameType = int8(tagAsInt32(root.GetTag("playerGameType"), int32(state.GameType)))
 	state.HeldSlot = int16(tagAsInt32(root.GetTag("SelectedItemSlot"), int32(state.HeldSlot)))
+	if root.GetTag("SpawnX") != nil && root.GetTag("SpawnY") != nil && root.GetTag("SpawnZ") != nil {
+		state.HasSpawn = true
+		state.SpawnX = tagAsInt32(root.GetTag("SpawnX"), state.SpawnX)
+		state.SpawnY = tagAsInt32(root.GetTag("SpawnY"), state.SpawnY)
+		state.SpawnZ = tagAsInt32(root.GetTag("SpawnZ"), state.SpawnZ)
+		state.SpawnForced = tagAsBoolean(root.GetTag("SpawnForced"), state.SpawnForced)
+	}
 	if state.HeldSlot < 0 || state.HeldSlot >= hotbarSlotCount {
 		state.HeldSlot = 0
 	}
