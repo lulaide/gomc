@@ -201,6 +201,8 @@ type App struct {
 	prevSlash       bool
 	prevUp          bool
 	prevDown        bool
+	prevPageUp      bool
+	prevPageDown    bool
 	prevSneakKey    bool
 	prevAttackInput bool
 	prevUseInput    bool
@@ -279,10 +281,13 @@ type App struct {
 	typedRuneQueue      []rune
 	keyPressQueue       []glfw.Key
 
-	eventsCh   <-chan netclient.Event
-	chatMu     sync.Mutex
-	chatLines  []chatLine
-	chatClosed bool
+	eventsCh     <-chan netclient.Event
+	chatMu       sync.Mutex
+	chatLines    []chatLine
+	chatClosed   bool
+	chatScroll   int
+	chatScrolled bool
+	scrollQueue  float64
 
 	assetsRoot        string
 	optionsPath       string
@@ -550,6 +555,9 @@ func Run(session *netclient.Session, cfg Config) error {
 		if action == glfw.Press {
 			app.enqueueKeyPress(key)
 		}
+	})
+	window.SetScrollCallback(func(_ *glfw.Window, _, yoff float64) {
+		app.scrollQueue += yoff
 	})
 	gl.Viewport(0, 0, int32(app.width), int32(app.height))
 
@@ -1036,6 +1044,8 @@ func (a *App) handleInput(deltaSeconds float64) bool {
 	commandKeyPressed := a.isKeyBindingDown(keyDescCommand)
 	upPressed := a.window.GetKey(glfw.KeyUp) == glfw.Press
 	downPressed := a.window.GetKey(glfw.KeyDown) == glfw.Press
+	pageUpPressed := a.window.GetKey(glfw.KeyPageUp) == glfw.Press
+	pageDownPressed := a.window.GetKey(glfw.KeyPageDown) == glfw.Press
 	leftMouse := a.window.GetMouseButton(glfw.MouseButtonLeft) == glfw.Press
 	rightMouse := a.window.GetMouseButton(glfw.MouseButtonRight) == glfw.Press
 	middleMouse := a.window.GetMouseButton(glfw.MouseButtonMiddle) == glfw.Press
@@ -1047,6 +1057,7 @@ func (a *App) handleInput(deltaSeconds float64) bool {
 	pickPressed := a.isKeyBindingDown(keyDescPick)
 	playerListPressed := a.isKeyBindingDown(keyDescPlayer)
 	sprintPressed := a.window.GetKey(glfw.KeyLeftControl) == glfw.Press || a.window.GetKey(glfw.KeyRightControl) == glfw.Press
+	scrollSteps := a.consumeScrollSteps()
 
 	defer func() {
 		a.prevLeftMouse = leftMouse
@@ -1060,6 +1071,8 @@ func (a *App) handleInput(deltaSeconds float64) bool {
 		a.prevSlash = commandKeyPressed
 		a.prevUp = upPressed
 		a.prevDown = downPressed
+		a.prevPageUp = pageUpPressed
+		a.prevPageDown = pageDownPressed
 		a.prevAttackInput = attackPressed
 		a.prevUseInput = usePressed
 		a.prevDropInput = dropPressed
@@ -1215,6 +1228,21 @@ func (a *App) handleInput(deltaSeconds float64) bool {
 		}
 		if downPressed && !a.prevDown {
 			a.moveChatHistory(1)
+		}
+		if pageUpPressed && !a.prevPageUp {
+			a.scrollChatLines(a.chatVisibleLineCount(true) - 1)
+		}
+		if pageDownPressed && !a.prevPageDown {
+			a.scrollChatLines(-(a.chatVisibleLineCount(true) - 1))
+		}
+		if scrollSteps != 0 {
+			if scrollSteps > 1 {
+				scrollSteps = 1
+			}
+			if scrollSteps < -1 {
+				scrollSteps = -1
+			}
+			a.scrollChatLines(scrollSteps * 7)
 		}
 		if enterPressed && !a.prevEnter {
 			msg := strings.TrimSpace(a.chatInput)
@@ -1945,6 +1973,7 @@ func (a *App) disconnectToMainMenu(status string) {
 	a.chatInputOpen = false
 	a.chatInput = ""
 	a.chatDraft = ""
+	a.resetChatScroll()
 	a.keyBindCapture = -1
 	a.clearKeyPressQueue()
 	if status != "" {
@@ -1966,6 +1995,7 @@ func (a *App) openChatInput(initial string) {
 	a.chatDraft = initial
 	a.chatHistPos = len(a.chatHistory)
 	a.inventoryOpen = false
+	a.resetChatScroll()
 	a.typedRuneQueue = a.typedRuneQueue[:0]
 	a.firstMouse = true
 	a.moveTickAccum = 0
@@ -1982,6 +2012,7 @@ func (a *App) closeChatInput(clear bool) {
 	}
 	a.chatDraft = ""
 	a.chatHistPos = len(a.chatHistory)
+	a.resetChatScroll()
 	a.typedRuneQueue = a.typedRuneQueue[:0]
 	a.firstMouse = true
 	a.applyCursorMode()
@@ -2041,6 +2072,43 @@ func (a *App) moveChatHistory(delta int) {
 		a.chatHistPos = len(a.chatHistory)
 		a.chatInput = a.chatDraft
 	}
+}
+
+func (a *App) consumeScrollSteps() int {
+	steps := int(math.Round(a.scrollQueue))
+	a.scrollQueue = 0
+	return steps
+}
+
+func (a *App) resetChatScroll() {
+	a.chatScroll = 0
+	a.chatScrolled = false
+}
+
+func (a *App) scrollChatLines(delta int) {
+	if delta == 0 {
+		return
+	}
+	lines := a.buildRenderedChatLines()
+	if len(lines) == 0 {
+		a.resetChatScroll()
+		return
+	}
+	visible := a.chatVisibleLineCount(true)
+	maxScroll := len(lines) - visible
+	if maxScroll < 0 {
+		maxScroll = 0
+	}
+	a.chatScroll += delta
+	if a.chatScroll > maxScroll {
+		a.chatScroll = maxScroll
+	}
+	if a.chatScroll <= 0 {
+		a.chatScroll = 0
+		a.chatScrolled = false
+		return
+	}
+	a.chatScrolled = true
 }
 
 func (a *App) openInventoryScreen() {
@@ -5799,6 +5867,15 @@ func (a *App) drawChatOverlay() {
 	}
 	uiH := a.uiHeight()
 	lines := a.buildRenderedChatLines()
+	if a.chatVisibility == 1 {
+		systemOnly := make([]chatLine, 0, len(lines))
+		for i := range lines {
+			if lines[i].System {
+				systemOnly = append(systemOnly, lines[i])
+			}
+		}
+		lines = systemOnly
+	}
 	if len(lines) == 0 {
 		return
 	}
@@ -5806,6 +5883,21 @@ func (a *App) drawChatOverlay() {
 	maxLines := a.chatVisibleLineCount(a.chatInputOpen)
 	if maxLines <= 0 {
 		return
+	}
+	if !a.chatInputOpen {
+		a.resetChatScroll()
+	}
+	maxScroll := len(lines) - maxLines
+	if maxScroll < 0 {
+		maxScroll = 0
+	}
+	a.chatScroll = clampInt(a.chatScroll, 0, maxScroll)
+	if a.chatScroll == 0 {
+		a.chatScrolled = false
+	}
+	startIndex := a.chatScroll
+	if !a.chatInputOpen {
+		startIndex = 0
 	}
 
 	scale := a.chatScaleClamped()
@@ -5827,11 +5919,8 @@ func (a *App) drawChatOverlay() {
 	gl.Translatef(2, float32(baseY), 0)
 	gl.Scalef(float32(scale), float32(scale), 1.0)
 
-	for i := 0; i < len(lines) && drawn < maxLines; i++ {
+	for i := startIndex; i < len(lines) && drawn < maxLines; i++ {
 		line := lines[i]
-		if a.chatVisibility == 1 && !line.System {
-			continue
-		}
 
 		alpha := 255
 		if !a.paused && !a.chatInputOpen {
@@ -5865,6 +5954,31 @@ func (a *App) drawChatOverlay() {
 		color := (alpha << 24) | (line.Color & 0xFFFFFF)
 		a.font.drawStringWithShadow(text, 0, y-8, color)
 		drawn++
+	}
+
+	if a.chatInputOpen && drawn > 0 {
+		fontH := 9
+		totalHeight := len(lines)*fontH + len(lines)
+		visibleHeight := drawn*fontH + drawn
+		if totalHeight != visibleHeight {
+			scrollY := a.chatScroll * visibleHeight / len(lines)
+			barHeight := visibleHeight * visibleHeight / totalHeight
+			if barHeight < 1 {
+				barHeight = 1
+			}
+			alphaBar := 96
+			if scrollY > 0 {
+				alphaBar = 170
+			}
+			scrollColor := 3355562
+			if a.chatScrolled {
+				scrollColor = 13382451
+			}
+			top := -scrollY - barHeight
+			bottom := -scrollY
+			drawSolidRect(-3, top, -1, bottom, scrollColor+(alphaBar<<24))
+			drawSolidRect(-1, top, 0, bottom, 13421772+(alphaBar<<24))
+		}
 	}
 
 	gl.PopMatrix()

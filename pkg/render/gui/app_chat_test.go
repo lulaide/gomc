@@ -84,3 +84,27 @@ func TestChatFormattingStrip(t *testing.T) {
 		t.Fatalf("formatting strip mismatch: got=%q want=%q", got, "Green Bold Done")
 	}
 }
+
+func TestChatScrollClampAndReset(t *testing.T) {
+	a := &App{
+		chatHeightFocused:   1.0,
+		chatHeightUnfocused: 0.44366196,
+		chatWidth:           1.0,
+		font:                &fontRenderer{},
+		chatLines:           make([]chatLine, 30),
+	}
+	for i := range a.chatLines {
+		a.chatLines[i] = chatLine{Message: "line"}
+	}
+	a.scrollChatLines(7)
+	if a.chatScroll == 0 {
+		t.Fatal("chat scroll should move when lines exceed visible area")
+	}
+	if !a.chatScrolled {
+		t.Fatal("chatScrolled flag should be true after scrolling")
+	}
+	a.resetChatScroll()
+	if a.chatScroll != 0 || a.chatScrolled {
+		t.Fatalf("reset chat scroll mismatch: scroll=%d scrolled=%t", a.chatScroll, a.chatScrolled)
+	}
+}
