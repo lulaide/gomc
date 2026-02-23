@@ -3573,8 +3573,6 @@ func (s *loginSession) handleUseEntity(packet *protocol.Packet7UseEntity) bool {
 	s.stateMu.Unlock()
 
 	// Translated from: net.minecraft.src.NetServerHandler#handleUseEntity(Packet7UseEntity)
-	// Line-of-sight checks require full collision/raycast state and are pending.
-	maxDistanceSq := 36.0
 	selfX, selfY, selfZ := s.positionSnapshot()
 	targetPlayer := s.server.activeSessionByEntityID(packet.TargetEntityID)
 	var targetMob *trackedMob
@@ -3599,15 +3597,16 @@ func (s *loginSession) handleUseEntity(packet *protocol.Packet7UseEntity) bool {
 	dx := selfX - targetX
 	dy := selfY - targetY
 	dz := selfZ - targetZ
-	if dx*dx+dy*dy+dz*dz >= maxDistanceSq {
-		return true
-	}
 	targetAimY := defaultPlayerEyeY
 	if targetMob != nil {
 		height, _ := mobCollisionSize(targetMob)
 		targetAimY = height * 0.5
 	}
+	maxDistanceSq := 36.0
 	if !s.server.hasLineOfSight(selfX, selfY+defaultPlayerEyeY, selfZ, targetX, targetY+targetAimY, targetZ) {
+		maxDistanceSq = 9.0
+	}
+	if dx*dx+dy*dy+dz*dz >= maxDistanceSq {
 		return true
 	}
 

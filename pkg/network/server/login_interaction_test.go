@@ -3540,7 +3540,7 @@ func TestHandleUseEntitySprintAttackKnocksBackMobAndStopsSprinting(t *testing.T)
 	}
 }
 
-func TestHandleUseEntityBlockedBySolidBlockDoesNoDamage(t *testing.T) {
+func TestHandleUseEntityBlockedBySolidBlockWithinThreeBlocksCanStillDamage(t *testing.T) {
 	srv := NewStatusServer(StatusConfig{})
 	attacker := newInteractionTestSession(srv, io.Discard)
 	attacker.entityID = 393
@@ -3579,8 +3579,55 @@ func TestHandleUseEntityBlockedBySolidBlockDoesNoDamage(t *testing.T) {
 	if !ok {
 		t.Fatal("handleUseEntity returned false")
 	}
+	if target.playerHealth != 19 {
+		t.Fatalf("expected close target to still take damage without line-of-sight: hp=%f", target.playerHealth)
+	}
+}
+
+func TestHandleUseEntityBlockedBySolidBlockBeyondThreeBlocksDoesNoDamage(t *testing.T) {
+	srv := NewStatusServer(StatusConfig{})
+	attacker := newInteractionTestSession(srv, io.Discard)
+	attacker.entityID = 395
+	attacker.playerHealth = 20
+	attacker.playerRegistered = true
+	attacker.playerX = 0.5
+	attacker.playerY = 5.0
+	attacker.playerZ = 0.5
+
+	target := newInteractionTestSession(srv, io.Discard)
+	target.entityID = 396
+	target.playerHealth = 20
+	target.playerRegistered = true
+	target.playerX = 0.5
+	target.playerY = 5.0
+	target.playerZ = 4.6
+
+	if !srv.world.setBlock(0, 6, 1, 1, 0) {
+		t.Fatal("failed to place LOS blocker")
+	}
+	if !srv.world.setBlock(0, 6, 2, 1, 0) {
+		t.Fatal("failed to place LOS blocker")
+	}
+	if !srv.world.setBlock(0, 6, 3, 1, 0) {
+		t.Fatal("failed to place LOS blocker")
+	}
+
+	srv.activeMu.Lock()
+	srv.activePlayers[attacker] = "attacker"
+	srv.activePlayers[target] = "target"
+	srv.activeOrder = []*loginSession{attacker, target}
+	srv.activeMu.Unlock()
+
+	ok := attacker.handleUseEntity(&protocol.Packet7UseEntity{
+		PlayerEntityID: attacker.entityID,
+		TargetEntityID: target.entityID,
+		Action:         1,
+	})
+	if !ok {
+		t.Fatal("handleUseEntity returned false")
+	}
 	if target.playerHealth != 20 {
-		t.Fatalf("expected no damage through wall: hp=%f", target.playerHealth)
+		t.Fatalf("expected no damage for out-of-range target without line-of-sight: hp=%f", target.playerHealth)
 	}
 }
 
