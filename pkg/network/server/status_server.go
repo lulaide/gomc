@@ -390,6 +390,24 @@ func (s *StatusServer) activeSessionByEntityID(entityID int32) *loginSession {
 	return nil
 }
 
+func (s *StatusServer) activeSessionByUsername(username string) *loginSession {
+	username = strings.TrimSpace(username)
+	if username == "" {
+		return nil
+	}
+	s.activeMu.RLock()
+	defer s.activeMu.RUnlock()
+	for session, name := range s.activePlayers {
+		if session == nil {
+			continue
+		}
+		if strings.EqualFold(strings.TrimSpace(name), username) {
+			return session
+		}
+	}
+	return nil
+}
+
 // TickPlayerInfo mirrors ServerConfigurationManager#sendPlayerInfoToAllPlayers cadence.
 func (s *StatusServer) TickPlayerInfo() {
 	s.activeMu.Lock()

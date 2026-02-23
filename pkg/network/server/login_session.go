@@ -208,6 +208,9 @@ type loginSession struct {
 	playerFoodExhaust  float32
 	playerFoodTimer    int
 	playerPrevFood     int16
+	playerExperience   float32
+	playerExpLevel     int32
+	playerExpTotal     int32
 	playerFallDistance float32
 	playerDead         bool
 	playerSneaking     bool
@@ -414,6 +417,9 @@ func (s *loginSession) snapshotPersistedState() persistedPlayerState {
 	state.Sat = s.playerSat
 	state.FoodExhaust = s.playerFoodExhaust
 	state.FoodTickTimer = s.playerFoodTimer
+	state.Experience = s.playerExperience
+	state.ExperienceLvl = s.playerExpLevel
+	state.ExperienceTot = s.playerExpTotal
 	state.GameType = s.gameType
 	state.HeldSlot = s.heldItemSlot
 	state.Inventory = cloneInventoryArray(s.inventory)
@@ -442,6 +448,18 @@ func (s *loginSession) snapshotPersistedState() persistedPlayerState {
 	}
 	if state.FoodTickTimer < 0 {
 		state.FoodTickTimer = 0
+	}
+	if state.Experience < 0 {
+		state.Experience = 0
+	}
+	if state.Experience > 1 {
+		state.Experience = 1
+	}
+	if state.ExperienceLvl < 0 {
+		state.ExperienceLvl = 0
+	}
+	if state.ExperienceTot < 0 {
+		state.ExperienceTot = 0
 	}
 	if state.HeldSlot < 0 || state.HeldSlot >= hotbarSlotCount {
 		state.HeldSlot = 0
@@ -601,6 +619,108 @@ func (s *loginSession) sendHealthState() bool {
 	})
 }
 
+func clampInt16FromInt32(v int32) int16 {
+	if v < -32768 {
+		return -32768
+	}
+	if v > 32767 {
+		return 32767
+	}
+	return int16(v)
+}
+
+func (s *loginSession) sendExperienceState() bool {
+	s.stateMu.Lock()
+	exp := s.playerExperience
+	level := s.playerExpLevel
+	total := s.playerExpTotal
+	s.stateMu.Unlock()
+
+	if exp < 0 {
+		exp = 0
+	}
+	if exp > 1 {
+		exp = 1
+	}
+	if level < 0 {
+		level = 0
+	}
+	if total < 0 {
+		total = 0
+	}
+	return s.sendPacket(&protocol.Packet43Experience{
+		Experience:      exp,
+		ExperienceLevel: clampInt16FromInt32(level),
+		ExperienceTotal: clampInt16FromInt32(total),
+	})
+}
+
+// Translation reference:
+// - net.minecraft.src.EntityPlayer.xpBarCap()
+func xpBarCapForLevel(level int32) int32 {
+	if level >= 30 {
+		return 62 + (level-30)*7
+	}
+	if level >= 15 {
+		return 17 + (level-15)*3
+	}
+	return 17
+}
+
+// Translation reference:
+// - net.minecraft.src.EntityPlayer.addExperienceLevel(int)
+func (s *loginSession) addExperienceLevel(delta int32) {
+	s.stateMu.Lock()
+	defer s.stateMu.Unlock()
+	s.playerExpLevel += delta
+	if s.playerExpLevel < 0 {
+		s.playerExpLevel = 0
+		s.playerExperience = 0
+		s.playerExpTotal = 0
+	}
+}
+
+// Translation reference:
+// - net.minecraft.src.EntityPlayer.addExperience(int)
+func (s *loginSession) addExperience(amount int32) {
+	if amount <= 0 {
+		return
+	}
+
+	s.stateMu.Lock()
+	defer s.stateMu.Unlock()
+
+	const maxTotalXP = int32(2147483647)
+	remaining := maxTotalXP - s.playerExpTotal
+	if amount > remaining {
+		amount = remaining
+	}
+	if amount <= 0 {
+		return
+	}
+
+	capNow := xpBarCapForLevel(s.playerExpLevel)
+	if capNow <= 0 {
+		capNow = 1
+	}
+	s.playerExperience += float32(amount) / float32(capNow)
+
+	for s.playerExpTotal += amount; s.playerExperience >= 1.0; {
+		capBefore := xpBarCapForLevel(s.playerExpLevel)
+		if capBefore <= 0 {
+			capBefore = 1
+		}
+		s.playerExperience = (s.playerExperience - 1.0) * float32(capBefore)
+		s.playerExpLevel++
+
+		capAfter := xpBarCapForLevel(s.playerExpLevel)
+		if capAfter <= 0 {
+			capAfter = 1
+		}
+		s.playerExperience /= float32(capAfter)
+	}
+}
+
 func (s *loginSession) handleRespawnCommand() bool {
 	s.stateMu.Lock()
 	dead := s.playerDead
@@ -701,6 +821,18 @@ func (s *loginSession) initializePlayerConnection() bool {
 	if loadedState.FoodTickTimer < 0 {
 		loadedState.FoodTickTimer = 0
 	}
+	if loadedState.Experience < 0 {
+		loadedState.Experience = 0
+	}
+	if loadedState.Experience > 1 {
+		loadedState.Experience = 1
+	}
+	if loadedState.ExperienceLvl < 0 {
+		loadedState.ExperienceLvl = 0
+	}
+	if loadedState.ExperienceTot < 0 {
+		loadedState.ExperienceTot = 0
+	}
 	loadedState = s.sanitizeLoadedPlayerPosition(loadedState)
 
 	entityID := s.server.nextEntityID.Add(1)
@@ -749,9 +881,9 @@ func (s *loginSession) initializePlayerConnection() bool {
 		return false
 	}
 	if !s.sendPacket(&protocol.Packet43Experience{
-		Experience:      0.0,
-		ExperienceLevel: 0,
-		ExperienceTotal: 0,
+		Experience:      loadedState.Experience,
+		ExperienceLevel: clampInt16FromInt32(loadedState.ExperienceLvl),
+		ExperienceTotal: clampInt16FromInt32(loadedState.ExperienceTot),
 	}) {
 		return false
 	}
@@ -805,6 +937,9 @@ func (s *loginSession) initializePlayerConnection() bool {
 	s.playerFoodExhaust = loadedState.FoodExhaust
 	s.playerFoodTimer = loadedState.FoodTickTimer
 	s.playerPrevFood = loadedState.Food
+	s.playerExperience = loadedState.Experience
+	s.playerExpLevel = loadedState.ExperienceLvl
+	s.playerExpTotal = loadedState.ExperienceTot
 	s.playerFallDistance = 0
 	s.playerDead = false
 	s.playerUsingItem = false
@@ -1204,6 +1339,74 @@ func (s *loginSession) handleSlashCommand(command string) bool {
 			s.sendSystemChat("Set own game mode to Survival Mode")
 		}
 		return true
+	}
+
+	if strings.EqualFold(args[0], "/xp") {
+		if len(args) < 2 || len(args) > 3 {
+			s.sendSystemChat("Usage: /xp <amount>[L] [player]")
+			return true
+		}
+
+		amountText := strings.TrimSpace(args[1])
+		if amountText == "" {
+			s.sendSystemChat("Usage: /xp <amount>[L] [player]")
+			return true
+		}
+
+		levelMode := strings.HasSuffix(amountText, "l") || strings.HasSuffix(amountText, "L")
+		if levelMode && len(amountText) > 1 {
+			amountText = amountText[:len(amountText)-1]
+		}
+		amount, err := strconv.Atoi(amountText)
+		if err != nil {
+			s.sendSystemChat("Usage: /xp <amount>[L] [player]")
+			return true
+		}
+
+		negative := amount < 0
+		if negative {
+			amount *= -1
+		}
+		if amount < 0 {
+			amount = 0
+		}
+
+		target := s
+		targetName := s.clientUsername
+		if len(args) == 3 {
+			found := s.server.activeSessionByUsername(args[2])
+			if found == nil {
+				s.sendSystemChat("Player not found.")
+				return true
+			}
+			target = found
+			if name := strings.TrimSpace(found.clientUsername); name != "" {
+				targetName = name
+			}
+		}
+		if targetName == "" {
+			targetName = "player"
+		}
+
+		if levelMode {
+			if negative {
+				target.addExperienceLevel(-int32(amount))
+				s.sendSystemChat("Removed " + strconv.Itoa(amount) + " levels from " + targetName)
+			} else {
+				target.addExperienceLevel(int32(amount))
+				s.sendSystemChat("Given " + strconv.Itoa(amount) + " levels to " + targetName)
+			}
+			return target.sendExperienceState()
+		}
+
+		if negative {
+			s.sendSystemChat("Cannot withdraw experience points.")
+			return true
+		}
+
+		target.addExperience(int32(amount))
+		s.sendSystemChat("Given " + strconv.Itoa(amount) + " experience to " + targetName)
+		return target.sendExperienceState()
 	}
 
 	if strings.EqualFold(args[0], "/kill") {

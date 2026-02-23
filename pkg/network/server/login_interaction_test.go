@@ -1498,6 +1498,135 @@ func TestHandleSlashCommandListIncludesPlayerNames(t *testing.T) {
 	}
 }
 
+func TestHandleSlashCommandXpAddsPointsAndSendsExperiencePacket(t *testing.T) {
+	srv := NewStatusServer(StatusConfig{})
+	var buf bytes.Buffer
+	session := newInteractionTestSession(srv, &buf)
+	session.clientUsername = "Steve"
+
+	srv.activeMu.Lock()
+	srv.activePlayers[session] = "Steve"
+	srv.activeOrder = []*loginSession{session}
+	srv.activeMu.Unlock()
+
+	if !session.handleSlashCommand("/xp 17") {
+		t.Fatal("handleSlashCommand returned false")
+	}
+
+	packet, err := protocol.ReadPacket(&buf, protocol.DirectionClientbound)
+	if err != nil {
+		t.Fatalf("failed to read feedback chat packet: %v", err)
+	}
+	chat, ok := packet.(*protocol.Packet3Chat)
+	if !ok {
+		t.Fatalf("expected Packet3Chat, got %T", packet)
+	}
+	if !strings.Contains(chat.Message, "Given 17 experience") {
+		t.Fatalf("unexpected xp chat feedback: %q", chat.Message)
+	}
+
+	packet, err = protocol.ReadPacket(&buf, protocol.DirectionClientbound)
+	if err != nil {
+		t.Fatalf("failed to read xp packet: %v", err)
+	}
+	xp, ok := packet.(*protocol.Packet43Experience)
+	if !ok {
+		t.Fatalf("expected Packet43Experience, got %T", packet)
+	}
+	if xp.ExperienceLevel != 1 || xp.ExperienceTotal != 17 || xp.Experience != 0.0 {
+		t.Fatalf("xp packet mismatch: %#v", xp)
+	}
+}
+
+func TestHandleSlashCommandXpLevelsSupportsNegative(t *testing.T) {
+	srv := NewStatusServer(StatusConfig{})
+	var buf bytes.Buffer
+	session := newInteractionTestSession(srv, &buf)
+	session.clientUsername = "Steve"
+	session.playerExpLevel = 5
+	session.playerExpTotal = 50
+	session.playerExperience = 0.3
+
+	srv.activeMu.Lock()
+	srv.activePlayers[session] = "Steve"
+	srv.activeOrder = []*loginSession{session}
+	srv.activeMu.Unlock()
+
+	if !session.handleSlashCommand("/xp -2L") {
+		t.Fatal("handleSlashCommand returned false")
+	}
+
+	packet, err := protocol.ReadPacket(&buf, protocol.DirectionClientbound)
+	if err != nil {
+		t.Fatalf("failed to read feedback chat packet: %v", err)
+	}
+	chat, ok := packet.(*protocol.Packet3Chat)
+	if !ok {
+		t.Fatalf("expected Packet3Chat, got %T", packet)
+	}
+	if !strings.Contains(chat.Message, "Removed 2 levels") {
+		t.Fatalf("unexpected xp level feedback: %q", chat.Message)
+	}
+
+	packet, err = protocol.ReadPacket(&buf, protocol.DirectionClientbound)
+	if err != nil {
+		t.Fatalf("failed to read xp packet: %v", err)
+	}
+	xp, ok := packet.(*protocol.Packet43Experience)
+	if !ok {
+		t.Fatalf("expected Packet43Experience, got %T", packet)
+	}
+	if xp.ExperienceLevel != 3 || xp.ExperienceTotal != 50 {
+		t.Fatalf("xp level packet mismatch: %#v", xp)
+	}
+}
+
+func TestHandleSlashCommandXpTargetPlayer(t *testing.T) {
+	srv := NewStatusServer(StatusConfig{})
+
+	var callerBuf bytes.Buffer
+	caller := newInteractionTestSession(srv, &callerBuf)
+	caller.clientUsername = "Caller"
+
+	var targetBuf bytes.Buffer
+	target := newInteractionTestSession(srv, &targetBuf)
+	target.clientUsername = "Alex"
+
+	srv.activeMu.Lock()
+	srv.activePlayers[caller] = "Caller"
+	srv.activePlayers[target] = "Alex"
+	srv.activeOrder = []*loginSession{caller, target}
+	srv.activeMu.Unlock()
+
+	if !caller.handleSlashCommand("/xp 3L Alex") {
+		t.Fatal("handleSlashCommand returned false")
+	}
+
+	packet, err := protocol.ReadPacket(&callerBuf, protocol.DirectionClientbound)
+	if err != nil {
+		t.Fatalf("failed to read caller feedback chat: %v", err)
+	}
+	chat, ok := packet.(*protocol.Packet3Chat)
+	if !ok {
+		t.Fatalf("expected caller Packet3Chat, got %T", packet)
+	}
+	if !strings.Contains(chat.Message, "Given 3 levels to Alex") {
+		t.Fatalf("unexpected caller feedback: %q", chat.Message)
+	}
+
+	packet, err = protocol.ReadPacket(&targetBuf, protocol.DirectionClientbound)
+	if err != nil {
+		t.Fatalf("failed to read target xp packet: %v", err)
+	}
+	xp, ok := packet.(*protocol.Packet43Experience)
+	if !ok {
+		t.Fatalf("expected target Packet43Experience, got %T", packet)
+	}
+	if xp.ExperienceLevel != 3 {
+		t.Fatalf("target level mismatch: %#v", xp)
+	}
+}
+
 func TestHandleChatBroadcastsLegacyPlainMessage(t *testing.T) {
 	srv := NewStatusServer(StatusConfig{})
 	sender := newInteractionTestSession(srv, io.Discard)

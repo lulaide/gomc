@@ -22,6 +22,9 @@ type persistedPlayerState struct {
 	Sat           float32
 	FoodExhaust   float32
 	FoodTickTimer int
+	Experience    float32
+	ExperienceLvl int32
+	ExperienceTot int32
 
 	GameType int8
 	HeldSlot int16
@@ -42,6 +45,9 @@ func defaultPersistedPlayerState() persistedPlayerState {
 		Sat:           5.0,
 		FoodExhaust:   0,
 		FoodTickTimer: 0,
+		Experience:    0,
+		ExperienceLvl: 0,
+		ExperienceTot: 0,
 		GameType:      0,
 		HeldSlot:      0,
 	}
@@ -169,6 +175,9 @@ func stateToNBT(state persistedPlayerState) *nbt.CompoundTag {
 	root.SetInteger("foodTickTimer", int32(state.FoodTickTimer))
 	root.SetFloat("foodSaturationLevel", state.Sat)
 	root.SetFloat("foodExhaustionLevel", state.FoodExhaust)
+	root.SetFloat("XpP", state.Experience)
+	root.SetInteger("XpLevel", state.ExperienceLvl)
+	root.SetInteger("XpTotal", state.ExperienceTot)
 	root.SetInteger("playerGameType", int32(state.GameType))
 	root.SetInteger("SelectedItemSlot", int32(state.HeldSlot))
 
@@ -216,6 +225,9 @@ func stateFromNBT(root *nbt.CompoundTag) persistedPlayerState {
 	state.FoodTickTimer = int(tagAsInt32(root.GetTag("foodTickTimer"), int32(state.FoodTickTimer)))
 	state.Sat = tagAsFloat32(root.GetTag("foodSaturationLevel"), state.Sat)
 	state.FoodExhaust = tagAsFloat32(root.GetTag("foodExhaustionLevel"), state.FoodExhaust)
+	state.Experience = tagAsFloat32(root.GetTag("XpP"), state.Experience)
+	state.ExperienceLvl = tagAsInt32(root.GetTag("XpLevel"), state.ExperienceLvl)
+	state.ExperienceTot = tagAsInt32(root.GetTag("XpTotal"), state.ExperienceTot)
 	state.GameType = int8(tagAsInt32(root.GetTag("playerGameType"), int32(state.GameType)))
 	state.HeldSlot = int16(tagAsInt32(root.GetTag("SelectedItemSlot"), int32(state.HeldSlot)))
 	if state.HeldSlot < 0 || state.HeldSlot >= hotbarSlotCount {

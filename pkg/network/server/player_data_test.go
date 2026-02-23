@@ -24,6 +24,9 @@ func TestPlayerDataStateRoundTrip(t *testing.T) {
 	state.Sat = 2.5
 	state.FoodExhaust = 7.25
 	state.FoodTickTimer = 42
+	state.Experience = 0.75
+	state.ExperienceLvl = 12
+	state.ExperienceTot = 345
 	state.GameType = 1
 	state.HeldSlot = 2
 	state.Inventory[38] = &protocol.ItemStack{
@@ -47,6 +50,11 @@ func TestPlayerDataStateRoundTrip(t *testing.T) {
 		t.Fatalf("food state mismatch: got=(%d,%f,%f,%d) want=(%d,%f,%f,%d)",
 			loaded.Food, loaded.Sat, loaded.FoodExhaust, loaded.FoodTickTimer,
 			state.Food, state.Sat, state.FoodExhaust, state.FoodTickTimer)
+	}
+	if loaded.Experience != state.Experience || loaded.ExperienceLvl != state.ExperienceLvl || loaded.ExperienceTot != state.ExperienceTot {
+		t.Fatalf("experience state mismatch: got=(%f,%d,%d) want=(%f,%d,%d)",
+			loaded.Experience, loaded.ExperienceLvl, loaded.ExperienceTot,
+			state.Experience, state.ExperienceLvl, state.ExperienceTot)
 	}
 	if loaded.GameType != 1 || loaded.HeldSlot != 2 {
 		t.Fatalf("mode/slot mismatch: got=(%d,%d)", loaded.GameType, loaded.HeldSlot)
