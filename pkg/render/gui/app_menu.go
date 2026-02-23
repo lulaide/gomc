@@ -25,6 +25,7 @@ const (
 	menuScreenSingleplayer
 	menuScreenMultiplayer
 	menuScreenOptions
+	menuScreenLanguage
 	menuScreenVideo
 	menuScreenControls
 	menuScreenKeyBindings
@@ -98,6 +99,10 @@ const (
 	buttonIDOptionViewBobbing = 1316
 	buttonIDOptionDone        = 1399
 
+	buttonIDLanguageEnglish      = 1551
+	buttonIDLanguageForceUnicode = 1552
+	buttonIDLanguageDone         = 1599
+
 	buttonIDVideoGraphics    = 1601
 	buttonIDVideoClouds      = 1602
 	buttonIDVideoRDMinus     = 1603
@@ -143,6 +148,7 @@ func (a *App) initAllMenuButtons() {
 	a.initSingleButtons()
 	a.initMultiButtons()
 	a.initOptionButtons()
+	a.initLanguageButtons()
 	a.initVideoButtons()
 	a.initControlButtons()
 	a.initKeyBindingButtons()
@@ -154,6 +160,7 @@ func (a *App) initAllMenuButtons() {
 	}
 	a.updateSingleButtonsState()
 	a.updateOptionButtonsState()
+	a.updateLanguageButtonsState()
 	a.updateVideoButtonsState()
 	a.updateControlButtonsState()
 	a.updateKeyBindingButtonsState()
@@ -218,6 +225,16 @@ func (a *App) initOptionButtons() {
 		newButton(buttonIDOptionMultiplayer, w/2-155, baseY+188, 150, 20, "Multiplayer Settings..."),
 		newButton(buttonIDOptionResource, w/2+5, baseY+188, 150, 20, "Resource Packs..."),
 		newButton(buttonIDOptionDone, w/2+2, baseY+164, 98, 20, "Done"),
+	}
+}
+
+func (a *App) initLanguageButtons() {
+	w, h := a.uiWidth(), a.uiHeight()
+	baseY := h/6 + 20
+	a.languageButtons = []*guiButton{
+		newButton(buttonIDLanguageForceUnicode, w/2-75, baseY, 150, 20, "Force Unicode Font: OFF"),
+		newButton(buttonIDLanguageEnglish, w/2-100, baseY+36, 200, 20, "English (US)"),
+		newButton(buttonIDLanguageDone, w/2-100, h-38, 200, 20, "Done"),
 	}
 }
 
@@ -428,6 +445,39 @@ func (a *App) updateOptionButtonsState() {
 		case buttonIDOptionDone:
 			b.Enabled = true
 			b.Visible = true
+		}
+	}
+}
+
+func (a *App) updateLanguageButtonsState() {
+	if strings.TrimSpace(a.languageCode) == "" {
+		a.languageCode = "en_US"
+	}
+	langLabel := "English (US)"
+	if !strings.EqualFold(a.languageCode, "en_US") {
+		langLabel = fmt.Sprintf("English (US) (current: %s)", a.languageCode)
+	}
+	for _, b := range a.languageButtons {
+		if b == nil {
+			continue
+		}
+		b.Visible = true
+		b.Enabled = true
+		switch b.ID {
+		case buttonIDLanguageForceUnicode:
+			if a.forceUnicodeFont {
+				b.Label = "Force Unicode Font: ON"
+			} else {
+				b.Label = "Force Unicode Font: OFF"
+			}
+		case buttonIDLanguageEnglish:
+			if strings.EqualFold(a.languageCode, "en_US") {
+				b.Label = "English (US) [Selected]"
+			} else {
+				b.Label = langLabel
+			}
+		case buttonIDLanguageDone:
+			b.Label = "Done"
 		}
 	}
 }
@@ -789,6 +839,8 @@ func (a *App) currentMenuButtons() []*guiButton {
 		return a.multiButtons
 	case menuScreenOptions:
 		return a.optionButtons
+	case menuScreenLanguage:
+		return a.languageButtons
 	case menuScreenVideo:
 		return a.videoButtons
 	case menuScreenControls:
@@ -1028,7 +1080,10 @@ func (a *App) handleMenuButton(id int) bool {
 			a.menuScreen = menuScreenOptions
 			a.updateOptionButtonsState()
 		case buttonIDMenuLanguage:
-			a.menuStatus = "Language screen is not implemented yet."
+			a.languageReturn = menuScreenMain
+			a.menuScreen = menuScreenLanguage
+			a.menuStatus = ""
+			a.updateLanguageButtonsState()
 		case buttonIDMenuQuit:
 			return false
 		}
@@ -1104,7 +1159,10 @@ func (a *App) handleMenuButton(id int) bool {
 			a.menuStatus = ""
 		case buttonIDOptionLanguage:
 			if a.mainMenu {
-				a.menuStatus = "Language screen is not implemented yet."
+				a.languageReturn = menuScreenOptions
+				a.menuScreen = menuScreenLanguage
+				a.menuStatus = ""
+				a.updateLanguageButtonsState()
 			} else {
 				a.guiScaleMode = (a.guiScaleMode + 1) % len(guiScaleModeNames)
 				a.updateGUIMetrics()
@@ -1164,6 +1222,19 @@ func (a *App) handleMenuButton(id int) bool {
 		if changed {
 			a.saveOptionsFile()
 		}
+	case menuScreenLanguage:
+		switch id {
+		case buttonIDLanguageDone, buttonIDMenuBack:
+			a.menuScreen = a.languageReturn
+			a.menuStatus = ""
+		case buttonIDLanguageForceUnicode:
+			a.forceUnicodeFont = !a.forceUnicodeFont
+			a.saveOptionsFile()
+		case buttonIDLanguageEnglish:
+			a.languageCode = "en_US"
+			a.saveOptionsFile()
+		}
+		a.updateLanguageButtonsState()
 	case menuScreenVideo:
 		changed := false
 		switch id {
@@ -2016,6 +2087,8 @@ func (a *App) drawMenuScreen() {
 		a.drawMultiplayerMenu()
 	case menuScreenOptions:
 		a.drawOptionsMenu()
+	case menuScreenLanguage:
+		a.drawLanguageMenu()
 	case menuScreenVideo:
 		a.drawVideoMenu()
 	case menuScreenControls:
@@ -2059,6 +2132,10 @@ func (a *App) handleMenuEscape() bool {
 	case menuScreenSounds:
 		a.menuScreen = menuScreenOptions
 		a.keyBindCapture = -1
+		a.menuStatus = ""
+		return true
+	case menuScreenLanguage:
+		a.menuScreen = a.languageReturn
 		a.menuStatus = ""
 		return true
 	case menuScreenMain:
@@ -2324,6 +2401,23 @@ func (a *App) drawOptionsMenu() {
 		a.font.drawCenteredString(rd, a.uiWidth()/2, baseY+88+6, 0xFFFFFF)
 		a.font.drawCenteredString(fov, a.uiWidth()/2, baseY+112+6, 0xFFFFFF)
 		a.font.drawCenteredString(sens, a.uiWidth()/2, baseY+136+6, 0xFFFFFF)
+	}
+
+	a.drawMenuStatusLine()
+	gl.Disable(gl.BLEND)
+	gl.Enable(gl.CULL_FACE)
+	gl.Enable(gl.DEPTH_TEST)
+}
+
+func (a *App) drawLanguageMenu() {
+	a.drawMenuBackground("Language")
+	a.updateLanguageButtonsState()
+
+	if a.font != nil {
+		a.font.drawCenteredString("Select language", a.uiWidth()/2, a.uiHeight()/6+6, 0xA0A0A0)
+	}
+	for _, b := range a.languageButtons {
+		b.draw(a.font, a.texWidgets, a.mouseX, a.mouseY)
 	}
 
 	a.drawMenuStatusLine()

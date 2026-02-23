@@ -225,6 +225,7 @@ type App struct {
 	singleButtons      []*guiButton
 	multiButtons       []*guiButton
 	optionButtons      []*guiButton
+	languageButtons    []*guiButton
 	videoButtons       []*guiButton
 	controlButtons     []*guiButton
 	keyBindButtons     []*guiButton
@@ -234,6 +235,7 @@ type App struct {
 	singleWorlds       []string
 	singleWorldMeta    map[string]singleWorldMeta
 	selectedWorld      int
+	languageReturn     menuScreen
 	menuStatus         string
 	optionDifficulty   int
 	createWorldName    string
@@ -263,6 +265,8 @@ type App struct {
 	optionsPath       string
 	optionsKV         map[string]string
 	langEN            map[string]string
+	languageCode      string
+	forceUnicodeFont  bool
 	keyBindings       []keyBindingConfig
 	keyBindCapture    int
 	texWidgets        *texture2D
@@ -434,10 +438,12 @@ func Run(session *netclient.Session, cfg Config) error {
 		lastMouseY:         float64(cfg.Height) / 2,
 		assetsRoot:         discoverAssetsRoot(),
 		optionsKV:          make(map[string]string),
+		languageCode:       "en_US",
 		eventsCh:           session.Events(),
 		mainMenu:           cfg.StartInMainMenu,
 		pauseScreen:        pauseScreenMain,
 		menuScreen:         menuScreenMain,
+		languageReturn:     menuScreenMain,
 		keyBindCapture:     -1,
 		selectedWorld:      -1,
 		singleWorldMeta:    make(map[string]singleWorldMeta),
@@ -2148,9 +2154,8 @@ func (a *App) initMainButtons() {
 		newButton(buttonIDMenuQuit, w/2+2, baseY+72+12, 98, 20, "Quit Game"),
 		newButton(buttonIDMenuLanguage, w/2-124, baseY+72+12, 20, 20, "L"),
 	}
-	// Realms and language pages are not implemented yet.
+	// Realms page is not implemented yet.
 	a.mainButtons[2].Enabled = false
-	a.mainButtons[5].Enabled = false
 }
 
 func (a *App) applyCursorMode() {
@@ -7128,6 +7133,14 @@ func (a *App) loadOptionsFile() {
 			if v, parseErr := strconv.ParseBool(value); parseErr == nil {
 				a.viewBobbing = v
 			}
+		case "lang":
+			if strings.TrimSpace(value) != "" {
+				a.languageCode = value
+			}
+		case "forceUnicodeFont":
+			if v, parseErr := strconv.ParseBool(value); parseErr == nil {
+				a.forceUnicodeFont = v
+			}
 		case "mouseSensitivity":
 			if v, parseErr := strconv.ParseFloat(value, 64); parseErr == nil {
 				a.mouseSens = clampFloat64(v, 0.0, 1.0)
@@ -7182,6 +7195,11 @@ func (a *App) saveOptionsFile() {
 	a.optionsKV["viewDistance"] = strconv.Itoa(normalizeRenderDistanceMode(a.renderDistance))
 	a.optionsKV["guiScale"] = strconv.Itoa(clampInt(a.guiScaleMode, 0, len(guiScaleModeNames)-1))
 	a.optionsKV["bobView"] = strconv.FormatBool(a.viewBobbing)
+	a.optionsKV["lang"] = strings.TrimSpace(a.languageCode)
+	if a.optionsKV["lang"] == "" {
+		a.optionsKV["lang"] = "en_US"
+	}
+	a.optionsKV["forceUnicodeFont"] = strconv.FormatBool(a.forceUnicodeFont)
 	a.optionsKV["mouseSensitivity"] = strconv.FormatFloat(clampFloat64(a.mouseSens, 0.0, 1.0), 'f', 6, 64)
 	a.optionsKV["fpsLimit"] = strconv.Itoa(clampInt(a.limitFramerateMode, 0, 2))
 	a.optionsKV["difficulty"] = strconv.Itoa(a.optionDifficulty & 3)

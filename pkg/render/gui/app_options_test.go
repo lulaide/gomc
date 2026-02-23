@@ -341,6 +341,8 @@ func TestOptionsFileLoadAndSave(t *testing.T) {
 		"viewDistance:2",
 		"guiScale:3",
 		"bobView:false",
+		"lang:en_US",
+		"forceUnicodeFont:true",
 		"mouseSensitivity:0.30",
 		"fpsLimit:2",
 		"difficulty:3",
@@ -393,6 +395,12 @@ func TestOptionsFileLoadAndSave(t *testing.T) {
 	if a.mouseSens != 0.30 {
 		t.Fatalf("loaded sensitivity mismatch: got=%.2f want=0.30", a.mouseSens)
 	}
+	if a.languageCode != "en_US" {
+		t.Fatalf("loaded language mismatch: got=%q want=%q", a.languageCode, "en_US")
+	}
+	if !a.forceUnicodeFont {
+		t.Fatal("loaded forceUnicodeFont should be true")
+	}
 	if a.limitFramerateMode != 2 {
 		t.Fatalf("loaded fpsLimit mismatch: got=%d want=2", a.limitFramerateMode)
 	}
@@ -417,6 +425,8 @@ func TestOptionsFileLoadAndSave(t *testing.T) {
 	a.viewBobbing = true
 	a.guiScaleMode = 2
 	a.mouseSens = 0.5
+	a.languageCode = "en_US"
+	a.forceUnicodeFont = false
 	a.limitFramerateMode = 0
 	a.optionDifficulty = 0
 	a.fancyGraphics = true
@@ -437,6 +447,8 @@ func TestOptionsFileLoadAndSave(t *testing.T) {
 		"viewDistance:0",
 		"guiScale:2",
 		"bobView:true",
+		"lang:en_US",
+		"forceUnicodeFont:false",
 		"mouseSensitivity:0.500000",
 		"fpsLimit:0",
 		"difficulty:0",
