@@ -796,6 +796,7 @@ func (s *loginSession) initializePlayerConnection() bool {
 		loadedState.Yaw = 0
 		loadedState.Pitch = 0
 		loadedState.OnGround = false
+		loadedState.GameType = int8(s.server.defaultGameType.Load())
 	}
 	loadedState.GameType = normalizeGameTypeValue(loadedState.GameType)
 	if loadedState.HeldSlot < 0 || loadedState.HeldSlot >= hotbarSlotCount {
@@ -1526,6 +1527,37 @@ func (s *loginSession) handleSlashCommand(command string) bool {
 		worldAge, worldTime := s.server.CurrentWorldTime()
 		s.server.broadcastPacket(protocol.NewPacket4UpdateTime(worldAge, worldTime, true))
 		s.sendSystemChat("Set time to " + strconv.FormatInt(worldTime, 10))
+		return true
+	}
+
+	if strings.EqualFold(args[0], "/defaultgamemode") {
+		if len(args) < 2 {
+			s.sendSystemChat("Usage: /defaultgamemode <mode>")
+			return true
+		}
+
+		modeText := strings.ToLower(args[1])
+		var (
+			mode     int8
+			modeName string
+		)
+		switch modeText {
+		case "0", "s", "survival":
+			mode = 0
+			modeName = "Survival Mode"
+		case "1", "c", "creative":
+			mode = 1
+			modeName = "Creative Mode"
+		case "2", "a", "adventure":
+			mode = 2
+			modeName = "Adventure Mode"
+		default:
+			s.sendSystemChat("Usage: /defaultgamemode <mode>")
+			return true
+		}
+
+		s.server.defaultGameType.Store(int32(mode))
+		s.sendSystemChat("The world's default game mode is now " + modeName)
 		return true
 	}
 

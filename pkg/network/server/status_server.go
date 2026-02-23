@@ -32,11 +32,12 @@ type StatusConfig struct {
 
 // StatusServer handles status ping + early login protocol checks.
 type StatusServer struct {
-	cfg            StatusConfig
-	currentPlayers atomic.Int32
-	nextEntityID   atomic.Int32
-	worldAge       atomic.Int64
-	worldTime      atomic.Int64
+	cfg             StatusConfig
+	currentPlayers  atomic.Int32
+	nextEntityID    atomic.Int32
+	worldAge        atomic.Int64
+	worldTime       atomic.Int64
+	defaultGameType atomic.Int32
 
 	privateKey   *rsa.PrivateKey
 	publicKeyDER []byte
@@ -118,6 +119,7 @@ func NewStatusServer(cfg StatusConfig) *StatusServer {
 	}
 	s.mobRand = util.NewJavaRandom(s.world.seed ^ 0x4F4D435F4D4F42) // "OMC_MOB"
 	s.nextEntityID.Store(1)
+	s.defaultGameType.Store(0)
 	return s
 }
 

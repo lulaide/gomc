@@ -931,6 +931,67 @@ func TestHandleSlashCommandGamemodeCreativeSendsAbilities(t *testing.T) {
 	}
 }
 
+func TestHandleSlashCommandDefaultGamemodeSetsServerDefault(t *testing.T) {
+	srv := NewStatusServer(StatusConfig{})
+	var buf bytes.Buffer
+	session := newInteractionTestSession(srv, &buf)
+
+	if !session.handleSlashCommand("/defaultgamemode adventure") {
+		t.Fatal("handleSlashCommand returned false")
+	}
+	if got := srv.defaultGameType.Load(); got != 2 {
+		t.Fatalf("default game mode mismatch: got=%d want=2", got)
+	}
+
+	packet, err := protocol.ReadPacket(&buf, protocol.DirectionClientbound)
+	if err != nil {
+		t.Fatalf("failed to read defaultgamemode feedback: %v", err)
+	}
+	chat, ok := packet.(*protocol.Packet3Chat)
+	if !ok {
+		t.Fatalf("expected Packet3Chat, got %T", packet)
+	}
+	if chat.Message != "The world's default game mode is now Adventure Mode" {
+		t.Fatalf("defaultgamemode feedback mismatch: got=%q", chat.Message)
+	}
+}
+
+func TestInitializePlayerConnectionUsesServerDefaultGamemode(t *testing.T) {
+	srv := NewStatusServer(StatusConfig{})
+	srv.defaultGameType.Store(2)
+
+	var buf bytes.Buffer
+	session := newInteractionTestSession(srv, &buf)
+	session.clientUsername = "Steve"
+
+	if !session.initializePlayerConnection() {
+		t.Fatal("initializePlayerConnection returned false")
+	}
+	if session.gameType != 2 {
+		t.Fatalf("session gameType mismatch: got=%d want=2", session.gameType)
+	}
+
+	foundLogin := false
+	for {
+		packet, err := protocol.ReadPacket(&buf, protocol.DirectionClientbound)
+		if err != nil {
+			break
+		}
+		login, ok := packet.(*protocol.Packet1Login)
+		if !ok {
+			continue
+		}
+		foundLogin = true
+		if login.GameType != 2 {
+			t.Fatalf("login packet gameType mismatch: got=%d want=2", login.GameType)
+		}
+		break
+	}
+	if !foundLogin {
+		t.Fatal("expected Packet1Login in initialization output")
+	}
+}
+
 func TestHandlePlayerAbilitiesFlyingRequiresAllowFlying(t *testing.T) {
 	srv := NewStatusServer(StatusConfig{})
 	session := newInteractionTestSession(srv, io.Discard)
