@@ -299,6 +299,70 @@ func TestHandleVehicleSpawnAndVelocityPackets(t *testing.T) {
 	}
 }
 
+func TestHandleAttachEntityTracksVehicleAndClearsOnDestroy(t *testing.T) {
+	s := newUnitTestSession(io.Discard)
+
+	if err := s.handlePacket(&protocol.Packet24MobSpawn{
+		EntityID:  501,
+		Type:      90,
+		XPosition: 0,
+		YPosition: 0,
+		ZPosition: 0,
+	}); err != nil {
+		t.Fatalf("vehicle spawn handle failed: %v", err)
+	}
+	if err := s.handlePacket(&protocol.Packet24MobSpawn{
+		EntityID:  502,
+		Type:      91,
+		XPosition: 0,
+		YPosition: 0,
+		ZPosition: 0,
+	}); err != nil {
+		t.Fatalf("rider spawn handle failed: %v", err)
+	}
+	if err := s.handlePacket(&protocol.Packet39AttachEntity{
+		RidingEntityID:  502,
+		VehicleEntityID: 501,
+		AttachState:     0,
+	}); err != nil {
+		t.Fatalf("attach handle failed: %v", err)
+	}
+
+	var rider *EntitySnapshot
+	for _, ent := range s.EntitiesSnapshot() {
+		if ent.EntityID == 502 {
+			entCopy := ent
+			rider = &entCopy
+			break
+		}
+	}
+	if rider == nil {
+		t.Fatal("expected rider entity in snapshot")
+	}
+	if rider.Vehicle != 501 {
+		t.Fatalf("rider vehicle mismatch after attach: got=%d want=501", rider.Vehicle)
+	}
+
+	if err := s.handlePacket(&protocol.Packet29DestroyEntity{EntityIDs: []int32{501}}); err != nil {
+		t.Fatalf("destroy handle failed: %v", err)
+	}
+
+	rider = nil
+	for _, ent := range s.EntitiesSnapshot() {
+		if ent.EntityID == 502 {
+			entCopy := ent
+			rider = &entCopy
+			break
+		}
+	}
+	if rider == nil {
+		t.Fatal("expected rider entity in snapshot after vehicle destroy")
+	}
+	if rider.Vehicle != -1 {
+		t.Fatalf("rider vehicle should clear on destroy: got=%d want=-1", rider.Vehicle)
+	}
+}
+
 func TestHandlePacket40EntityMetadataUpdatesDroppedItemFields(t *testing.T) {
 	s := newUnitTestSession(io.Discard)
 	displayTag := nbt.NewCompoundTag("display")

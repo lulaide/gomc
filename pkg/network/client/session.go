@@ -49,6 +49,7 @@ type trackedEntity struct {
 	EntityID int32
 	Name     string
 	Type     int8
+	Vehicle  int32
 
 	XPosition int32
 	YPosition int32
@@ -88,6 +89,7 @@ type EntitySnapshot struct {
 	EntityID int32
 	Name     string
 	Type     int8
+	Vehicle  int32
 
 	X float64
 	Y float64
@@ -646,6 +648,7 @@ func (s *Session) handlePacket(packet protocol.Packet) error {
 			EntityID:  p.EntityID,
 			Name:      p.Name,
 			Type:      0,
+			Vehicle:   -1,
 			XPosition: p.XPosition,
 			YPosition: p.YPosition,
 			ZPosition: p.ZPosition,
@@ -662,6 +665,7 @@ func (s *Session) handlePacket(packet protocol.Packet) error {
 			EntityID:  p.EntityID,
 			Name:      fmt.Sprintf("obj:%d", p.Type),
 			Type:      p.Type,
+			Vehicle:   -1,
 			XPosition: p.XPosition,
 			YPosition: p.YPosition,
 			ZPosition: p.ZPosition,
@@ -679,6 +683,7 @@ func (s *Session) handlePacket(packet protocol.Packet) error {
 			EntityID:  p.EntityID,
 			Name:      fmt.Sprintf("mob:%d", p.Type),
 			Type:      p.Type,
+			Vehicle:   -1,
 			XPosition: p.XPosition,
 			YPosition: p.YPosition,
 			ZPosition: p.ZPosition,
@@ -703,6 +708,14 @@ func (s *Session) handlePacket(packet protocol.Packet) error {
 	case *protocol.Packet29DestroyEntity:
 		s.stateMu.Lock()
 		for _, id := range p.EntityIDs {
+			for _, ent := range s.entities {
+				if ent == nil {
+					continue
+				}
+				if ent.Vehicle == id {
+					ent.Vehicle = -1
+				}
+			}
 			delete(s.entities, id)
 		}
 		s.stateMu.Unlock()
@@ -769,6 +782,12 @@ func (s *Session) handlePacket(packet protocol.Packet) error {
 				SoundPitch:  0.9,
 			})
 		}
+	case *protocol.Packet39AttachEntity:
+		s.stateMu.Lock()
+		if ent, ok := s.entities[p.RidingEntityID]; ok && ent != nil {
+			ent.Vehicle = p.VehicleEntityID
+		}
+		s.stateMu.Unlock()
 	case *protocol.Packet40EntityMetadata:
 		s.stateMu.Lock()
 		if ent, ok := s.entities[p.EntityID]; ok {
@@ -1046,6 +1065,7 @@ func (s *Session) EntitiesSnapshot() []EntitySnapshot {
 			EntityID:  ent.EntityID,
 			Name:      ent.Name,
 			Type:      ent.Type,
+			Vehicle:   ent.Vehicle,
 			X:         float64(ent.XPosition) / 32.0,
 			Y:         float64(ent.YPosition) / 32.0,
 			Z:         float64(ent.ZPosition) / 32.0,
