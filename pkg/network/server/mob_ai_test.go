@@ -164,6 +164,58 @@ func TestTickSingleMobMountedPigUsesRiderInput(t *testing.T) {
 	}
 }
 
+func TestRemoveMobMountedPigDismountsRiderAndSendsDetach(t *testing.T) {
+	srv := NewStatusServer(StatusConfig{})
+
+	var riderBuf bytes.Buffer
+	rider := newInteractionTestSession(srv, &riderBuf)
+	rider.entityID = 131
+	rider.playerRegistered = true
+	rider.playerDead = false
+	rider.playerHealth = 20
+
+	srv.activeMu.Lock()
+	srv.activePlayers[rider] = "rider"
+	srv.activeOrder = []*loginSession{rider}
+	srv.activeMu.Unlock()
+
+	pig := srv.spawnMob(&spawnListEntry{entityType: entityTypePig}, 0.5, 5.0, 0.5, 0)
+	if pig == nil {
+		t.Fatal("spawnMob returned nil")
+	}
+	rider.stateMu.Lock()
+	rider.ridingEntityID = pig.EntityID
+	rider.stateMu.Unlock()
+
+	srv.removeMob(pig)
+
+	rider.stateMu.Lock()
+	stillRiding := rider.ridingEntityID
+	rider.stateMu.Unlock()
+	if stillRiding != 0 {
+		t.Fatalf("expected rider dismounted when pig removed: got=%d want=0", stillRiding)
+	}
+
+	foundDetach := false
+	for {
+		packet, err := protocol.ReadPacket(&riderBuf, protocol.DirectionClientbound)
+		if err != nil {
+			break
+		}
+		attach, ok := packet.(*protocol.Packet39AttachEntity)
+		if !ok {
+			continue
+		}
+		if attach.RidingEntityID == rider.entityID && attach.VehicleEntityID == -1 && attach.AttachState == 0 {
+			foundDetach = true
+			break
+		}
+	}
+	if !foundDetach {
+		t.Fatal("expected rider to receive Packet39 detach when mount entity is removed")
+	}
+}
+
 func TestTryMoveLandMobCanStepUpOneBlock(t *testing.T) {
 	srv := NewStatusServer(StatusConfig{})
 	if !srv.world.setBlock(1, 5, 0, 1, 0) {

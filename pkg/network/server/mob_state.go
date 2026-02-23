@@ -1367,6 +1367,7 @@ func (s *StatusServer) removeMob(mob *trackedMob) {
 	if mob == nil {
 		return
 	}
+	s.dismountRidersFromVehicle(mob.EntityID)
 
 	s.mobMu.Lock()
 	if _, exists := s.mobs[mob.EntityID]; !exists {
@@ -1387,6 +1388,25 @@ func (s *StatusServer) removeMob(mob *trackedMob) {
 			continue
 		}
 		_ = session.sendPacket(destroy)
+	}
+}
+
+func (s *StatusServer) dismountRidersFromVehicle(vehicleEntityID int32) {
+	if vehicleEntityID == 0 {
+		return
+	}
+	sessions := s.activeSessions()
+	for _, session := range sessions {
+		if session == nil {
+			continue
+		}
+		session.stateMu.Lock()
+		riding := session.ridingEntityID == vehicleEntityID
+		session.stateMu.Unlock()
+		if !riding {
+			continue
+		}
+		session.dismountRidingEntity()
 	}
 }
 
