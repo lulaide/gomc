@@ -85,3 +85,48 @@ func TestTickWaterFlowUsesVanillaTickRate(t *testing.T) {
 		t.Fatalf("water update at tickRate mismatch: got=(%d,%d) want=(%d,8)", id, meta, blockIDFlowingWater)
 	}
 }
+
+func TestTickWaterFlowPrefersDownhillPath(t *testing.T) {
+	srv := NewStatusServer(StatusConfig{})
+	attachWaterTickWatcher(srv)
+
+	// Source with blocked underside so it must spread horizontally first.
+	if !srv.world.setBlock(8, 12, 8, blockIDStillWater, 0) {
+		t.Fatal("failed to place still water source")
+	}
+	if !srv.world.setBlock(8, 11, 8, 1, 0) {
+		t.Fatal("failed to place support block below source")
+	}
+	// Force one downhill candidate to the east.
+	if !srv.world.setBlock(7, 11, 8, 1, 0) {
+		t.Fatal("failed to place west support block")
+	}
+	if !srv.world.setBlock(8, 11, 7, 1, 0) {
+		t.Fatal("failed to place north support block")
+	}
+	if !srv.world.setBlock(8, 11, 9, 1, 0) {
+		t.Fatal("failed to place south support block")
+	}
+
+	srv.AdvanceWorldTime(waterTickRate)
+
+	// East should be chosen first (lowest flow-cost path with open block below).
+	eastID, eastMeta := srv.world.getBlock(9, 12, 8)
+	if eastID != blockIDFlowingWater || eastMeta != 1 {
+		t.Fatalf("east spread mismatch: got=(%d,%d) want=(%d,1)", eastID, eastMeta, blockIDFlowingWater)
+	}
+
+	for _, tc := range []struct {
+		x, z int
+		name string
+	}{
+		{7, 8, "west"},
+		{8, 7, "north"},
+		{8, 9, "south"},
+	} {
+		id, meta := srv.world.getBlock(tc.x, 12, tc.z)
+		if id != 0 || meta != 0 {
+			t.Fatalf("%s should remain dry on first spread tick: got=(%d,%d) want=(0,0)", tc.name, id, meta)
+		}
+	}
+}

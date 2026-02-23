@@ -838,6 +838,86 @@ func TestHandleWindowClickShiftHotbarToMain(t *testing.T) {
 	}
 }
 
+func TestHandleWindowClickDropModeDropsOneFromSlot(t *testing.T) {
+	srv := NewStatusServer(StatusConfig{})
+	var buf bytes.Buffer
+	session := newInteractionTestSession(srv, &buf)
+	session.inventory[36] = &protocol.ItemStack{
+		ItemID:     1,
+		StackSize:  5,
+		ItemDamage: 0,
+	}
+
+	if !session.handleWindowClick(&protocol.Packet102WindowClick{
+		WindowID:      0,
+		InventorySlot: 36,
+		MouseClick:    0, // drop one
+		ActionNumber:  12,
+		Mode:          4,
+	}) {
+		t.Fatal("handleWindowClick returned false")
+	}
+
+	if session.inventory[36] == nil || session.inventory[36].StackSize != 4 {
+		t.Fatalf("slot stack mismatch after mode-4 drop one: %#v", session.inventory[36])
+	}
+	if got := countDroppedItemByID(srv, 1); got != 1 {
+		t.Fatalf("dropped item count mismatch after mode-4 drop one: got=%d want=1", got)
+	}
+
+	first, err := protocol.ReadPacket(&buf, protocol.DirectionClientbound)
+	if err != nil {
+		t.Fatalf("failed to read transaction packet: %v", err)
+	}
+	tx, ok := first.(*protocol.Packet106Transaction)
+	if !ok {
+		t.Fatalf("expected Packet106Transaction, got %T", first)
+	}
+	if !tx.Accepted {
+		t.Fatalf("expected accepted transaction, got %#v", tx)
+	}
+}
+
+func TestHandleWindowClickDropModeDropsWholeSlotStack(t *testing.T) {
+	srv := NewStatusServer(StatusConfig{})
+	var buf bytes.Buffer
+	session := newInteractionTestSession(srv, &buf)
+	session.inventory[36] = &protocol.ItemStack{
+		ItemID:     4,
+		StackSize:  3,
+		ItemDamage: 2,
+	}
+
+	if !session.handleWindowClick(&protocol.Packet102WindowClick{
+		WindowID:      0,
+		InventorySlot: 36,
+		MouseClick:    1, // drop stack
+		ActionNumber:  13,
+		Mode:          4,
+	}) {
+		t.Fatal("handleWindowClick returned false")
+	}
+
+	if session.inventory[36] != nil {
+		t.Fatalf("slot should be empty after mode-4 drop stack: %#v", session.inventory[36])
+	}
+	if got := countDroppedItemByID(srv, 4); got != 3 {
+		t.Fatalf("dropped item count mismatch after mode-4 drop stack: got=%d want=3", got)
+	}
+
+	first, err := protocol.ReadPacket(&buf, protocol.DirectionClientbound)
+	if err != nil {
+		t.Fatalf("failed to read transaction packet: %v", err)
+	}
+	tx, ok := first.(*protocol.Packet106Transaction)
+	if !ok {
+		t.Fatalf("expected Packet106Transaction, got %T", first)
+	}
+	if !tx.Accepted {
+		t.Fatalf("expected accepted transaction, got %#v", tx)
+	}
+}
+
 func TestHandleWindowClickRejectsUnknownWindowAndResyncs(t *testing.T) {
 	srv := NewStatusServer(StatusConfig{})
 	var buf bytes.Buffer

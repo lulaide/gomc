@@ -31,7 +31,8 @@ func TestPacket102WindowClickRoundTrip(t *testing.T) {
 		InventorySlot: 36,
 		MouseClick:    1,
 		ActionNumber:  7,
-		HoldingShift:  true,
+		Mode:          4,
+		HoldingShift:  false,
 		ItemStack: &ItemStack{
 			ItemID:     1,
 			StackSize:  64,
@@ -51,7 +52,7 @@ func TestPacket102WindowClickRoundTrip(t *testing.T) {
 	if !ok {
 		t.Fatalf("unexpected type: %T", packet)
 	}
-	if out.WindowID != 0 || out.InventorySlot != 36 || out.MouseClick != 1 || out.ActionNumber != 7 || !out.HoldingShift {
+	if out.WindowID != 0 || out.InventorySlot != 36 || out.MouseClick != 1 || out.ActionNumber != 7 || out.Mode != 4 || out.HoldingShift {
 		t.Fatalf("header mismatch: %#v", out)
 	}
 	if out.ItemStack == nil || out.ItemStack.ItemID != 1 || out.ItemStack.StackSize != 64 {

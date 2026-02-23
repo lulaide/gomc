@@ -28,8 +28,11 @@ type Packet102WindowClick struct {
 	InventorySlot int16
 	MouseClick    int8
 	ActionNumber  int16
-	HoldingShift  bool
-	ItemStack     *ItemStack
+	// Mode maps to vanilla click mode byte:
+	// 0=normal, 1=shift, 2=hotbar swap, 3=pick block, 4=drop, 5=drag, 6=double click.
+	Mode         int8
+	HoldingShift bool
+	ItemStack    *ItemStack
 }
 
 func (*Packet102WindowClick) PacketID() uint8 { return 102 }
@@ -64,7 +67,8 @@ func (p *Packet102WindowClick) ReadPacketData(r *Reader) error {
 	p.InventorySlot = slot
 	p.MouseClick = mouse
 	p.ActionNumber = action
-	p.HoldingShift = mode != 0
+	p.Mode = mode
+	p.HoldingShift = mode == 1
 	p.ItemStack = stack
 	return nil
 }
@@ -82,14 +86,12 @@ func (p *Packet102WindowClick) WritePacketData(w *Writer) error {
 	if err := w.WriteInt16(p.ActionNumber); err != nil {
 		return err
 	}
-	if p.HoldingShift {
-		if err := w.WriteInt8(1); err != nil {
-			return err
-		}
-	} else {
-		if err := w.WriteInt8(0); err != nil {
-			return err
-		}
+	mode := p.Mode
+	if mode == 0 && p.HoldingShift {
+		mode = 1
+	}
+	if err := w.WriteInt8(mode); err != nil {
+		return err
 	}
 	return w.WriteItemStack(p.ItemStack)
 }

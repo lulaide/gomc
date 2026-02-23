@@ -40,6 +40,7 @@ const (
 	maxChunkBuilds  = 4
 	defaultFPSMode  = 1
 	sprintTapTicks  = 7
+	digBreakDelay   = 50 * time.Millisecond
 )
 
 var (
@@ -323,6 +324,12 @@ type App struct {
 	localUseStart     time.Time
 	localUseMax       int
 	localUseItemID    int16
+	localDigging      bool
+	localDigStart     time.Time
+	localDigX         int
+	localDigY         int
+	localDigZ         int
+	localDigFace      int32
 	clockAngle        float64
 	clockDelta        float64
 	clockUpdateTick   int64
@@ -1106,17 +1113,20 @@ func (a *App) handleInput(deltaSeconds float64) bool {
 	}
 	if escPressed && !a.prevEsc && !a.mainMenu {
 		if a.chatInputOpen {
+			a.cancelPendingDig(true)
 			a.stopLocalItemUse(true)
 			a.closeChatInput(true)
 			a.prevEsc = escPressed
 			return true
 		}
 		if a.inventoryOpen {
+			a.cancelPendingDig(true)
 			a.stopLocalItemUse(true)
 			a.closeInventoryScreen()
 			a.prevEsc = escPressed
 			return true
 		}
+		a.cancelPendingDig(true)
 		if a.paused {
 			if a.pauseScreen == pauseScreenOptions {
 				a.pauseScreen = pauseScreenMain
@@ -1148,11 +1158,13 @@ func (a *App) handleInput(deltaSeconds float64) bool {
 	a.prevF3 = f3Pressed
 
 	if a.mainMenu {
+		a.cancelPendingDig(true)
 		a.stopLocalItemUse(true)
 		a.moveTickAccum = 0
 		return a.handleMainMenuInput(leftMouse, rightMouse, middleMouse, enterPressed)
 	}
 	if a.session == nil {
+		a.cancelPendingDig(false)
 		a.stopLocalItemUse(false)
 		a.moveTickAccum = 0
 		a.paused = false
@@ -1165,6 +1177,7 @@ func (a *App) handleInput(deltaSeconds float64) bool {
 	}
 
 	if a.paused {
+		a.cancelPendingDig(true)
 		a.stopLocalItemUse(true)
 		a.moveTickAccum = 0
 		if a.pauseScreen == pauseScreenKeyBindings {
@@ -1214,6 +1227,7 @@ func (a *App) handleInput(deltaSeconds float64) bool {
 	}
 
 	if a.chatInputOpen {
+		a.cancelPendingDig(true)
 		a.stopLocalItemUse(true)
 		a.moveTickAccum = 0
 		runes := a.consumeTypedRunes()
@@ -1256,6 +1270,7 @@ func (a *App) handleInput(deltaSeconds float64) bool {
 	}
 
 	if inventoryPressed && !a.prevE {
+		a.cancelPendingDig(true)
 		a.stopLocalItemUse(true)
 		if a.inventoryOpen {
 			a.closeInventoryScreen()
@@ -1265,6 +1280,7 @@ func (a *App) handleInput(deltaSeconds float64) bool {
 		return true
 	}
 	if a.inventoryOpen {
+		a.cancelPendingDig(true)
 		a.stopLocalItemUse(true)
 		a.moveTickAccum = 0
 		if leftMouse && !a.prevLeftMouse {
@@ -1273,16 +1289,21 @@ func (a *App) handleInput(deltaSeconds float64) bool {
 		if rightMouse && !a.prevRightMouse {
 			a.handleInventoryClick(true, sneakPressed)
 		}
+		if dropPressed && !a.prevDropInput {
+			a.handleInventoryDrop(sprintPressed)
+		}
 		return true
 	}
 	a.showPlayerList = playerListPressed
 
 	if (chatKeyPressed && !a.prevT) || (enterPressed && !a.prevEnter) {
+		a.cancelPendingDig(true)
 		a.stopLocalItemUse(true)
 		a.openChatInput("")
 		return true
 	}
 	if commandKeyPressed && !a.prevSlash {
+		a.cancelPendingDig(true)
 		a.stopLocalItemUse(true)
 		a.openChatInput("/")
 		return true
@@ -1349,21 +1370,20 @@ func (a *App) handleInput(deltaSeconds float64) bool {
 		blockDist := a.blockTargetDistance(snapNow, blockHit)
 
 		if entityHit.Hit && (!blockHit.Hit || entityHit.Dist <= blockDist) {
+			a.cancelPendingDig(true)
 			_ = a.session.UseEntity(entityHit.EntityID, true)
 		} else if blockHit.Hit {
-			id, _, ok := a.session.BlockAt(blockHit.X, blockHit.Y, blockHit.Z)
-			_ = a.session.DigBlock(int32(blockHit.X), int32(blockHit.Y), int32(blockHit.Z), blockHit.Face)
-			if ok && id > 0 && !block.IsLiquid(id) {
-				audio.PlayDigBlock(id)
-			}
+			a.beginLocalDig(blockHit, snapNow.IsCreative)
 		}
 	}
+	a.tickLocalDigging(attackPressed)
 
 	if !usePressed && a.prevUseInput && a.localUsingItem {
 		a.stopLocalItemUse(true)
 	}
 
 	if usePressed && !a.prevUseInput {
+		a.cancelPendingDig(true)
 		snapNow := a.session.Snapshot()
 		blockHit := a.pickBlockTarget(snapNow, interactReach)
 		entityHit := a.pickEntityTarget(snapNow, interactReach)
@@ -2147,6 +2167,109 @@ func (a *App) handleInventoryClick(rightClick bool, shift bool) {
 	_ = a.session.ClickWindowSlot(slot, rightClick, shift)
 }
 
+func (a *App) handleInventoryDrop(dropAll bool) {
+	if a.session == nil {
+		return
+	}
+	slot := a.playerInventorySlotAt(a.mouseX, a.mouseY)
+	if slot < 0 {
+		_ = a.session.DropHeldItem(dropAll)
+		return
+	}
+	// Translation reference:
+	// - net.minecraft.src.Container#slotClick(..., clickMode=4)
+	//   mouseButton 0=drop one, 1=drop stack.
+	rightClick := dropAll
+	_ = a.session.ClickWindowSlotMode(slot, rightClick, 4)
+}
+
+func (a *App) cancelPendingDig(sendCancel bool) {
+	if !a.localDigging {
+		return
+	}
+	if sendCancel && a.session != nil {
+		_ = a.session.CancelDigBlock(int32(a.localDigX), int32(a.localDigY), int32(a.localDigZ), a.localDigFace)
+	}
+	a.localDigging = false
+	a.localDigStart = time.Time{}
+}
+
+func (a *App) beginLocalDig(target blockTarget, creative bool) {
+	if a.session == nil || !target.Hit {
+		return
+	}
+	if a.localDigging &&
+		a.localDigX == target.X &&
+		a.localDigY == target.Y &&
+		a.localDigZ == target.Z &&
+		a.localDigFace == target.Face {
+		return
+	}
+	a.cancelPendingDig(true)
+	_ = a.session.StartDigBlock(int32(target.X), int32(target.Y), int32(target.Z), target.Face)
+	a.localDigging = true
+	a.localDigStart = time.Now()
+	a.localDigX = target.X
+	a.localDigY = target.Y
+	a.localDigZ = target.Z
+	a.localDigFace = target.Face
+	if creative {
+		a.finishLocalDig()
+	}
+}
+
+func (a *App) finishLocalDig() {
+	if !a.localDigging || a.session == nil {
+		return
+	}
+	id, _, ok := a.session.BlockAt(a.localDigX, a.localDigY, a.localDigZ)
+	_ = a.session.DigBlock(int32(a.localDigX), int32(a.localDigY), int32(a.localDigZ), a.localDigFace)
+	if ok && id > 0 && !block.IsLiquid(id) {
+		audio.PlayDigBlock(id)
+	}
+	a.localDigging = false
+	a.localDigStart = time.Time{}
+}
+
+func (a *App) tickLocalDigging(attackPressed bool) {
+	if a.session == nil {
+		a.localDigging = false
+		a.localDigStart = time.Time{}
+		return
+	}
+
+	snap := a.session.Snapshot()
+	if attackPressed && a.prevAttackInput && !a.localDigging {
+		blockHit := a.pickBlockTarget(snap, interactReach)
+		entityHit := a.pickEntityTarget(snap, interactReach)
+		blockDist := a.blockTargetDistance(snap, blockHit)
+		if blockHit.Hit && (!entityHit.Hit || entityHit.Dist > blockDist) {
+			a.beginLocalDig(blockHit, snap.IsCreative)
+		}
+	}
+
+	if !a.localDigging {
+		return
+	}
+	if !attackPressed {
+		a.cancelPendingDig(true)
+		return
+	}
+
+	blockHit := a.pickBlockTarget(snap, interactReach)
+	if !blockHit.Hit ||
+		blockHit.X != a.localDigX ||
+		blockHit.Y != a.localDigY ||
+		blockHit.Z != a.localDigZ {
+		a.cancelPendingDig(true)
+		return
+	}
+
+	if time.Since(a.localDigStart) >= digBreakDelay {
+		a.finishLocalDig()
+	}
+}
+
 func (a *App) playerInventorySlotAt(mouseX, mouseY int) int16 {
 	slot := int16(-999)
 	a.forEachPlayerInventorySlot(func(candidate int16, x, y int) {
@@ -2166,6 +2289,19 @@ func (a *App) playerInventoryScreenOrigin() (int, int) {
 
 func (a *App) forEachPlayerInventorySlot(fn func(slot int16, x, y int)) {
 	left, top := a.playerInventoryScreenOrigin()
+	// Translation reference:
+	// - net.minecraft.src.GuiContainerCreative / GuiInventory container slot layout.
+	// Window 0 slot order: 0 craft result, 1..4 craft matrix, 5..8 armor, 9..35 main, 36..44 hotbar.
+	fn(0, left+144, top+36) // 2x2 craft result
+	fn(1, left+88, top+26)
+	fn(2, left+106, top+26)
+	fn(3, left+88, top+44)
+	fn(4, left+106, top+44)
+	fn(5, left+8, top+8)
+	fn(6, left+8, top+26)
+	fn(7, left+8, top+44)
+	fn(8, left+8, top+62)
+
 	for row := 0; row < 3; row++ {
 		for col := 0; col < 9; col++ {
 			fn(int16(9+row*9+col), left+8+col*18, top+84+row*18)
@@ -2443,6 +2579,7 @@ func (a *App) applyCursorMode() {
 
 func (a *App) replaceSession(next *netclient.Session) {
 	old := a.session
+	a.cancelPendingDig(false)
 	a.stopLocalItemUse(false)
 	a.releaseChunkRenderCache()
 	a.session = next
@@ -2499,6 +2636,12 @@ func (a *App) replaceSession(next *netclient.Session) {
 	a.localUseStart = time.Time{}
 	a.localUseMax = 0
 	a.localUseItemID = 0
+	a.localDigging = false
+	a.localDigStart = time.Time{}
+	a.localDigX = 0
+	a.localDigY = 0
+	a.localDigZ = 0
+	a.localDigFace = 0
 	a.paused = false
 	a.pauseScreen = pauseScreenMain
 	a.inventoryOpen = false

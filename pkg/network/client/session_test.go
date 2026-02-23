@@ -740,8 +740,67 @@ func TestClickWindowSlotWritesPacket102(t *testing.T) {
 	if click.WindowID != 0 || click.InventorySlot != 36 || click.MouseClick != 0 || click.ActionNumber != 1 || click.HoldingShift {
 		t.Fatalf("click header mismatch: %#v", click)
 	}
+	if click.Mode != 0 {
+		t.Fatalf("click mode mismatch: got=%d want=0", click.Mode)
+	}
 	if click.ItemStack == nil || click.ItemStack.ItemID != 1 || click.ItemStack.StackSize != 5 {
 		t.Fatalf("click stack mismatch: %#v", click.ItemStack)
+	}
+}
+
+func TestClickWindowSlotModeWritesPacket102DropMode(t *testing.T) {
+	var out bytes.Buffer
+	s := newUnitTestSession(&out)
+	s.inventory[9] = &protocol.ItemStack{
+		ItemID:     4,
+		StackSize:  8,
+		ItemDamage: 0,
+	}
+
+	if err := s.ClickWindowSlotMode(9, false, 4); err != nil {
+		t.Fatalf("ClickWindowSlotMode failed: %v", err)
+	}
+
+	packet, err := protocol.ReadPacket(&out, protocol.DirectionServerbound)
+	if err != nil {
+		t.Fatalf("failed to read Packet102: %v", err)
+	}
+	click, ok := packet.(*protocol.Packet102WindowClick)
+	if !ok {
+		t.Fatalf("expected Packet102WindowClick, got %T", packet)
+	}
+	if click.Mode != 4 || click.MouseClick != 0 || click.InventorySlot != 9 {
+		t.Fatalf("drop mode click mismatch: %#v", click)
+	}
+}
+
+func TestDigBlockStatusPackets(t *testing.T) {
+	var out bytes.Buffer
+	s := newUnitTestSession(&out)
+
+	if err := s.StartDigBlock(10, 64, 20, 3); err != nil {
+		t.Fatalf("StartDigBlock failed: %v", err)
+	}
+	if err := s.CancelDigBlock(10, 64, 20, 3); err != nil {
+		t.Fatalf("CancelDigBlock failed: %v", err)
+	}
+	if err := s.DigBlock(10, 64, 20, 3); err != nil {
+		t.Fatalf("DigBlock failed: %v", err)
+	}
+
+	expectStatus := []int32{0, 1, 2}
+	for i, want := range expectStatus {
+		packet, err := protocol.ReadPacket(&out, protocol.DirectionServerbound)
+		if err != nil {
+			t.Fatalf("failed to read Packet14[%d]: %v", i, err)
+		}
+		dig, ok := packet.(*protocol.Packet14BlockDig)
+		if !ok {
+			t.Fatalf("expected Packet14BlockDig at %d, got %T", i, packet)
+		}
+		if dig.Status != want || dig.XPosition != 10 || dig.YPosition != 64 || dig.ZPosition != 20 || dig.Face != 3 {
+			t.Fatalf("dig packet[%d] mismatch: %#v", i, dig)
+		}
 	}
 }
 

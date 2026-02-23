@@ -1183,8 +1183,21 @@ func (s *Session) nextActionNumber() int16 {
 
 // ClickWindowSlot sends Packet102 for player inventory (window 0). Use slot -999 for outside click.
 func (s *Session) ClickWindowSlot(slot int16, rightClick bool, shift bool) error {
+	mode := int8(0)
+	if shift {
+		mode = 1
+	}
+	return s.ClickWindowSlotMode(slot, rightClick, mode)
+}
+
+// ClickWindowSlotMode sends Packet102 with explicit vanilla click mode byte.
+// Use slot -999 for outside click.
+func (s *Session) ClickWindowSlotMode(slot int16, rightClick bool, mode int8) error {
 	if slot < -999 || slot >= playerWindowSlotCount {
 		return fmt.Errorf("window slot out of range: %d", slot)
+	}
+	if mode < 0 || mode > 6 {
+		return fmt.Errorf("window click mode out of range: %d", mode)
 	}
 	mouse := int8(0)
 	if rightClick {
@@ -1201,7 +1214,8 @@ func (s *Session) ClickWindowSlot(slot int16, rightClick bool, shift bool) error
 		InventorySlot: slot,
 		MouseClick:    mouse,
 		ActionNumber:  s.nextActionNumber(),
-		HoldingShift:  shift,
+		Mode:          mode,
+		HoldingShift:  mode == 1,
 		ItemStack:     stack,
 	})
 }
@@ -1281,6 +1295,28 @@ func (s *Session) SendPlayerInput(moveStrafing, moveForward float32, jump, sneak
 // SendChat writes Packet3Chat to server.
 func (s *Session) SendChat(message string) error {
 	return s.sendPacket(protocol.NewPacket3Chat(message, false))
+}
+
+// StartDigBlock sends Packet14 status=0.
+func (s *Session) StartDigBlock(x, y, z, face int32) error {
+	return s.sendPacket(&protocol.Packet14BlockDig{
+		Status:    0,
+		XPosition: x,
+		YPosition: y,
+		ZPosition: z,
+		Face:      face,
+	})
+}
+
+// CancelDigBlock sends Packet14 status=1.
+func (s *Session) CancelDigBlock(x, y, z, face int32) error {
+	return s.sendPacket(&protocol.Packet14BlockDig{
+		Status:    1,
+		XPosition: x,
+		YPosition: y,
+		ZPosition: z,
+		Face:      face,
+	})
 }
 
 // DigBlock sends finish-dig status packet.

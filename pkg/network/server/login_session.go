@@ -2461,20 +2461,62 @@ func (s *loginSession) moveStackToRangesLocked(stack *protocol.ItemStack, ranges
 	return remaining
 }
 
-func (s *loginSession) applyWindowClickLocked(packet *protocol.Packet102WindowClick, changedSlots map[int]struct{}) bool {
+func (s *loginSession) applyWindowClickLocked(packet *protocol.Packet102WindowClick, changedSlots map[int]struct{}) (accepted bool, dropped []*protocol.ItemStack) {
 	if packet == nil || packet.WindowID != 0 {
-		return false
+		return false, nil
 	}
 
-	if packet.HoldingShift {
+	mode := packet.Mode
+	if mode == 0 && packet.HoldingShift {
+		mode = 1
+	}
+
+	// Translation reference:
+	// - net.minecraft.src.Container#slotClick(..., clickMode=4) drop-from-slot path.
+	if mode == 4 {
 		slot := int(packet.InventorySlot)
 		if slot < 0 || slot >= playerWindowSlots {
-			return false
+			return false, nil
+		}
+		source := s.inventory[slot]
+		if source == nil || source.StackSize <= 0 {
+			return true, nil
+		}
+		if packet.MouseClick != 0 && packet.MouseClick != 1 {
+			return false, nil
+		}
+
+		remove := int8(1)
+		if packet.MouseClick == 1 {
+			remove = source.StackSize
+		}
+		if remove <= 0 {
+			remove = 1
+		}
+		if remove > source.StackSize {
+			remove = source.StackSize
+		}
+
+		drop := cloneItemStack(source)
+		drop.StackSize = remove
+		if source.StackSize <= remove {
+			s.inventory[slot] = nil
+		} else {
+			source.StackSize -= remove
+		}
+		changedSlots[slot] = struct{}{}
+		return true, []*protocol.ItemStack{drop}
+	}
+
+	if mode == 1 {
+		slot := int(packet.InventorySlot)
+		if slot < 0 || slot >= playerWindowSlots {
+			return false, nil
 		}
 
 		source := s.inventory[slot]
 		if source == nil || source.StackSize <= 0 {
-			return true
+			return true, nil
 		}
 
 		var ranges [][2]int
@@ -2492,37 +2534,41 @@ func (s *loginSession) applyWindowClickLocked(packet *protocol.Packet102WindowCl
 		if remaining == nil {
 			s.inventory[slot] = nil
 			changedSlots[slot] = struct{}{}
-			return true
+			return true, nil
 		}
 		if remaining.StackSize != original {
 			s.inventory[slot].StackSize = remaining.StackSize
 			changedSlots[slot] = struct{}{}
 		}
-		return true
+		return true, nil
+	}
+
+	if mode != 0 {
+		return false, nil
 	}
 
 	if packet.MouseClick != 0 && packet.MouseClick != 1 {
-		return false
+		return false, nil
 	}
 
 	if packet.InventorySlot == -999 {
 		if s.cursorItem == nil {
-			return true
+			return true, nil
 		}
 		if packet.MouseClick == 0 {
 			s.cursorItem = nil
-			return true
+			return true, nil
 		}
 		s.cursorItem.StackSize--
 		if s.cursorItem.StackSize <= 0 {
 			s.cursorItem = nil
 		}
-		return true
+		return true, nil
 	}
 
 	slot := int(packet.InventorySlot)
 	if slot < 0 || slot >= playerWindowSlots {
-		return false
+		return false, nil
 	}
 
 	slotStack := s.inventory[slot]
@@ -2552,13 +2598,13 @@ func (s *loginSession) applyWindowClickLocked(packet *protocol.Packet102WindowCl
 			s.cursorItem = cloneItemStack(slotStack)
 		}
 		changedSlots[slot] = struct{}{}
-		return true
+		return true, nil
 	}
 
 	switch {
 	case cursor == nil:
 		if slotStack == nil {
-			return true
+			return true, nil
 		}
 		take := int(slotStack.StackSize+1) / 2
 		s.cursorItem = cloneItemStack(slotStack)
@@ -2585,7 +2631,7 @@ func (s *loginSession) applyWindowClickLocked(packet *protocol.Packet102WindowCl
 		s.cursorItem = cloneItemStack(slotStack)
 	}
 	changedSlots[slot] = struct{}{}
-	return true
+	return true, nil
 }
 
 func (s *loginSession) handleFlying(packet *protocol.Packet10Flying) bool {
@@ -3035,11 +3081,12 @@ func (s *loginSession) handleWindowClick(packet *protocol.Packet102WindowClick) 
 
 	accepted := false
 	changed := make(map[int]struct{})
+	var droppedStacks []*protocol.ItemStack
 	var cursorSnapshot *protocol.ItemStack
 	var inventorySnapshot []*protocol.ItemStack
 
 	s.stateMu.Lock()
-	accepted = s.applyWindowClickLocked(packet, changed)
+	accepted, droppedStacks = s.applyWindowClickLocked(packet, changed)
 	cursorSnapshot = cloneItemStack(s.cursorItem)
 	if !accepted && packet.WindowID == 0 {
 		inventorySnapshot = make([]*protocol.ItemStack, playerWindowSlots)
@@ -3063,7 +3110,16 @@ func (s *loginSession) handleWindowClick(packet *protocol.Packet102WindowClick) 
 				return false
 			}
 		}
-		return s.sendCursorSetSlot(cursorSnapshot)
+		if !s.sendCursorSetSlot(cursorSnapshot) {
+			return false
+		}
+		for _, dropped := range droppedStacks {
+			if dropped == nil || dropped.ItemID <= 0 || dropped.StackSize <= 0 {
+				continue
+			}
+			s.server.spawnDroppedItemFromPlayer(s, dropped, false, false)
+		}
+		return true
 	}
 
 	if packet.WindowID == 0 {
