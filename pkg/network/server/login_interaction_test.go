@@ -191,7 +191,7 @@ func TestTickDroppedItemsPickupBroadcastsCollectAndDestroy(t *testing.T) {
 	srv.droppedItemMu.Lock()
 	item.DelayBeforeCanPick = 0
 	item.X = picker.playerX
-	item.Y = picker.playerY
+	item.Y = picker.playerY + 0.9
 	item.Z = picker.playerZ
 	item.MotionX = 0
 	item.MotionY = 0
@@ -351,28 +351,152 @@ func TestHandlePlaceReplacesTallGrassWithoutOffset(t *testing.T) {
 	}
 }
 
-func TestHandleSlashCommandGiveSetsHotbarSlot(t *testing.T) {
+func TestHandleSlashCommandGiveSpawnsPickupableDroppedItem(t *testing.T) {
 	srv := NewStatusServer(StatusConfig{})
 	var buf bytes.Buffer
 	session := newInteractionTestSession(srv, &buf)
+	session.clientUsername = "Steve"
+	session.entityID = 120
+	session.playerRegistered = true
 
-	if !session.handleSlashCommand("/give 1 1") {
+	srv.activeMu.Lock()
+	srv.activePlayers[session] = "Steve"
+	srv.activeOrder = []*loginSession{session}
+	srv.activeMu.Unlock()
+
+	if !session.handleSlashCommand("/give Steve 1 1") {
 		t.Fatal("handleSlashCommand returned false")
 	}
 
-	packet, err := protocol.ReadPacket(&buf, protocol.DirectionClientbound)
-	if err != nil {
-		t.Fatalf("failed to read set slot packet: %v", err)
+	srv.droppedItemMu.Lock()
+	if len(srv.droppedItems) != 1 {
+		srv.droppedItemMu.Unlock()
+		t.Fatalf("dropped item count mismatch: got=%d want=1", len(srv.droppedItems))
 	}
-	setSlot, ok := packet.(*protocol.Packet103SetSlot)
-	if !ok {
-		t.Fatalf("expected Packet103SetSlot, got %T", packet)
+	var dropped *trackedDroppedItem
+	for _, item := range srv.droppedItems {
+		dropped = item
+		break
 	}
-	if setSlot.WindowID != 0 || setSlot.ItemSlot != 36 {
-		t.Fatalf("set slot header mismatch: %#v", setSlot)
+	srv.droppedItemMu.Unlock()
+	if dropped == nil {
+		t.Fatal("expected dropped item to exist")
 	}
-	if setSlot.ItemStack == nil || setSlot.ItemStack.ItemID != 1 || setSlot.ItemStack.StackSize != 1 {
-		t.Fatalf("set slot stack mismatch: %#v", setSlot.ItemStack)
+	if dropped.ItemID != 1 || dropped.StackSize != 1 || dropped.ItemDamage != 0 {
+		t.Fatalf("dropped item stack mismatch: %#v", dropped)
+	}
+	if dropped.DelayBeforeCanPick != 0 {
+		t.Fatalf("pickup delay mismatch: got=%d want=0", dropped.DelayBeforeCanPick)
+	}
+
+	foundSpawn := false
+	foundMetadata := false
+	foundFeedback := false
+	for {
+		packet, err := protocol.ReadPacket(&buf, protocol.DirectionClientbound)
+		if err != nil {
+			break
+		}
+		switch p := packet.(type) {
+		case *protocol.Packet23VehicleSpawn:
+			foundSpawn = true
+		case *protocol.Packet40EntityMetadata:
+			foundMetadata = true
+		case *protocol.Packet3Chat:
+			if strings.Contains(p.Message, "Given 1 of item 1 to Steve") {
+				foundFeedback = true
+			}
+		}
+	}
+	if !foundSpawn {
+		t.Fatal("expected Packet23VehicleSpawn for given item")
+	}
+	if !foundMetadata {
+		t.Fatal("expected Packet40EntityMetadata for given item")
+	}
+	if !foundFeedback {
+		t.Fatal("expected give success feedback chat not found")
+	}
+}
+
+func TestHandleSlashCommandGiveTargetsPlayer(t *testing.T) {
+	srv := NewStatusServer(StatusConfig{})
+
+	var adminBuf bytes.Buffer
+	admin := newInteractionTestSession(srv, &adminBuf)
+	admin.clientUsername = "Admin"
+	admin.entityID = 121
+	admin.playerRegistered = true
+
+	var targetBuf bytes.Buffer
+	target := newInteractionTestSession(srv, &targetBuf)
+	target.clientUsername = "Alex"
+	target.entityID = 122
+	target.playerRegistered = true
+	target.playerX = 3.5
+	target.playerY = 6.0
+	target.playerZ = 0.5
+
+	srv.activeMu.Lock()
+	srv.activePlayers[admin] = "Admin"
+	srv.activePlayers[target] = "Alex"
+	srv.activeOrder = []*loginSession{admin, target}
+	srv.activeMu.Unlock()
+
+	if !admin.handleSlashCommand("/give Alex 4 3 2") {
+		t.Fatal("handleSlashCommand returned false")
+	}
+
+	srv.droppedItemMu.Lock()
+	if len(srv.droppedItems) != 1 {
+		srv.droppedItemMu.Unlock()
+		t.Fatalf("dropped item count mismatch: got=%d want=1", len(srv.droppedItems))
+	}
+	var dropped *trackedDroppedItem
+	for _, item := range srv.droppedItems {
+		dropped = item
+		break
+	}
+	srv.droppedItemMu.Unlock()
+	if dropped == nil {
+		t.Fatal("expected dropped item to exist")
+	}
+	if dropped.ItemID != 4 || dropped.StackSize != 3 || dropped.ItemDamage != 2 {
+		t.Fatalf("dropped item stack mismatch: %#v", dropped)
+	}
+
+	foundAdminFeedback := false
+	for {
+		packet, err := protocol.ReadPacket(&adminBuf, protocol.DirectionClientbound)
+		if err != nil {
+			break
+		}
+		chat, ok := packet.(*protocol.Packet3Chat)
+		if !ok {
+			continue
+		}
+		if strings.Contains(chat.Message, "Given 3 of item 4 to Alex") {
+			foundAdminFeedback = true
+			break
+		}
+	}
+	if !foundAdminFeedback {
+		t.Fatal("expected admin give feedback chat not found")
+	}
+
+	foundTargetSpawn := false
+	for {
+		packet, err := protocol.ReadPacket(&targetBuf, protocol.DirectionClientbound)
+		if err != nil {
+			break
+		}
+		if _, ok := packet.(*protocol.Packet23VehicleSpawn); ok {
+			foundTargetSpawn = true
+			break
+		}
+	}
+	if !foundTargetSpawn {
+		t.Fatal("expected target to receive dropped item spawn packet")
 	}
 }
 

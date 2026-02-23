@@ -1274,39 +1274,61 @@ func (s *loginSession) handleSlashCommand(command string) bool {
 	}
 
 	if strings.EqualFold(args[0], "/give") {
-		if len(args) < 2 || len(args) > 4 {
-			s.sendSystemChat("Usage: /give <itemId> [count] [damage]")
+		// Translation target:
+		// - net.minecraft.src.CommandGive#processCommand
+		if len(args) < 3 || len(args) > 5 {
+			s.sendSystemChat("Usage: /give <player> <itemId> [count] [damage]")
 			return true
 		}
 
-		itemID, err := strconv.Atoi(args[1])
+		target := s.server.activeSessionByUsername(args[1])
+		if target == nil {
+			s.sendSystemChat("Player not found.")
+			return true
+		}
+
+		itemID, err := strconv.Atoi(args[2])
 		if err != nil || itemID <= 0 || itemID > 32767 {
 			s.sendSystemChat("Invalid item id")
 			return true
 		}
+
 		count := 1
-		if len(args) >= 3 {
-			count, err = strconv.Atoi(args[2])
+		if len(args) >= 4 {
+			count, err = strconv.Atoi(args[3])
 			if err != nil || count <= 0 || count > 64 {
 				s.sendSystemChat("Invalid count (1-64)")
 				return true
 			}
 		}
+
 		damage := 0
-		if len(args) >= 4 {
-			damage, err = strconv.Atoi(args[3])
-			if err != nil || damage < 0 || damage > 32767 {
+		if len(args) >= 5 {
+			damage, err = strconv.Atoi(args[4])
+			if err != nil || damage < math.MinInt16 || damage > math.MaxInt16 {
 				s.sendSystemChat("Invalid damage")
 				return true
 			}
 		}
 
-		remaining := s.addInventoryItem(int16(itemID), count, int16(damage))
-		if remaining > 0 {
-			s.sendSystemChat("Inventory full")
+		dropped := s.server.spawnDroppedItemFromPlayer(target, &protocol.ItemStack{
+			ItemID:     int16(itemID),
+			StackSize:  int8(count),
+			ItemDamage: int16(damage),
+		}, false, false)
+		if dropped == nil {
+			s.sendSystemChat("Failed to give item")
 			return true
 		}
-		s.sendSystemChat("Given " + strconv.Itoa(count) + " of item " + strconv.Itoa(itemID))
+		s.server.droppedItemMu.Lock()
+		dropped.DelayBeforeCanPick = 0
+		s.server.droppedItemMu.Unlock()
+
+		targetName := strings.TrimSpace(target.clientUsername)
+		if targetName == "" {
+			targetName = "player"
+		}
+		s.sendSystemChat("Given " + strconv.Itoa(count) + " of item " + strconv.Itoa(itemID) + " to " + targetName)
 		return true
 	}
 
