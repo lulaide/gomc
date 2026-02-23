@@ -906,6 +906,89 @@ func TestHandleSlashCommandTimeSetBroadcastsUpdate(t *testing.T) {
 	}
 }
 
+func TestHandleSlashCommandDifficultySetsServerState(t *testing.T) {
+	srv := NewStatusServer(StatusConfig{})
+	var buf bytes.Buffer
+	session := newInteractionTestSession(srv, &buf)
+
+	if !session.handleSlashCommand("/difficulty hard") {
+		t.Fatal("handleSlashCommand returned false")
+	}
+	if got := srv.currentDifficulty(); got != 3 {
+		t.Fatalf("difficulty mismatch: got=%d want=3", got)
+	}
+
+	packet, err := protocol.ReadPacket(&buf, protocol.DirectionClientbound)
+	if err != nil {
+		t.Fatalf("failed to read difficulty feedback: %v", err)
+	}
+	chat, ok := packet.(*protocol.Packet3Chat)
+	if !ok {
+		t.Fatalf("expected Packet3Chat, got %T", packet)
+	}
+	if chat.Message != "Set game difficulty to Hard" {
+		t.Fatalf("difficulty feedback mismatch: got=%q", chat.Message)
+	}
+}
+
+func TestInitializePlayerConnectionUsesServerDifficulty(t *testing.T) {
+	srv := NewStatusServer(StatusConfig{})
+	srv.setDifficulty(3)
+
+	var buf bytes.Buffer
+	session := newInteractionTestSession(srv, &buf)
+	session.clientUsername = "Steve"
+
+	if !session.initializePlayerConnection() {
+		t.Fatal("initializePlayerConnection returned false")
+	}
+
+	foundLogin := false
+	for {
+		packet, err := protocol.ReadPacket(&buf, protocol.DirectionClientbound)
+		if err != nil {
+			break
+		}
+		login, ok := packet.(*protocol.Packet1Login)
+		if !ok {
+			continue
+		}
+		foundLogin = true
+		if login.DifficultySetting != 3 {
+			t.Fatalf("login packet difficulty mismatch: got=%d want=3", login.DifficultySetting)
+		}
+		break
+	}
+	if !foundLogin {
+		t.Fatal("expected Packet1Login in initialization output")
+	}
+}
+
+func TestHandleRespawnCommandUsesServerDifficulty(t *testing.T) {
+	srv := NewStatusServer(StatusConfig{})
+	srv.setDifficulty(0)
+	var buf bytes.Buffer
+	session := newInteractionTestSession(srv, &buf)
+	session.playerDead = true
+	session.gameType = 0
+
+	if !session.handleRespawnCommand() {
+		t.Fatal("handleRespawnCommand returned false")
+	}
+
+	packet, err := protocol.ReadPacket(&buf, protocol.DirectionClientbound)
+	if err != nil {
+		t.Fatalf("failed to read respawn packet: %v", err)
+	}
+	respawn, ok := packet.(*protocol.Packet9Respawn)
+	if !ok {
+		t.Fatalf("expected Packet9Respawn, got %T", packet)
+	}
+	if respawn.Difficulty != 0 {
+		t.Fatalf("respawn difficulty mismatch: got=%d want=0", respawn.Difficulty)
+	}
+}
+
 func TestHandleSlashCommandGamemodeCreativeSendsAbilities(t *testing.T) {
 	srv := NewStatusServer(StatusConfig{})
 	var buf bytes.Buffer
@@ -1967,13 +2050,16 @@ func TestHandleSlashCommandHelpPageIncludesHeaderEntriesAndFooter(t *testing.T) 
 	if len(lines) < 3 {
 		t.Fatalf("help output too short: %v", lines)
 	}
-	if lines[0] != "--- Showing help page 1 of 2 (/help <page>) ---" {
+	if lines[0] != "--- Showing help page 1 of 3 (/help <page>) ---" {
 		t.Fatalf("help header mismatch: got=%q", lines[0])
 	}
 	if lines[1] != "/clear <player> [item] [data]" {
 		t.Fatalf("first help entry mismatch: got=%q", lines[1])
 	}
-	if lines[7] != "/me <action ...>" {
+	if lines[2] != "/difficulty <new difficulty>" {
+		t.Fatalf("difficulty help entry mismatch: got=%q", lines[2])
+	}
+	if lines[7] != "/list" {
 		t.Fatalf("last page-1 entry mismatch: got=%q", lines[7])
 	}
 	if lines[len(lines)-1] != "Tip: Use the <tab> key while typing a command to auto-complete the command or its arguments" {
@@ -2013,7 +2099,7 @@ func TestHandleSlashCommandHelpByNameAndAlias(t *testing.T) {
 	if !ok {
 		t.Fatalf("expected Packet3Chat, got %T", packet)
 	}
-	if chat.Message != "--- Showing help page 2 of 2 (/help <page>) ---" {
+	if chat.Message != "--- Showing help page 2 of 3 (/help <page>) ---" {
 		t.Fatalf("help alias header mismatch: got=%q", chat.Message)
 	}
 }

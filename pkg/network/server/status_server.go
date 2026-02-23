@@ -37,6 +37,7 @@ type StatusServer struct {
 	nextEntityID    atomic.Int32
 	worldAge        atomic.Int64
 	worldTime       atomic.Int64
+	difficulty      atomic.Int32
 	defaultGameType atomic.Int32
 
 	privateKey   *rsa.PrivateKey
@@ -119,6 +120,7 @@ func NewStatusServer(cfg StatusConfig) *StatusServer {
 	}
 	s.mobRand = util.NewJavaRandom(s.world.seed ^ 0x4F4D435F4D4F42) // "OMC_MOB"
 	s.nextEntityID.Store(1)
+	s.difficulty.Store(1) // easy
 	s.defaultGameType.Store(0)
 	return s
 }
@@ -159,6 +161,26 @@ func (s *StatusServer) CurrentPlayers() int {
 
 func (s *StatusServer) SetCurrentPlayers(v int) {
 	s.currentPlayers.Store(int32(v))
+}
+
+func normalizeDifficultyValue(v int8) int8 {
+	if v < 0 {
+		return 0
+	}
+	if v > 3 {
+		return 3
+	}
+	return v
+}
+
+func (s *StatusServer) currentDifficulty() int8 {
+	return normalizeDifficultyValue(int8(s.difficulty.Load()))
+}
+
+func (s *StatusServer) setDifficulty(v int8) int8 {
+	v = normalizeDifficultyValue(v)
+	s.difficulty.Store(int32(v))
+	return v
 }
 
 func (s *StatusServer) AdvanceWorldTime(ticks int64) {

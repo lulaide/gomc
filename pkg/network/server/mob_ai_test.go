@@ -24,6 +24,14 @@ func metadataByteByID(metadata []protocol.WatchableObject, id int8) (int8, bool)
 	return 0, false
 }
 
+func TestSpawnRandomCreaturePeacefulSkipsMonsters(t *testing.T) {
+	srv := NewStatusServer(StatusConfig{})
+	srv.setDifficulty(0)
+	if got := srv.spawnRandomCreature(creatureTypeMonster, 0, 64, 0); got != nil {
+		t.Fatalf("peaceful should skip monster spawns, got=%#v", got)
+	}
+}
+
 func TestTickSingleMobMonsterChasesPlayer(t *testing.T) {
 	srv := NewStatusServer(StatusConfig{})
 	target := newInteractionTestSession(srv, io.Discard)

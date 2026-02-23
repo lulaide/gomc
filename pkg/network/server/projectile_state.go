@@ -251,7 +251,7 @@ func (s *StatusServer) spawnArrowFromMob(shooter *trackedMob, target *loginSessi
 
 	entityID := s.nextEntityID.Add(1)
 	arrow := newArrowProjectile(entityID, shooterEntityID, shooterX, shooterY, shooterZ, yaw, pitch, 1.6, false, arrowPickupNone)
-	arrow.Damage = power*2.0 + arrow.rand.NextGaussian()*0.25 + float64(serverDifficulty)*0.11
+	arrow.Damage = power*2.0 + arrow.rand.NextGaussian()*0.25 + float64(s.currentDifficulty())*0.11
 	if arrow.Damage < 0 {
 		arrow.Damage = 0
 	}

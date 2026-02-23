@@ -39,8 +39,7 @@ const (
 	bowMaxDurability   = 384
 
 	// Translated baseline from default 1.6.4 server state:
-	// world difficulty defaults to easy (1) and naturalRegeneration gamerule defaults true.
-	serverDifficulty            = 1
+	// naturalRegeneration gamerule defaults true.
 	naturalRegenerationGamerule = true
 )
 
@@ -731,9 +730,10 @@ func (s *loginSession) handleRespawnCommand() bool {
 		return true
 	}
 
+	difficulty := s.server.currentDifficulty()
 	if !s.sendPacket(&protocol.Packet9Respawn{
 		RespawnDimension: 0,
-		Difficulty:       1,
+		Difficulty:       difficulty,
 		WorldHeight:      0,
 		GameType:         gameType,
 		TerrainType:      "default",
@@ -859,7 +859,7 @@ func (s *loginSession) initializePlayerConnection() bool {
 		HardcoreMode:      false,
 		GameType:          gameType,
 		Dimension:         0,
-		DifficultySetting: 1,
+		DifficultySetting: s.server.currentDifficulty(),
 		WorldHeight:       0,
 		MaxPlayers:        int8(s.server.cfg.MaxPlayers),
 	}) {
@@ -1192,6 +1192,7 @@ func (s *loginSession) handleSlashCommand(command string) bool {
 		// - net.minecraft.src.CommandHelp#processCommand
 		helpCommands := []string{
 			"clear",
+			"difficulty",
 			"gamemode",
 			"give",
 			"help",
@@ -1207,20 +1208,21 @@ func (s *loginSession) handleSlashCommand(command string) bool {
 			"xp",
 		}
 		commandUsage := map[string]string{
-			"clear":    "/clear <player> [item] [data]",
-			"gamemode": "/gamemode <mode> [player]",
-			"give":     "/give <player> <item> [amount] [data]",
-			"help":     "/help [page|command name]",
-			"kill":     "/kill",
-			"list":     "/list",
-			"me":       "/me <action ...>",
-			"say":      "/say <message ...>",
-			"seed":     "/seed",
-			"setblock": "/setblock <x> <y> <z> <id> [meta]",
-			"tell":     "/tell <player> <private message ...>",
-			"time":     "/time <set|add> <value>",
-			"tp":       "/tp [target player] <destination player> OR /tp [target player] <x> <y> <z>",
-			"xp":       "/xp <amount> [player] OR /xp <amount>L [player]",
+			"clear":      "/clear <player> [item] [data]",
+			"difficulty": "/difficulty <new difficulty>",
+			"gamemode":   "/gamemode <mode> [player]",
+			"give":       "/give <player> <item> [amount] [data]",
+			"help":       "/help [page|command name]",
+			"kill":       "/kill",
+			"list":       "/list",
+			"me":         "/me <action ...>",
+			"say":        "/say <message ...>",
+			"seed":       "/seed",
+			"setblock":   "/setblock <x> <y> <z> <id> [meta]",
+			"tell":       "/tell <player> <private message ...>",
+			"time":       "/time <set|add> <value>",
+			"tp":         "/tp [target player] <destination player> OR /tp [target player] <x> <y> <z>",
+			"xp":         "/xp <amount> [player] OR /xp <amount>L [player]",
 		}
 		pageSize := 7
 		totalPages := (len(helpCommands) + pageSize - 1) / pageSize
@@ -1527,6 +1529,50 @@ func (s *loginSession) handleSlashCommand(command string) bool {
 		worldAge, worldTime := s.server.CurrentWorldTime()
 		s.server.broadcastPacket(protocol.NewPacket4UpdateTime(worldAge, worldTime, true))
 		s.sendSystemChat("Set time to " + strconv.FormatInt(worldTime, 10))
+		return true
+	}
+
+	if strings.EqualFold(args[0], "/difficulty") {
+		// Translation target:
+		// - net.minecraft.src.CommandDifficulty#processCommand
+		if len(args) < 2 {
+			s.sendSystemChat("Usage: /difficulty <new difficulty>")
+			return true
+		}
+
+		modeText := strings.ToLower(strings.TrimSpace(args[1]))
+		var difficulty int8
+		switch modeText {
+		case "peaceful", "p":
+			difficulty = 0
+		case "easy", "e":
+			difficulty = 1
+		case "normal", "n":
+			difficulty = 2
+		case "hard", "h":
+			difficulty = 3
+		default:
+			v, err := strconv.Atoi(modeText)
+			if err != nil || v < 0 || v > 3 {
+				s.sendSystemChat("Usage: /difficulty <new difficulty>")
+				return true
+			}
+			difficulty = int8(v)
+		}
+
+		difficulty = s.server.setDifficulty(difficulty)
+		name := "Easy"
+		switch difficulty {
+		case 0:
+			name = "Peaceful"
+		case 1:
+			name = "Easy"
+		case 2:
+			name = "Normal"
+		case 3:
+			name = "Hard"
+		}
+		s.sendSystemChat("Set game difficulty to " + name)
 		return true
 	}
 
@@ -3172,6 +3218,7 @@ func (s *loginSession) tickFoodStats() {
 		sendHealth    bool
 		starveAttempt bool
 	)
+	difficulty := s.server.currentDifficulty()
 
 	s.stateMu.Lock()
 	if s.playerDead || s.playerHealth <= 0 {
@@ -3190,7 +3237,7 @@ func (s *loginSession) tickFoodStats() {
 		s.playerFoodExhaust -= 4.0
 		if s.playerSat > 0.0 {
 			s.playerSat = float32(math.Max(float64(s.playerSat-1.0), 0.0))
-		} else if serverDifficulty > 0 {
+		} else if difficulty > 0 {
 			if s.playerFood > 0 {
 				s.playerFood--
 			}
@@ -3211,7 +3258,7 @@ func (s *loginSession) tickFoodStats() {
 	} else if s.playerFood <= 0 {
 		s.playerFoodTimer++
 		if s.playerFoodTimer >= 80 {
-			if s.playerHealth > 10.0 || serverDifficulty >= 3 || (s.playerHealth > 1.0 && serverDifficulty >= 2) {
+			if s.playerHealth > 10.0 || difficulty >= 3 || (s.playerHealth > 1.0 && difficulty >= 2) {
 				starveAttempt = true
 			}
 			s.playerFoodTimer = 0

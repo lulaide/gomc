@@ -396,7 +396,8 @@ func (s *StatusServer) TickMobSpawning() {
 
 	_, worldTime := s.CurrentWorldTime()
 	spawnAnimals := worldTime%400 == 0
-	s.findChunksForSpawning(true, true, spawnAnimals)
+	spawnHostile := s.currentDifficulty() > 0
+	s.findChunksForSpawning(spawnHostile, true, spawnAnimals)
 }
 
 func (s *StatusServer) tickMobsMotionAndVisibility() {
@@ -438,6 +439,11 @@ func (s *StatusServer) tickSingleMob(mob *trackedMob) {
 
 	s.mobMu.Lock()
 	if mob.Health <= 0 {
+		s.mobMu.Unlock()
+		s.killMob(mob)
+		return
+	}
+	if mob.CreatureType == creatureTypeMonster && s.currentDifficulty() == 0 {
 		s.mobMu.Unlock()
 		s.killMob(mob)
 		return
@@ -1786,6 +1792,10 @@ func (s *StatusServer) getRandomSpawningPointInChunk(chunkX, chunkZ int32) (int,
 }
 
 func (s *StatusServer) spawnRandomCreature(creatureType mobCreatureType, x, y, z int) *spawnListEntry {
+	if creatureType == creatureTypeMonster && s.currentDifficulty() == 0 {
+		return nil
+	}
+
 	biomeID := s.biomeIDAt(x, z)
 	entries := spawnEntriesForBiomeAndType(biomeID, creatureType)
 	if len(entries) == 0 {
@@ -1945,7 +1955,7 @@ func (s *StatusServer) locationTensionFactor(x, y, z float64) float64 {
 	// Translation reference:
 	// - net.minecraft.src.World#getLocationTensionFactor(double,double,double)
 	// - net.minecraft.src.World#getTensionFactorForBlock(int,int,int)
-	difficulty := serverDifficulty
+	difficulty := int(s.currentDifficulty())
 	isHard := difficulty == 3
 	value := 0.0
 
@@ -2001,7 +2011,7 @@ func (s *StatusServer) addRandomArmorToMob(mob *trackedMob, tension float64) {
 	// - net.minecraft.src.EntityLiving#addRandomArmor()
 	armorTier := int(s.mobRand.NextInt(2))
 	stopChance := 0.25
-	if serverDifficulty == 3 {
+	if s.currentDifficulty() == 3 {
 		stopChance = 0.1
 	}
 	for i := 0; i < 3; i++ {
@@ -2032,7 +2042,7 @@ func (s *StatusServer) addRandomZombieWeapon(mob *trackedMob) {
 	// Translation reference:
 	// - net.minecraft.src.EntityZombie#addRandomArmor()
 	chance := float32(0.01)
-	if serverDifficulty == 3 {
+	if s.currentDifficulty() == 3 {
 		chance = 0.05
 	}
 	if s.mobRand.NextFloat() >= chance {
