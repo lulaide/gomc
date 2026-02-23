@@ -24,6 +24,24 @@ func metadataByteByID(metadata []protocol.WatchableObject, id int8) (int8, bool)
 	return 0, false
 }
 
+func countDroppedItemStacks(srv *StatusServer, itemID int16) (count int, damages []int16) {
+	if srv == nil {
+		return 0, nil
+	}
+	srv.droppedItemMu.Lock()
+	defer srv.droppedItemMu.Unlock()
+	for _, item := range srv.droppedItems {
+		if item == nil || item.ItemID != itemID || item.StackSize <= 0 {
+			continue
+		}
+		count += int(item.StackSize)
+		for i := 0; i < int(item.StackSize); i++ {
+			damages = append(damages, item.ItemDamage)
+		}
+	}
+	return count, damages
+}
+
 func TestSpawnRandomCreaturePeacefulSkipsMonsters(t *testing.T) {
 	srv := NewStatusServer(StatusConfig{})
 	srv.setDifficulty(0)
@@ -472,7 +490,7 @@ func TestKillMobSplitsLargeSlime(t *testing.T) {
 		t.Fatal("spawnMob returned nil")
 	}
 
-	srv.killMob(mob)
+	srv.killMob(mob, false)
 
 	srv.mobMu.Lock()
 	defer srv.mobMu.Unlock()
@@ -490,6 +508,71 @@ func TestKillMobSplitsLargeSlime(t *testing.T) {
 	}
 	if childCount < 2 || childCount > 4 {
 		t.Fatalf("slime split child count mismatch: got=%d want=2..4", childCount)
+	}
+}
+
+func TestKillMobSheepDropsSingleWoolWhenNotSheared(t *testing.T) {
+	srv := NewStatusServer(StatusConfig{})
+	srv.mobRand.SetSeed(11)
+
+	mob := srv.spawnMob(&spawnListEntry{entityType: entityTypeSheep}, 0.5, 5.0, 0.5, 0)
+	if mob == nil {
+		t.Fatal("spawnMob returned nil")
+	}
+	srv.mobMu.Lock()
+	live := srv.mobs[mob.EntityID]
+	if live != nil {
+		live.sheepSheared = false
+		live.sheepColor = 7
+	}
+	srv.mobMu.Unlock()
+
+	srv.killMob(mob, true)
+
+	woolCount, woolDamages := countDroppedItemStacks(srv, blockIDWool)
+	if woolCount != 1 {
+		t.Fatalf("wool drop count mismatch: got=%d want=1", woolCount)
+	}
+	if len(woolDamages) != 1 || woolDamages[0] != 7 {
+		t.Fatalf("wool metadata mismatch: %#v", woolDamages)
+	}
+}
+
+func TestKillMobCowDropsLeatherAndBeefWithinVanillaRanges(t *testing.T) {
+	srv := NewStatusServer(StatusConfig{})
+	srv.mobRand.SetSeed(21)
+
+	mob := srv.spawnMob(&spawnListEntry{entityType: entityTypeCow}, 0.5, 5.0, 0.5, 0)
+	if mob == nil {
+		t.Fatal("spawnMob returned nil")
+	}
+
+	srv.killMob(mob, true)
+
+	leatherCount, _ := countDroppedItemStacks(srv, itemIDLeather)
+	beefCount, _ := countDroppedItemStacks(srv, itemIDBeefRaw)
+	if leatherCount < 0 || leatherCount > 2 {
+		t.Fatalf("cow leather drop out of range: got=%d want=0..2", leatherCount)
+	}
+	if beefCount < 1 || beefCount > 3 {
+		t.Fatalf("cow beef drop out of range: got=%d want=1..3", beefCount)
+	}
+}
+
+func TestKillMobSpiderWithoutPlayerKillDoesNotDropSpiderEye(t *testing.T) {
+	srv := NewStatusServer(StatusConfig{})
+	srv.mobRand.SetSeed(33)
+
+	mob := srv.spawnMob(&spawnListEntry{entityType: entityTypeSpider}, 0.5, 5.0, 0.5, 0)
+	if mob == nil {
+		t.Fatal("spawnMob returned nil")
+	}
+
+	srv.killMob(mob, false)
+
+	eyeCount, _ := countDroppedItemStacks(srv, itemIDSpiderEye)
+	if eyeCount != 0 {
+		t.Fatalf("spider eye should require player kill flag: got=%d", eyeCount)
 	}
 }
 

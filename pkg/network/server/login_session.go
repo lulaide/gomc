@@ -70,9 +70,17 @@ const (
 	itemIDArrow        int16 = 262
 	itemIDBucketEmpty  int16 = 325
 	itemIDBucketMilk   int16 = 335
+	itemIDString       int16 = 287
+	itemIDFeather      int16 = 288
+	itemIDGunpowder    int16 = 289
 	itemIDGlassBottle  int16 = 374
 	itemIDPotion       int16 = 373
 	itemIDShears       int16 = 359
+	itemIDLeather      int16 = 334
+	itemIDSlimeBall    int16 = 341
+	itemIDBone         int16 = 352
+	itemIDCoal         int16 = 263
+	itemIDEnderPearl   int16 = 368
 	itemIDBowlEmpty    int16 = 281
 	itemIDMushroomStew int16 = 282
 
@@ -3725,7 +3733,7 @@ func (s *loginSession) attackTargetMobWithCurrentItem(target *trackedMob) {
 
 	if died {
 		s.server.broadcastMobEntityStatus(mob, 3)
-		s.server.killMob(mob)
+		s.server.killMob(mob, true)
 	}
 }
 

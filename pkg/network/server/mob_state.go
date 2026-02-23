@@ -440,12 +440,12 @@ func (s *StatusServer) tickSingleMob(mob *trackedMob) {
 	s.mobMu.Lock()
 	if mob.Health <= 0 {
 		s.mobMu.Unlock()
-		s.killMob(mob)
+		s.killMob(mob, false)
 		return
 	}
 	if mob.CreatureType == creatureTypeMonster && s.currentDifficulty() == 0 {
 		s.mobMu.Unlock()
-		s.killMob(mob)
+		s.killMob(mob, false)
 		return
 	}
 	if mob.HurtResistant > 0 {
@@ -460,7 +460,7 @@ func (s *StatusServer) tickSingleMob(mob *trackedMob) {
 			s.broadcastMobEntityStatus(mob, 2)
 		}
 		s.broadcastMobEntityStatus(mob, 3)
-		s.killMob(mob)
+		s.killMob(mob, false)
 		return
 	}
 	if mob.attackCooldown > 0 {
@@ -1521,7 +1521,7 @@ func (s *StatusServer) broadcastMobEntityStatus(mob *trackedMob, status int8) {
 	s.broadcastEntityPacketToWatchers(packet, chunkX, chunkZ, nil)
 }
 
-func (s *StatusServer) killMob(mob *trackedMob) {
+func (s *StatusServer) killMob(mob *trackedMob, killedByPlayer bool) {
 	if mob == nil {
 		return
 	}
@@ -1530,6 +1530,7 @@ func (s *StatusServer) killMob(mob *trackedMob) {
 	splitSize := mob.slimeSize / 2
 	splitX, splitY, splitZ := mob.X, mob.Y, mob.Z
 
+	s.spawnMobDrops(mob, killedByPlayer, 0)
 	s.removeMob(mob)
 
 	if !shouldSplit || splitSize <= 0 {
@@ -1545,6 +1546,102 @@ func (s *StatusServer) killMob(mob *trackedMob) {
 		yaw := s.mobRand.NextFloat() * 360.0
 		entry := &spawnListEntry{entityType: entityTypeSlime, fixedSlime: splitSize}
 		_ = s.spawnMob(entry, splitX+offX, splitY+0.5, splitZ+offZ, yaw)
+	}
+}
+
+func (s *StatusServer) spawnMobDrops(mob *trackedMob, killedByPlayer bool, looting int) {
+	if mob == nil {
+		return
+	}
+	if looting < 0 {
+		looting = 0
+	}
+
+	type dropSpawn struct {
+		itemID     int16
+		itemDamage int16
+		motionX    float64
+		motionY    float64
+		motionZ    float64
+	}
+	spawns := make([]dropSpawn, 0, 4)
+	x, y, z := mob.X, mob.Y, mob.Z
+
+	s.mobMu.Lock()
+	randInt := func(bound int) int {
+		if bound <= 0 {
+			return 0
+		}
+		return int(s.mobRand.NextInt(bound))
+	}
+	entityLivingDropCount := func() int {
+		count := randInt(3)
+		if looting > 0 {
+			count += randInt(looting + 1)
+		}
+		return count
+	}
+	addDrops := func(itemID int16, count int, damage int16) {
+		if itemID <= 0 || count <= 0 {
+			return
+		}
+		for i := 0; i < count; i++ {
+			spawns = append(spawns, dropSpawn{
+				itemID:     itemID,
+				itemDamage: damage,
+				motionX:    float64(s.mobRand.NextFloat())*0.2 - 0.1,
+				motionY:    0.2,
+				motionZ:    float64(s.mobRand.NextFloat())*0.2 - 0.1,
+			})
+		}
+	}
+
+	switch mob.EntityType {
+	case entityTypeCow:
+		addDrops(itemIDLeather, randInt(3)+randInt(looting+1), 0)
+		addDrops(itemIDBeefRaw, randInt(3)+1+randInt(looting+1), 0)
+	case entityTypePig:
+		addDrops(itemIDPorkRaw, randInt(3)+1+randInt(looting+1), 0)
+	case entityTypeChicken:
+		addDrops(itemIDFeather, randInt(3)+randInt(looting+1), 0)
+		addDrops(itemIDChickenRaw, 1, 0)
+	case entityTypeSheep:
+		if !mob.sheepSheared {
+			addDrops(blockIDWool, 1, int16(mob.sheepColor&15))
+		}
+	case entityTypeSquid:
+		addDrops(itemIDDyePowder, randInt(3+looting)+1, 0)
+	case entityTypeSkeleton:
+		if mob.skeletonType == 1 {
+			addDrops(itemIDCoal, randInt(3+looting)-1, 0)
+		} else {
+			addDrops(itemIDArrow, randInt(3+looting), 0)
+		}
+		addDrops(itemIDBone, randInt(3+looting), 0)
+	case entityTypeSpider:
+		addDrops(itemIDString, entityLivingDropCount(), 0)
+		if killedByPlayer && (randInt(3) == 0 || randInt(1+looting) > 0) {
+			addDrops(itemIDSpiderEye, 1, 0)
+		}
+	case entityTypeZombie:
+		addDrops(itemIDRottenFlesh, entityLivingDropCount(), 0)
+	case entityTypeCreeper:
+		addDrops(itemIDGunpowder, entityLivingDropCount(), 0)
+	case entityTypeEnderman:
+		addDrops(itemIDEnderPearl, randInt(2+looting), 0)
+	case entityTypeSlime:
+		if mob.slimeSize == 1 {
+			addDrops(itemIDSlimeBall, entityLivingDropCount(), 0)
+		}
+	}
+	s.mobMu.Unlock()
+
+	for _, drop := range spawns {
+		s.spawnDroppedItemAt(&protocol.ItemStack{
+			ItemID:     drop.itemID,
+			StackSize:  1,
+			ItemDamage: drop.itemDamage,
+		}, x, y, z, drop.motionX, drop.motionY, drop.motionZ, entityDropPickupDelayTicks)
 	}
 }
 

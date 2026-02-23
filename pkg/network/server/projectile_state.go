@@ -356,7 +356,7 @@ func (s *StatusServer) tickProjectile(projectile *trackedProjectile) {
 				}
 				if mob != nil && died {
 					s.broadcastMobEntityStatus(mob, 3)
-					s.killMob(mob)
+					s.killMob(mob, projectile.CanBePickedUp != arrowPickupNone)
 				}
 			}
 		} else if hitTarget != nil {
