@@ -765,6 +765,9 @@ func (s *loginSession) handleRespawnCommand() bool {
 	if !s.sendHealthState() {
 		return false
 	}
+	if !s.sendExperienceState() {
+		return false
+	}
 	worldAge, worldTime := s.server.CurrentWorldTime()
 	return s.sendPacket(protocol.NewPacket4UpdateTime(worldAge, worldTime, true))
 }

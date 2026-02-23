@@ -831,6 +831,9 @@ func TestHandleClientCommandRespawnAfterDeath(t *testing.T) {
 	session.playerHealth = 0
 	session.playerFood = 5
 	session.playerSat = 0
+	session.playerExperience = 0.65
+	session.playerExpLevel = 7
+	session.playerExpTotal = 120
 
 	if !session.handleClientCommand(&protocol.Packet205ClientCommand{ForceRespawn: 1}) {
 		t.Fatal("handleClientCommand returned false")
@@ -866,6 +869,18 @@ func TestHandleClientCommandRespawnAfterDeath(t *testing.T) {
 	}
 	if health.HealthMP != 20 || health.Food != 20 {
 		t.Fatalf("respawn health mismatch: %#v", health)
+	}
+
+	fourth, err := protocol.ReadPacket(&buf, protocol.DirectionClientbound)
+	if err != nil {
+		t.Fatalf("failed to read experience packet: %v", err)
+	}
+	xp, ok := fourth.(*protocol.Packet43Experience)
+	if !ok {
+		t.Fatalf("expected Packet43Experience, got %T", fourth)
+	}
+	if xp.ExperienceLevel != 7 || xp.ExperienceTotal != 120 {
+		t.Fatalf("respawn experience mismatch: %#v", xp)
 	}
 
 	if session.playerDead {
