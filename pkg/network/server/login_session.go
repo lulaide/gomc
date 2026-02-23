@@ -1375,7 +1375,7 @@ func (s *loginSession) handleSlashCommand(command string) bool {
 
 	if strings.EqualFold(args[0], "/gamemode") {
 		if len(args) < 2 {
-			s.sendSystemChat("Usage: /gamemode <0|1|survival|creative>")
+			s.sendSystemChat("Usage: /gamemode <0|1|2|survival|creative|adventure>")
 			return true
 		}
 
@@ -1386,8 +1386,10 @@ func (s *loginSession) handleSlashCommand(command string) bool {
 			mode = 0
 		case "1", "c", "creative":
 			mode = 1
+		case "2", "a", "adventure":
+			mode = 2
 		default:
-			s.sendSystemChat("Usage: /gamemode <0|1|survival|creative>")
+			s.sendSystemChat("Usage: /gamemode <0|1|2|survival|creative|adventure>")
 			return true
 		}
 
@@ -1418,18 +1420,17 @@ func (s *loginSession) handleSlashCommand(command string) bool {
 		if !target.sendPacket(target.currentAbilitiesPacket()) {
 			return false
 		}
-		if mode == 1 {
-			if target == s {
-				s.sendSystemChat("Set own game mode to Creative Mode")
-			} else {
-				s.sendSystemChat("Set " + targetName + " game mode to Creative Mode")
-			}
+		modeName := "Survival Mode"
+		switch mode {
+		case 1:
+			modeName = "Creative Mode"
+		case 2:
+			modeName = "Adventure Mode"
+		}
+		if target == s {
+			s.sendSystemChat("Set own game mode to " + modeName)
 		} else {
-			if target == s {
-				s.sendSystemChat("Set own game mode to Survival Mode")
-			} else {
-				s.sendSystemChat("Set " + targetName + " game mode to Survival Mode")
-			}
+			s.sendSystemChat("Set " + targetName + " game mode to " + modeName)
 		}
 		return true
 	}
@@ -1655,8 +1656,8 @@ func parseTeleportCoordinate(token string, current float64) (float64, error) {
 
 func normalizeGameTypeValue(v int8) int8 {
 	switch v {
-	case 1:
-		return 1
+	case 1, 2:
+		return v
 	default:
 		return 0
 	}
@@ -2548,6 +2549,13 @@ func (s *loginSession) handleBlockDig(packet *protocol.Packet14BlockDig) bool {
 	}
 
 	if packet.Status == 2 {
+		s.stateMu.Lock()
+		adventureMode := s.gameType == 2
+		s.stateMu.Unlock()
+		if adventureMode {
+			return s.sendBlockChange(packet.XPosition, packet.YPosition, packet.ZPosition)
+		}
+
 		blockID, _ := s.server.world.getBlock(int(packet.XPosition), int(packet.YPosition), int(packet.ZPosition))
 		if blockID != 0 {
 			if s.server.world.setBlock(int(packet.XPosition), int(packet.YPosition), int(packet.ZPosition), 0, 0) {
@@ -2609,7 +2617,12 @@ func (s *loginSession) handlePlace(packet *protocol.Packet15Place) bool {
 		shouldResync = true
 	} else {
 		if s.isWithinReach(x, y, z, 64.0) {
-			s.tryPlaceBlockFromItem(packet)
+			s.stateMu.Lock()
+			adventureMode := s.gameType == 2
+			s.stateMu.Unlock()
+			if !adventureMode {
+				s.tryPlaceBlockFromItem(packet)
+			}
 		}
 		shouldResync = true
 	}

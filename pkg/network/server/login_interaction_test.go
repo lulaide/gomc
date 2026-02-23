@@ -54,6 +54,33 @@ func TestHandleBlockDigStatus2RemovesBlock(t *testing.T) {
 	}
 }
 
+func TestHandleBlockDigStatus2AdventureDoesNotBreakBlock(t *testing.T) {
+	srv := NewStatusServer(StatusConfig{})
+	session := newInteractionTestSession(srv, io.Discard)
+	session.gameType = 2
+
+	before, _ := srv.world.getBlock(0, 4, 0)
+	if before == 0 {
+		t.Fatalf("precondition failed: expected non-air block at spawn layer")
+	}
+
+	ok := session.handleBlockDig(&protocol.Packet14BlockDig{
+		Status:    2,
+		XPosition: 0,
+		YPosition: 4,
+		ZPosition: 0,
+		Face:      1,
+	})
+	if !ok {
+		t.Fatal("handleBlockDig returned false")
+	}
+
+	after, _ := srv.world.getBlock(0, 4, 0)
+	if after != before {
+		t.Fatalf("adventure mode should not break block: got=%d want=%d", after, before)
+	}
+}
+
 func TestHandleBlockDigStatus4DropsOneFromHeldStack(t *testing.T) {
 	srv := NewStatusServer(StatusConfig{})
 	session := newInteractionTestSession(srv, io.Discard)
@@ -547,6 +574,41 @@ func TestHandlePlaceConsumesHeldInventoryItem(t *testing.T) {
 	}
 }
 
+func TestHandlePlaceAdventureDoesNotPlaceBlock(t *testing.T) {
+	srv := NewStatusServer(StatusConfig{})
+	session := newInteractionTestSession(srv, io.Discard)
+	session.gameType = 2
+	session.inventory[36] = &protocol.ItemStack{
+		ItemID:     1,
+		StackSize:  1,
+		ItemDamage: 0,
+	}
+	session.heldItemSlot = 0
+
+	ok := session.handlePlace(&protocol.Packet15Place{
+		XPosition: 0,
+		YPosition: 4,
+		ZPosition: 0,
+		Direction: 1,
+		ItemStack: &protocol.ItemStack{
+			ItemID:     1,
+			StackSize:  1,
+			ItemDamage: 0,
+		},
+	})
+	if !ok {
+		t.Fatal("handlePlace returned false")
+	}
+
+	blockID, _ := srv.world.getBlock(0, 5, 0)
+	if blockID != 0 {
+		t.Fatalf("adventure mode should not place held block: got=%d want=0", blockID)
+	}
+	if session.inventory[36] == nil || session.inventory[36].StackSize != 1 {
+		t.Fatalf("adventure mode should not consume held stack: %#v", session.inventory[36])
+	}
+}
+
 func TestHandlePlaceCreativeDoesNotConsumeHeldInventoryItem(t *testing.T) {
 	srv := NewStatusServer(StatusConfig{})
 	session := newInteractionTestSession(srv, io.Discard)
@@ -914,6 +976,36 @@ func TestHandleSlashCommandGamemodeSurvivalClearsFlyingState(t *testing.T) {
 	}
 	if session.playerIsFlying {
 		t.Fatal("server flying state should be cleared in survival mode")
+	}
+}
+
+func TestHandleSlashCommandGamemodeAdventureClearsFlyingState(t *testing.T) {
+	srv := NewStatusServer(StatusConfig{})
+	var buf bytes.Buffer
+	session := newInteractionTestSession(srv, &buf)
+	session.gameType = 1
+	session.playerIsFlying = true
+
+	if !session.handleSlashCommand("/gamemode adventure") {
+		t.Fatal("handleSlashCommand returned false")
+	}
+
+	packet, err := protocol.ReadPacket(&buf, protocol.DirectionClientbound)
+	if err != nil {
+		t.Fatalf("failed to read abilities packet: %v", err)
+	}
+	abilities, ok := packet.(*protocol.Packet202PlayerAbilities)
+	if !ok {
+		t.Fatalf("expected Packet202PlayerAbilities, got %T", packet)
+	}
+	if abilities.IsCreative || abilities.AllowFlying || abilities.IsFlying || abilities.DisableDamage {
+		t.Fatalf("adventure abilities mismatch: %#v", abilities)
+	}
+	if session.playerIsFlying {
+		t.Fatal("server flying state should be cleared in adventure mode")
+	}
+	if session.gameType != 2 {
+		t.Fatalf("expected adventure gameType=2, got=%d", session.gameType)
 	}
 }
 
@@ -2066,7 +2158,7 @@ func TestSendSystemChatUsesPlainLegacyString(t *testing.T) {
 	var buf bytes.Buffer
 	session := newInteractionTestSession(srv, &buf)
 
-	session.sendSystemChat("Usage: /gamemode <0|1|survival|creative>")
+	session.sendSystemChat("Usage: /gamemode <0|1|2|survival|creative|adventure>")
 
 	packet, err := protocol.ReadPacket(&buf, protocol.DirectionClientbound)
 	if err != nil {
@@ -2076,7 +2168,7 @@ func TestSendSystemChatUsesPlainLegacyString(t *testing.T) {
 	if !ok {
 		t.Fatalf("expected Packet3Chat, got %T", packet)
 	}
-	if chat.Message != "Usage: /gamemode <0|1|survival|creative>" {
+	if chat.Message != "Usage: /gamemode <0|1|2|survival|creative|adventure>" {
 		t.Fatalf("system chat mismatch: got=%q", chat.Message)
 	}
 	if strings.HasPrefix(chat.Message, "{") {
