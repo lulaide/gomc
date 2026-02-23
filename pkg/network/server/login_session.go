@@ -2597,7 +2597,56 @@ func (s *loginSession) handleFlying(packet *protocol.Packet10Flying) bool {
 		s.stateMu.Unlock()
 		return true
 	}
+	mounted := s.ridingEntityID != 0
 	s.stateMu.Unlock()
+
+	if mounted {
+		// Translation reference:
+		// - net.minecraft.src.NetServerHandler#handleFlying(Packet10Flying)
+		// ridingEntity != null branch:
+		//   skip normal movement validation and preserve rider world position.
+		var movementPacket protocol.Packet
+		var headRotationPacket protocol.Packet
+		var movementChunkX int32
+		var movementChunkZ int32
+
+		s.stateMu.Lock()
+		if packet.Rotating {
+			s.playerYaw = packet.Yaw
+			s.playerPitch = packet.Pitch
+		}
+		s.playerOnGround = packet.OnGround
+		movementChunkX = chunkCoordFromPos(s.playerX)
+		movementChunkZ = chunkCoordFromPos(s.playerZ)
+
+		if s.playerRegistered {
+			yaw := toPacketAngle(s.playerYaw)
+			pitch := toPacketAngle(s.playerPitch)
+			rotChanged := yaw != s.lastEntityYaw || pitch != s.lastEntityPitch
+			if rotChanged {
+				pkt := protocol.NewPacket32EntityLook()
+				pkt.EntityID = s.entityID
+				pkt.Yaw = yaw
+				pkt.Pitch = pitch
+				movementPacket = pkt
+				s.lastEntityYaw = yaw
+				s.lastEntityPitch = pitch
+			}
+			if absInt(int(yaw)-int(s.lastHeadYaw)) >= 4 {
+				headRotationPacket = &protocol.Packet35EntityHeadRotation{
+					EntityID:        s.entityID,
+					HeadRotationYaw: yaw,
+				}
+				s.lastHeadYaw = yaw
+			}
+		}
+		s.stateMu.Unlock()
+
+		if movementPacket != nil || headRotationPacket != nil {
+			s.updateTrackedViewers(movementChunkX, movementChunkZ, movementPacket, headRotationPacket)
+		}
+		return true
+	}
 
 	if packet.Moving {
 		stanceDelta := packet.Stance - packet.YPosition

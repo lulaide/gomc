@@ -1524,6 +1524,108 @@ func TestHandleFlyingBroadcastsRelativeMove(t *testing.T) {
 	}
 }
 
+func TestHandleFlyingMountedIgnoresAbsolutePositionAndIllegalStance(t *testing.T) {
+	srv := NewStatusServer(StatusConfig{})
+	var selfBuf bytes.Buffer
+	session := newInteractionTestSession(srv, &selfBuf)
+	session.entityID = 133
+	session.playerRegistered = true
+	session.playerHealth = 20
+	session.playerOnGround = false
+	session.playerFallDistance = 10
+	session.ridingEntityID = 5001
+
+	startX := session.playerX
+	startY := session.playerY
+	startZ := session.playerZ
+
+	move := protocol.NewPacket11PlayerPosition()
+	move.XPosition = 300.0
+	move.YPosition = 80.0
+	move.Stance = 82.5 // Invalid for walking path; mounted path must ignore.
+	move.ZPosition = -300.0
+	move.OnGround = true
+
+	if !session.handleFlying(&move.Packet10Flying) {
+		t.Fatal("mounted handleFlying returned false")
+	}
+	if session.playerX != startX || session.playerY != startY || session.playerZ != startZ {
+		t.Fatalf("mounted player position should stay unchanged: got=(%.2f,%.2f,%.2f) want=(%.2f,%.2f,%.2f)",
+			session.playerX, session.playerY, session.playerZ, startX, startY, startZ)
+	}
+	if session.playerHealth != 20 {
+		t.Fatalf("mounted handleFlying should not apply fall/world damage: got=%f want=20", session.playerHealth)
+	}
+	if _, err := protocol.ReadPacket(&selfBuf, protocol.DirectionClientbound); err == nil {
+		t.Fatal("unexpected self packet for mounted no-rotation update")
+	}
+}
+
+func TestHandleFlyingMountedBroadcastsLookWithoutPositionMove(t *testing.T) {
+	srv := NewStatusServer(StatusConfig{})
+	mover := newInteractionTestSession(srv, io.Discard)
+	mover.clientUsername = "mover"
+	mover.entityID = 223
+	mover.playerRegistered = true
+	mover.ridingEntityID = 5002
+	mover.lastEntityPosX = toPacketPosition(mover.playerX)
+	mover.lastEntityPosY = toPacketPosition(mover.playerY)
+	mover.lastEntityPosZ = toPacketPosition(mover.playerZ)
+	mover.lastEntityYaw = toPacketAngle(mover.playerYaw)
+	mover.lastEntityPitch = toPacketAngle(mover.playerPitch)
+	mover.lastHeadYaw = toPacketAngle(mover.playerYaw)
+
+	var watcherBuf bytes.Buffer
+	watcher := newInteractionTestSession(srv, &watcherBuf)
+	watcher.clientUsername = "watcher"
+	watcher.entityID = 224
+	watcher.playerRegistered = true
+
+	srv.activeMu.Lock()
+	srv.activePlayers[mover] = "mover"
+	srv.activePlayers[watcher] = "watcher"
+	srv.activeOrder = []*loginSession{mover, watcher}
+	srv.activeMu.Unlock()
+	mover.markSeenBy(watcher, true)
+
+	startX := mover.playerX
+	startY := mover.playerY
+	startZ := mover.playerZ
+
+	lookMove := protocol.NewPacket13PlayerLookMove()
+	lookMove.XPosition = 128.0
+	lookMove.YPosition = 80.0
+	lookMove.Stance = 82.0
+	lookMove.ZPosition = -128.0
+	lookMove.Yaw = 90.0
+	lookMove.Pitch = 15.0
+	lookMove.OnGround = true
+
+	if !mover.handleFlying(&lookMove.Packet10Flying) {
+		t.Fatal("mounted handleFlying returned false")
+	}
+	if mover.playerX != startX || mover.playerY != startY || mover.playerZ != startZ {
+		t.Fatalf("mounted player position should stay unchanged: got=(%.2f,%.2f,%.2f) want=(%.2f,%.2f,%.2f)",
+			mover.playerX, mover.playerY, mover.playerZ, startX, startY, startZ)
+	}
+
+	first, err := protocol.ReadPacket(&watcherBuf, protocol.DirectionClientbound)
+	if err != nil {
+		t.Fatalf("failed to read mounted first packet: %v", err)
+	}
+	if _, ok := first.(*protocol.Packet32EntityLook); !ok {
+		t.Fatalf("expected Packet32EntityLook for mounted rotation, got %T", first)
+	}
+
+	second, err := protocol.ReadPacket(&watcherBuf, protocol.DirectionClientbound)
+	if err != nil {
+		t.Fatalf("failed to read mounted second packet: %v", err)
+	}
+	if _, ok := second.(*protocol.Packet35EntityHeadRotation); !ok {
+		t.Fatalf("expected Packet35EntityHeadRotation for mounted rotation, got %T", second)
+	}
+}
+
 func TestHandleFlyingLandingAppliesFallDamage(t *testing.T) {
 	srv := NewStatusServer(StatusConfig{})
 	var selfBuf bytes.Buffer
